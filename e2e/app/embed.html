@@ -1,0 +1,18 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>office-engine e2e embed</title>
+  </head>
+  <body>
+    <office-viewer id="wc" src="samples/sample.docx" save="false" file-menu="false" style="height: 420px"></office-viewer>
+    <div id="mounted" style="height: 420px"></div>
+    <script type="module">
+      import { mount } from '../../src/embed.ts'
+      window.__wcEvents = []
+      const wc = document.getElementById('wc')
+      wc.addEventListener('load', (e) => window.__wcEvents.push(e.detail))
+      window.__mounted = mount(document.getElementById('mounted'), { src: 'samples/sample.xlsx', toolbar: false })
+    </script>
+  </body>
+</html>

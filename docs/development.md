@@ -5,6 +5,7 @@ bun install
 bun run dev          # playground http://localhost:5173 (drag & drop, URL, samples)
 bun run collab       # collaboration hub for the playground's "Share live" (port 8787)
 bun test             # core tests on fixtures
+bun run test:e2e     # browser tests (headless Chromium: bunx playwright install chromium)
 bun run build        # dist/: ESM lib + office-engine.embed.js + .d.ts
 python3 -m venv .venv && .venv/bin/pip install python-docx openpyxl python-pptx Pillow
 .venv/bin/python scripts/fixtures.py --large   # generate samples + heavy files
@@ -30,6 +31,25 @@ src/embed.ts mount() + <office-viewer>
 src/collab   real-time collaboration (hub, session, per-format adapters)
 ```
 
+## Browser tests
+
+`e2e/*.spec.ts` drive a fixture app (`e2e/app`, served by Vite with `vite.e2e.config.ts`) in headless Chromium through `playwright-core`, one browser and server per file (`e2e/harness.ts`).
+The app reads `DocViewer` props from the query string (`?src=samples/sample.docx&editable=1&allowDownload=0&onSave=1…`) and records callbacks in `window.__events`; saved files are re-opened with the engine to check what was written.
+
+| Spec                  | Covers                                                                                            |
+|-----------------------|---------------------------------------------------------------------------------------------------|
+| `viewer.spec.ts`      | rendering of the 3 formats, outline, zoom, sheet tabs, thumbnails, slideshow, props, errors       |
+| `docx.spec.ts`        | typing, formatting, styles, lists, colors, fonts, links, tables, images, find & replace, undo     |
+| `xlsx.spec.ts`        | values, formulas, merges (all / across / down / unmerge), formats, rows / columns, sheets, freeze |
+| `pptx.spec.ts`        | text, shapes (insert, move, fill, arrange, rotate, duplicate, delete), images, slides, present    |
+| `file-menu.spec.ts`   | every File entry: New, Open (conversions), Import, Save, Rename, Download as, Details, Print      |
+| `permissions.spec.ts` | `allowSave` / `allowDownload` combinations, image download, Ctrl+S / Ctrl+P                       |
+| `color.spec.ts`       | custom colors (system picker, recent list, persistence) in the 3 formats                          |
+| `embed.spec.ts`       | `<office-viewer>` (shadow DOM, attributes, `file`) and `mount()`                                  |
+| `collab.spec.ts`      | two editors on `scripts/collab-server.ts`: live edits, presence, File menu in a room              |
+
+`bun test` only runs `test/` (`bunfig.toml`); `bun run test:e2e` runs `e2e/`.
+
 ## Site (GitHub Pages)
 
 `.github/workflows/pages.yml` deploys on every push to `main`:
@@ -43,7 +63,7 @@ One-time setup: **Settings → Pages → Source: GitHub Actions**. Build locally
 
 ## Release
 
-CI (`.github/workflows/ci.yml`) runs typecheck, tests, build and `npm pack --dry-run` on every push to `main` and every PR.
+CI (`.github/workflows/ci.yml`) runs typecheck, tests, build and `npm pack --dry-run`, and the browser tests, on every push to `main` and every PR.
 
 To release, push a branch named after the version:
 

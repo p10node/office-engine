@@ -48,6 +48,7 @@
     "build:playground": "vite build --config vite.playground.config.ts",
     "typecheck": "tsc --noEmit",
     "test": "bun test",
+    "test:e2e": "bun test ./e2e --timeout 90000",
     "fixtures": "bun scripts/gen-fixtures.ts",
     "build:worker": "vite build --config vite.worker.config.ts",
     "collab": "bun scripts/collab-server.ts",

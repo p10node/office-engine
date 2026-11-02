@@ -1,0 +1,3 @@
+[test]
+# unit tests only; browser tests: bun run test:e2e
+root = "test"
