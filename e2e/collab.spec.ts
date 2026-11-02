@@ -9,7 +9,8 @@ const HTTP = `http://localhost:${PORT}`
 let server: ReturnType<typeof Bun.spawn> | null = null
 
 beforeAll(async () => {
-  server = Bun.spawn(['bun', 'scripts/collab-server.ts'], { env: { ...process.env, PORT: String(PORT) }, stdout: 'ignore', stderr: 'inherit' })
+  // frequent snapshots: live editing must not notice them, newcomers join from them
+  server = Bun.spawn(['bun', 'scripts/collab-server.ts'], { env: { ...process.env, PORT: String(PORT), SNAPSHOT_EVERY: '2' }, stdout: 'ignore', stderr: 'inherit' })
   for (let i = 0; i < 100; i++) {
     try {
       if ((await fetch(HTTP)).ok) return
@@ -28,8 +29,8 @@ async function room(sample: string) {
   return id
 }
 
-const join = (id: string, user: string) =>
-  viewer({ src: `${HTTP}/rooms/${id}/file`, name: 'shared.xlsx', collab: `ws://localhost:${PORT}/collab`, room: id, user, editable: true })
+const join = (id: string, user: string, base = 0) =>
+  viewer({ src: `${HTTP}/rooms/${id}/file?seq=${base}`, name: 'shared.xlsx', collab: `ws://localhost:${PORT}/collab`, room: id, user, base, editable: true })
 
 describe('real-time collaboration', () => {
   test('edits reach the other editor; presence is shown', async () => {
@@ -45,6 +46,29 @@ describe('real-time collaboration', () => {
     expect(await b.shown('J10')).toBe('from Ann')
     await b.typeCell('J11', '=LEN(J10)')
     await a.page.waitForFunction(() => [...document.querySelectorAll('.de-cell')].some((c) => (c as HTMLElement).innerText === '8'), null, { timeout: 20_000 })
+  })
+
+  test('a newcomer opens the latest snapshot and only replays later edits', async () => {
+    const id = await room('sample.xlsx')
+    const a = await join(id, 'Ann')
+    await a.page.locator('.de-collab-live').waitFor({ timeout: 20_000 })
+    for (const [ref, text] of [['J10', 'one'], ['J11', 'two'], ['J12', 'three']]) await a.typeCell(ref, text)
+    let snapshot = 0
+    for (let i = 0; i < 100 && snapshot < 2; i++) {
+      snapshot = ((await (await fetch(`${HTTP}/rooms/${id}`)).json()) as { snapshot: number }).snapshot
+      await Bun.sleep(100)
+    }
+    expect(snapshot).toBeGreaterThanOrEqual(2)
+
+    const b = await join(id, 'Bob', snapshot)
+    await b.page.locator('.de-collab-live').waitFor({ timeout: 20_000 })
+    await b.page.waitForFunction(() => document.body.innerText.includes('three'), null, { timeout: 20_000 })
+    expect(await b.shown('J10')).toBe('one')
+    await a.typeCell('J13', 'after')
+    await b.page.waitForFunction(() => document.body.innerText.includes('after'), null, { timeout: 20_000 })
+    await b.typeCell('J14', 'from Bob')
+    await a.page.waitForFunction(() => document.body.innerText.includes('from Bob'), null, { timeout: 20_000 })
+    expect(b.errors).toEqual([])
   })
 
   test('New / Open are not offered in a shared room', async () => {

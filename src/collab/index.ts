@@ -24,6 +24,11 @@ export interface CollabOptions {
   /** shared document id */
   room: string
   user: UserInfo
+  /**
+   * Sequence number of the snapshot `src` was opened from (see `compact`); default 0, the original
+   * upload. The hub then only sends the batches after it.
+   */
+  base?: number
 }
 
 export interface Collab {
@@ -55,7 +60,7 @@ export function startCollab(client: DocumentClient, opts: CollabOptions): Collab
   const transport = typeof opts.transport === 'string' ? new WebSocketTransport(opts.transport) : opts.transport
   const docx = client.kind === 'docx' ? new DocxCollab(client) : undefined
   const adapter = (docx ?? (client.kind === 'xlsx' ? new XlsxCollab(client) : new PptxCollab(client))) as unknown as AnyAdapter
-  const session = new CollabSession<unknown>(transport, adapter, { room: opts.room, user: opts.user })
+  const session = new CollabSession<unknown>(transport, adapter, { room: opts.room, user: opts.user, base: opts.base })
   adapter.submit = (op) => session.submit(op)
   adapter.push = (op, undo) => session.push(op, undo)
   adapter.nextId = () => session.nextId()
@@ -100,8 +105,10 @@ export function startCollab(client: DocumentClient, opts: CollabOptions): Collab
   }
 }
 
-export { CollabHub, type HubOptions, type HubConnection } from './hub'
+export { CollabHub, type HubOptions, type HubConnection, type RoomLog, type RoomState } from './hub'
+export { compact, type CompactOptions } from './compact'
+export { RoomStore, MemoryBlobStore, type BlobStore, type RoomHead, type RoomStoreOptions, type Version } from './store'
 export { CollabSession, type Adapter, type CollabStatus } from './session'
 export { MemoryTransport, WebSocketTransport, type Transport, type TransportStatus } from './transport'
-export type { Batch, ClientMsg, HubMsg, PeerInfo, UserInfo } from './protocol'
+export type { Batch, ClientMsg, Entry, HubMsg, PeerInfo, Snapshot, UserInfo } from './protocol'
 export { encode, decode } from './codec'

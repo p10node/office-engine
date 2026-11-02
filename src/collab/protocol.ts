@@ -31,17 +31,44 @@ export interface Batch<Op = unknown> {
   /** client generated id (dedupes resends after reconnects) */
   id: string
   ops: Op[]
+  /** when the hub sequenced it (ms since epoch) */
+  time?: number
+  /** author: user id, else name */
+  user?: string
+}
+
+/** A batch the way every client applies it: its ops transformed against the concurrent batches sequenced before it. */
+export interface Entry<Op = unknown> {
+  seq: number
+  site: number
+  ops: Op[]
+}
+
+/**
+ * The document materialized at `seq` (see `compact`): a file containing every batch up to `seq`,
+ * plus the canonical batches right before it (`ctx`) that clients joining from that file need to
+ * merge batches still based on older states.
+ */
+export interface Snapshot<Op = unknown> {
+  seq: number
+  ctx: Entry<Op>[]
 }
 
 export type ClientMsg =
-  /** join a room; `have`/`site` on reconnect */
-  | { t: 'hello'; room: string; user: UserInfo; have?: number; site?: number }
+  /**
+   * join a room; `have`/`site` on reconnect. `base`: on the first join, the snapshot the client
+   * opened (default 0, the original upload)
+   */
+  | { t: 'hello'; room: string; user: UserInfo; have?: number; site?: number; base?: number }
   | { t: 'ops'; id: string; base: number; ops: unknown[] }
   | { t: 'presence'; data: unknown }
 
 export type HubMsg =
-  /** `log` holds every batch with seq > `from`; `reset` when the hub lost history newer than `have` */
-  | { t: 'welcome'; site: number; seq: number; from: number; log: Batch[]; peers: PeerInfo[]; reset?: boolean }
+  /**
+   * `log` holds every batch with seq > `from`; `ctx` the joined snapshot's context (first join from a
+   * snapshot); `reset` when the hub can't continue from the client's state (history lost or dropped)
+   */
+  | { t: 'welcome'; site: number; seq: number; from: number; log: Batch[]; peers: PeerInfo[]; reset?: boolean; ctx?: Entry[] }
   | { t: 'batch'; b: Batch }
   | { t: 'presence'; site: number; data: unknown }
   | { t: 'join'; peer: PeerInfo }

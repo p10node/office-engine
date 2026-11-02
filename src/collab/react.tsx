@@ -18,7 +18,7 @@ function optsKey(o: CollabOptions | undefined): string {
     if (id === undefined) transportIds.set(o.transport, (id = ++nextTransportId))
     t = `#${id}`
   }
-  return `${t}|${o.room}|${o.user.id ?? ''}|${o.user.name}|${o.user.color ?? ''}`
+  return `${t}|${o.room}|${o.base ?? 0}|${o.user.id ?? ''}|${o.user.name}|${o.user.color ?? ''}`
 }
 
 export interface CollabState {

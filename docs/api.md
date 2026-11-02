@@ -98,7 +98,7 @@ if (client?.kind === 'xlsx') return <div className="de-root"><XlsxView client={c
 </script>
 ```
 
-`<office-viewer>`: attributes `src`, `name`, `editable`, `toolbar="false"`, `thumbnails="false"`, `save="false"`, `download="false"`, `file-menu="false"`, `open="false"`, `collab` / `room` / `user` (real-time collaboration); property `.file = File`; events `load`, `error`.
+`<office-viewer>`: attributes `src`, `name`, `editable`, `toolbar="false"`, `thumbnails="false"`, `save="false"`, `download="false"`, `file-menu="false"`, `open="false"`, `collab` / `room` / `user` / `base` (real-time collaboration); property `.file = File`; events `load`, `error`.
 
 ## Core API (no React)
 

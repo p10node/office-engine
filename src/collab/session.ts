@@ -14,7 +14,7 @@
  * to rebase, like deleting a sheet) are not applied locally until the hub has
  * sequenced them.
  */
-import type { Batch, HubMsg, PeerInfo, UserInfo } from './protocol'
+import type { Batch, Entry, HubMsg, PeerInfo, UserInfo } from './protocol'
 import type { Transport } from './transport'
 
 export interface ApplyResult {
@@ -74,6 +74,8 @@ export interface SessionOptions {
   user: UserInfo
   /** canonical batches kept to transform late batches (default 5000) */
   logWindow?: number
+  /** sequence number the opened file already contains: a snapshot (default 0, the original upload) */
+  base?: number
 }
 
 const notNull = <T>(x: T | null): x is T => x !== null
@@ -85,7 +87,7 @@ export class CollabSession<Op = unknown> {
   status: CollabStatus = 'connecting'
   error?: string
   readonly peers = new Map<number, PeerInfo>()
-  private log: { seq: number; site: number; ops: Op[] }[] = []
+  private log: Entry<Op>[] = []
   private inflight: { id: string; base: number; items: Item<Op>[] } | null = null
   private buffer: Item<Op>[] = []
   private queue: Promise<void>
@@ -103,12 +105,17 @@ export class CollabSession<Op = unknown> {
     private adapter: Adapter<Op>,
     private opts: SessionOptions,
   ) {
+    this.rev = opts.base ?? 0
     this.queue = Promise.resolve(adapter.ready?.()).catch((e) => this.fail((e as Error).message))
     transport.onMessage = (m) => this.enqueue(() => this.onMessage(m))
     transport.onStatus = (s) => {
       if (s === 'open') {
         this.online = true
-        transport.send({ t: 'hello', room: opts.room, user: opts.user, have: this.joined ? this.rev : undefined, site: this.joined ? this.site : undefined })
+        transport.send(
+          this.joined
+            ? { t: 'hello', room: opts.room, user: opts.user, have: this.rev, site: this.site }
+            : { t: 'hello', room: opts.room, user: opts.user, base: opts.base || undefined },
+        )
       } else if (s === 'closed') {
         this.online = false
         this.peers.clear()
@@ -177,6 +184,11 @@ export class CollabSession<Op = unknown> {
     return () => set!.delete(fn as (d: never) => void)
   }
 
+  /** the last `limit` batches as applied here (the context of a snapshot taken at `rev`) */
+  context(limit = this.opts.logWindow ?? 5000): Entry<Op>[] {
+    return limit > 0 ? this.log.slice(-limit) : []
+  }
+
   /** resolves once everything queued so far was processed */
   idle(): Promise<void> {
     return this.queue
@@ -222,7 +234,10 @@ export class CollabSession<Op = unknown> {
         const first = !this.joined
         this.site = m.site
         this.joined = true
-        if (first) this.setStatus('syncing')
+        if (first) {
+          this.log = (m.ctx ?? []) as Entry<Op>[]
+          this.setStatus('syncing')
+        }
         this.peers.clear()
         for (const p of m.peers) this.peers.set(p.site, p)
         this.emit('peers', [...this.peers.values()])

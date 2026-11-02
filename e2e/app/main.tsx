@@ -50,7 +50,7 @@ const initial: DocViewerProps = {
   fileMenuItems: q.has('items') ? items : undefined,
   onLoad: (client) => log({ type: 'load', kind: client.kind, name: client.name }),
   onError: (error) => log({ type: 'error', message: error.message }),
-  collab: q.get('collab') ? { transport: q.get('collab')!, room: q.get('room') ?? 'e2e', user: { name: q.get('user') ?? 'Tester' } } : undefined,
+  collab: q.get('collab') ? { transport: q.get('collab')!, room: q.get('room') ?? 'e2e', base: Number(q.get('base')) || 0, user: { name: q.get('user') ?? 'Tester' } } : undefined,
 }
 
 function App() {

@@ -1,4 +1,4 @@
-import { StrictMode, useCallback, useMemo, useState } from 'react'
+import { StrictMode, useCallback, useEffect, useMemo, useState } from 'react'
 import { createRoot } from 'react-dom/client'
 import { DocViewer, type DocSource } from '../src'
 import type { CollabOptions } from '../src/collab'
@@ -27,7 +27,9 @@ const DOCS_URL = import.meta.env.DEV ? 'https://p10node.github.io/office-engine/
 const params = new URLSearchParams(location.search)
 const COLLAB_HTTP = params.get('collab') ?? `${location.protocol}//${location.hostname}:8787`
 const COLLAB_WS = COLLAB_HTTP.replace(/^http/, 'ws') + '/collab'
-const roomFile = (room: string) => `${COLLAB_HTTP}/rooms/${encodeURIComponent(room)}/file`
+const roomUrl = (room: string) => `${COLLAB_HTTP}/rooms/${encodeURIComponent(room)}`
+/** a room's document at snapshot `seq` (joined with `base: seq`: only later edits are replayed) */
+const roomFile = (room: string, seq: number) => `${roomUrl(room)}/file?seq=${seq}`
 
 function userName(): string {
   try {
@@ -49,9 +51,9 @@ async function sourceBytes(s: DocSource): Promise<Blob> {
 
 function App() {
   const initialRoom = params.get('room')
-  const initial = initialRoom ? roomFile(initialRoom) : params.get('src')
-  const [src, setSrc] = useState<DocSource | null>(initial)
-  const [room, setRoom] = useState<string | null>(initialRoom)
+  const [src, setSrc] = useState<DocSource | null>(initialRoom ? null : params.get('src'))
+  const [room, setRoom] = useState<string | null>(null)
+  const [base, setBase] = useState(0)
   const [user, setUser] = useState(userName)
   const [sharing, setSharing] = useState<string | null>(null)
   const [url, setUrl] = useState('')
@@ -59,16 +61,31 @@ function App() {
   const [loadMs, setLoadMs] = useState<number | null>(null)
   const [t0, setT0] = useState(() => performance.now())
 
-  const open = (s: DocSource, inRoom: string | null = null) => {
+  const open = (s: DocSource, inRoom: string | null = null, at = 0) => {
     setT0(performance.now())
     setLoadMs(null)
     setSrc(s)
     setRoom(inRoom)
+    setBase(at)
     const q = new URLSearchParams(location.search)
     if (inRoom) q.set('room', inRoom)
     else q.delete('room')
     history.replaceState(null, '', q.size ? `?${q}` : location.pathname)
   }
+  /** joins a shared room from its latest snapshot */
+  const join = async (id: string) => {
+    try {
+      const r = await fetch(roomUrl(id))
+      if (!r.ok) throw new Error(`HTTP ${r.status}`)
+      const { snapshot } = (await r.json()) as { snapshot: number }
+      open(roomFile(id, snapshot), id, snapshot)
+    } catch (e) {
+      setSharing(`Join failed: is the collab server running (bun run collab)? ${(e as Error).message}`)
+    }
+  }
+  useEffect(() => {
+    if (initialRoom) void join(initialRoom)
+  }, [])
   /** uploads the opened file as the shared base and joins its room */
   const share = async () => {
     if (!src) return
@@ -77,15 +94,15 @@ function App() {
       const blob = await sourceBytes(src)
       const id = Math.random().toString(36).slice(2, 10)
       const name = (src as File).name ?? (typeof src === 'string' ? decodeURIComponent(src.split(/[?#]/)[0].split('/').pop() ?? '') : 'document')
-      const r = await fetch(roomFile(id), { method: 'PUT', body: blob, headers: { 'X-File-Name': encodeURIComponent(name) } })
+      const r = await fetch(`${roomUrl(id)}/file`, { method: 'PUT', body: blob, headers: { 'X-File-Name': encodeURIComponent(name) } })
       if (!r.ok) throw new Error(`HTTP ${r.status}`)
-      open(roomFile(id), id)
+      open(roomFile(id, 0), id)
       setSharing(null)
     } catch (e) {
       setSharing(`Share failed: is the collab server running (bun run collab)? ${(e as Error).message}`)
     }
   }
-  const collab = useMemo<CollabOptions | undefined>(() => (room ? { transport: COLLAB_WS, room, user: { name: user } } : undefined), [room, user])
+  const collab = useMemo<CollabOptions | undefined>(() => (room ? { transport: COLLAB_WS, room, base, user: { name: user } } : undefined), [room, base, user])
   const link = room ? `${location.origin}${location.pathname}?room=${room}${params.get('collab') ? `&collab=${encodeURIComponent(COLLAB_HTTP)}` : ''}` : ''
   const onLoad = useCallback(() => setLoadMs(Math.round(performance.now() - t0)), [t0])
 
@@ -142,7 +159,7 @@ function App() {
             Share live
           </button>
         )}
-        {sharing && <span style={{ color: sharing.startsWith('Share failed') ? '#c5221f' : '#69707a' }}>{sharing}</span>}
+        {sharing && <span style={{ color: /failed/.test(sharing) ? '#c5221f' : '#69707a' }}>{sharing}</span>}
       </div>
       <div style={{ flex: 1, minHeight: 0, position: 'relative' }}>
         <DocViewer src={src} onLoad={onLoad} editable collab={collab} />
