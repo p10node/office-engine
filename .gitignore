@@ -1,0 +1,6 @@
+node_modules
+dist
+dist-playground
+playground/public/samples/large-*
+*.log
+.DS_Store

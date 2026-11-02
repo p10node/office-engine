@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>docs-engine — script embed</title>
+    <!-- One file: React + engine + worker are bundled. -->
+    <script src="../dist/docs-engine.embed.js"></script>
+    <style>
+      body { margin: 0; padding: 16px; font: 14px system-ui, sans-serif; background: #fafafa; }
+      .grid { display: grid; gap: 16px; grid-template-columns: repeat(auto-fit, minmax(420px, 1fr)); }
+      docs-viewer { height: 460px; border: 1px solid #ddd; border-radius: 8px; overflow: hidden; }
+      #mount { height: 460px; border: 1px solid #ddd; border-radius: 8px; overflow: hidden; margin-top: 16px; }
+    </style>
+  </head>
+  <body>
+    <h3>Web component</h3>
+    <div class="grid">
+      <docs-viewer src="../playground/public/samples/sample.docx"></docs-viewer>
+      <docs-viewer src="../playground/public/samples/sample.xlsx"></docs-viewer>
+      <docs-viewer src="../playground/public/samples/sample.pptx" thumbnails="false"></docs-viewer>
+    </div>
+    <h3>Imperative mount + local file</h3>
+    <input type="file" id="pick" accept=".docx,.xlsx,.pptx" />
+    <div id="mount"></div>
+    <script>
+      const viewer = DocsEngine.mount(document.getElementById('mount'), { src: null })
+      document.getElementById('pick').onchange = (e) => viewer.update({ src: e.target.files[0] })
+    </script>
+  </body>
+</html>

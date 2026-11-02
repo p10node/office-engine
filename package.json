@@ -1,0 +1,66 @@
+{
+  "name": "@eldora/docs-engine",
+  "version": "0.1.0",
+  "description": "Browser engine to view DOCX, XLSX, PPTX progressively (worker-based, range-loading, virtualized React views)",
+  "type": "module",
+  "license": "MIT",
+  "files": [
+    "dist"
+  ],
+  "main": "./dist/index.js",
+  "module": "./dist/index.js",
+  "types": "./dist/types/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/types/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./core": {
+      "types": "./dist/types/core/index.d.ts",
+      "import": "./dist/core.js"
+    },
+    "./embed": {
+      "types": "./dist/types/embed.d.ts",
+      "import": "./dist/embed.js"
+    },
+    "./worker": "./dist/docs-engine.worker.js",
+    "./embed.js": "./dist/docs-engine.embed.js"
+  },
+  "sideEffects": [
+    "./src/core/default-worker.ts",
+    "./src/embed.ts",
+    "./dist/index.js",
+    "./dist/core.js",
+    "./dist/embed.js",
+    "./dist/docs-engine.embed.js",
+    "**/*.css"
+  ],
+  "scripts": {
+    "dev": "vite --config vite.playground.config.ts",
+    "build": "bun run build:lib && bun run build:embed && bun run build:worker && bun run build:types",
+    "build:lib": "vite build",
+    "build:embed": "vite build --config vite.embed.config.ts",
+    "build:types": "tsc -p tsconfig.build.json",
+    "build:playground": "vite build --config vite.playground.config.ts",
+    "typecheck": "tsc --noEmit",
+    "test": "bun test",
+    "fixtures": "bun scripts/gen-fixtures.ts",
+    "build:worker": "vite build --config vite.worker.config.ts"
+  },
+  "peerDependencies": {
+    "react": ">=18",
+    "react-dom": ">=18"
+  },
+  "devDependencies": {
+    "@types/bun": "^1.4.4",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "@vitejs/plugin-react": "^6.1.2",
+    "fflate": "^0.8.3",
+    "playwright-core": "^1.64.1",
+    "react": "^19.3.1",
+    "react-dom": "^19.3.1",
+    "typescript": "^7.0.2",
+    "vite": "^8.3.5"
+  }
+}

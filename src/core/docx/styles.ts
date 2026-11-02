@@ -1,0 +1,293 @@
+import { cssFont } from '../fonts'
+import type { Theme } from '../theme'
+import { kid, kids, num, onOff, path, type XEl } from '../xml'
+import type { Border, ParaStyle, RunStyle } from './types'
+
+const HIGHLIGHT: Record<string, string> = {
+  yellow: '#ffff00', green: '#00ff00', cyan: '#00ffff', magenta: '#ff00ff', blue: '#0000ff', red: '#ff0000',
+  darkBlue: '#000080', darkCyan: '#008080', darkGreen: '#008000', darkMagenta: '#800080', darkRed: '#800000',
+  darkYellow: '#808000', darkGray: '#808080', lightGray: '#c0c0c0', black: '#000000', white: '#ffffff',
+}
+
+export const hexColor = (v: string | undefined): string | undefined =>
+  v && v !== 'auto' && /^[0-9a-fA-F]{6}$/.test(v) ? '#' + v.toLowerCase() : undefined
+
+export function shading(el: XEl | undefined): string | undefined {
+  if (!el) return undefined
+  return hexColor(el.a.fill) ?? (el.a.val === 'solid' ? hexColor(el.a.color) : undefined)
+}
+
+const BORDER_STYLE: Record<string, string> = {
+  single: 'solid', thick: 'solid', double: 'double', dotted: 'dotted', dashed: 'dashed', dotDash: 'dashed',
+  dotDotDash: 'dotted', triple: 'double', thinThickSmallGap: 'double', thickThinSmallGap: 'double',
+  wave: 'solid', dashSmallGap: 'dashed', outset: 'outset', inset: 'inset',
+}
+
+export function border(el: XEl | undefined): Border | undefined | null {
+  if (!el) return undefined
+  const v = el.a.val
+  if (!v || v === 'nil' || v === 'none') return null
+  const w = Math.max(0.5, (num(el.a.sz) ?? 4) / 8)
+  return { w: v === 'double' ? Math.max(w, 2.25) : w, style: BORDER_STYLE[v] ?? 'solid', color: hexColor(el.a.color) ?? '#000000' }
+}
+
+export const borderCss = (b: Border | null | undefined): string | undefined =>
+  b === null ? 'none' : b ? `${b.w}pt ${b.style} ${b.color}` : undefined
+
+function fontOf(rf: XEl, theme: Theme): string | undefined {
+  const th = rf.a.asciiTheme ?? rf.a.hAnsiTheme
+  if (th) return cssFont(th.startsWith('major') ? theme.major : theme.minor)
+  return cssFont(rf.a.ascii ?? rf.a.hAnsi ?? rf.a.cs ?? rf.a.eastAsia)
+}
+
+export function readRPr(rPr: XEl | undefined, theme: Theme): RunStyle {
+  const s: RunStyle = {}
+  if (!rPr) return s
+  for (const c of rPr.c) {
+    switch (c.n) {
+      case 'b': s.b = onOff(c); break
+      case 'i': s.i = onOff(c); break
+      case 'strike': s.strike = onOff(c); break
+      case 'dstrike': s.dstrike = onOff(c); break
+      case 'caps': s.caps = onOff(c); break
+      case 'smallCaps': s.smallCaps = onOff(c); break
+      case 'vanish': s.vanish = onOff(c); break
+      case 'u': s.u = c.a.val ?? 'single'; break
+      case 'color': { const col = hexColor(c.a.val); if (col) s.color = col; break }
+      case 'sz': { const v = num(c.a.val); if (v) s.sz = v / 2; break }
+      case 'rFonts': { const f = fontOf(c, theme); if (f) s.font = f; break }
+      case 'highlight': { const h = HIGHLIGHT[c.a.val]; if (h) s.hl = h; break }
+      case 'shd': { const h = shading(c); if (h) s.shd = h; break }
+      case 'vertAlign': s.va = c.a.val === 'superscript' ? 'sup' : c.a.val === 'subscript' ? 'sub' : undefined; break
+      case 'spacing': { const v = num(c.a.val); if (v) s.spacing = v / 20; break }
+    }
+  }
+  return s
+}
+
+export interface NumPr {
+  numId: string
+  ilvl: number
+}
+
+export interface PPrResult {
+  ps: ParaStyle
+  styleId?: string
+  numPr?: NumPr
+  sectPr?: XEl
+}
+
+export function readPPr(pPr: XEl | undefined): PPrResult {
+  const ps: ParaStyle = {}
+  const out: PPrResult = { ps }
+  if (!pPr) return out
+  for (const c of pPr.c) {
+    switch (c.n) {
+      case 'pStyle': out.styleId = c.a.val; break
+      case 'numPr': {
+        const id = kid(c, 'numId')?.a.val
+        if (id !== undefined) out.numPr = { numId: id, ilvl: num(kid(c, 'ilvl')?.a.val, 0)! }
+        break
+      }
+      case 'jc': {
+        const v = c.a.val
+        ps.align = v === 'center' ? 'center' : v === 'right' || v === 'end' ? 'right' : v === 'both' || v === 'distribute' ? 'justify' : 'left'
+        break
+      }
+      case 'ind': {
+        const l = num(c.a.left ?? c.a.start)
+        const r = num(c.a.right ?? c.a.end)
+        if (l !== undefined) ps.indL = l / 20
+        if (r !== undefined) ps.indR = r / 20
+        const hang = num(c.a.hanging)
+        const first = num(c.a.firstLine)
+        if (hang !== undefined) ps.indFirst = -hang / 20
+        else if (first !== undefined) ps.indFirst = first / 20
+        break
+      }
+      case 'spacing': {
+        const b = num(c.a.before)
+        const a = num(c.a.after)
+        if (c.a.beforeAutospacing === '1' || c.a.beforeAutospacing === 'true') ps.before = 14
+        else if (b !== undefined) ps.before = b / 20
+        if (c.a.afterAutospacing === '1' || c.a.afterAutospacing === 'true') ps.after = 14
+        else if (a !== undefined) ps.after = a / 20
+        const line = num(c.a.line)
+        if (line !== undefined) {
+          const rule = (c.a.lineRule as ParaStyle['lineRule']) ?? 'auto'
+          ps.lineRule = rule
+          ps.line = rule === 'auto' ? line / 240 : line / 20
+        }
+        break
+      }
+      case 'shd': { const h = shading(c); if (h) ps.shd = h; break }
+      case 'pBdr': {
+        const t = border(kid(c, 'top'))
+        const b = border(kid(c, 'bottom'))
+        const l = border(kid(c, 'left') ?? kid(c, 'start'))
+        const r = border(kid(c, 'right') ?? kid(c, 'end'))
+        if (t) ps.bTop = t
+        if (b) ps.bBottom = b
+        if (l) ps.bLeft = l
+        if (r) ps.bRight = r
+        break
+      }
+      case 'keepNext': ps.keepNext = onOff(c); break
+      case 'contextualSpacing': ps.contextual = onOff(c); break
+      case 'pageBreakBefore': ps.pageBreakBefore = onOff(c); break
+      case 'outlineLvl': ps.outline = num(c.a.val); break
+      case 'sectPr': out.sectPr = c; break
+    }
+  }
+  return out
+}
+
+export const merge = <T extends object>(...parts: (T | undefined)[]): T => Object.assign({}, ...parts.filter(Boolean)) as T
+
+// ---------------------------------------------------------------------------
+
+interface StyleDef {
+  id: string
+  type: string
+  basedOn?: string
+  el: XEl
+  isDefault: boolean
+}
+
+export interface ResolvedParaStyle {
+  ps: ParaStyle
+  rs: RunStyle
+  numPr?: NumPr
+}
+
+export interface CondFormat {
+  rs: RunStyle
+  shd?: string
+}
+
+export interface ResolvedTableStyle {
+  ps: ParaStyle
+  rs: RunStyle
+  borders: Record<string, Border | null | undefined>
+  cellMar: Partial<Record<'top' | 'left' | 'bottom' | 'right', number>>
+  shd?: string
+  cond: Record<string, CondFormat>
+}
+
+export class StyleSheet {
+  private defs = new Map<string, StyleDef>()
+  private paraCache = new Map<string, ResolvedParaStyle>()
+  private charCache = new Map<string, RunStyle>()
+  private tblCache = new Map<string, ResolvedTableStyle>()
+  defaultPara?: string
+  defaultTable?: string
+  docRs: RunStyle = {}
+  docPs: ParaStyle = {}
+
+  constructor(root: XEl | undefined, private theme: Theme) {
+    if (!root) return
+    const dd = kid(root, 'docDefaults')
+    this.docRs = readRPr(path(dd, 'rPrDefault', 'rPr'), theme)
+    this.docPs = readPPr(path(dd, 'pPrDefault', 'pPr')).ps
+    for (const s of kids(root, 'style')) {
+      const id = s.a.styleId
+      if (!id) continue
+      const def: StyleDef = {
+        id,
+        type: s.a.type ?? 'paragraph',
+        basedOn: kid(s, 'basedOn')?.a.val,
+        el: s,
+        isDefault: s.a.default === '1' || s.a.default === 'true',
+      }
+      this.defs.set(id, def)
+      if (def.isDefault && def.type === 'paragraph') this.defaultPara = id
+      if (def.isDefault && def.type === 'table') this.defaultTable = id
+    }
+  }
+
+  private chain(id: string | undefined): StyleDef[] {
+    const out: StyleDef[] = []
+    const seen = new Set<string>()
+    let cur = id ? this.defs.get(id) : undefined
+    while (cur && !seen.has(cur.id)) {
+      seen.add(cur.id)
+      out.unshift(cur)
+      cur = cur.basedOn ? this.defs.get(cur.basedOn) : undefined
+    }
+    return out
+  }
+
+  para(id: string | undefined): ResolvedParaStyle {
+    const key = id ?? this.defaultPara ?? ''
+    let r = this.paraCache.get(key)
+    if (r) return r
+    r = { ps: {}, rs: {} }
+    for (const d of this.chain(key)) {
+      const p = readPPr(kid(d.el, 'pPr'))
+      r.ps = merge(r.ps, p.ps)
+      if (p.numPr) r.numPr = p.numPr
+      r.rs = merge(r.rs, readRPr(kid(d.el, 'rPr'), this.theme))
+    }
+    this.paraCache.set(key, r)
+    return r
+  }
+
+  char(id: string | undefined): RunStyle {
+    if (!id) return {}
+    let r = this.charCache.get(id)
+    if (r) return r
+    r = {}
+    for (const d of this.chain(id)) r = merge(r, readRPr(kid(d.el, 'rPr'), this.theme))
+    this.charCache.set(id, r)
+    return r
+  }
+
+  table(id: string | undefined): ResolvedTableStyle {
+    const key = id ?? this.defaultTable ?? ''
+    let r = this.tblCache.get(key)
+    if (r) return r
+    r = { ps: {}, rs: {}, borders: {}, cellMar: {}, cond: {} }
+    for (const d of this.chain(key)) {
+      r.ps = merge(r.ps, readPPr(kid(d.el, 'pPr')).ps)
+      r.rs = merge(r.rs, readRPr(kid(d.el, 'rPr'), this.theme))
+      const tblPr = kid(d.el, 'tblPr')
+      Object.assign(r.borders, readTableBorders(kid(tblPr, 'tblBorders')))
+      Object.assign(r.cellMar, readMargins(kid(tblPr, 'tblCellMar')))
+      const shd = shading(path(d.el, 'tcPr', 'shd'))
+      if (shd) r.shd = shd
+      for (const c of kids(d.el, 'tblStylePr')) {
+        const type = c.a.type
+        if (!type) continue
+        const prev = r.cond[type] ?? { rs: {} }
+        r.cond[type] = {
+          rs: merge(prev.rs, readRPr(kid(c, 'rPr'), this.theme)),
+          shd: shading(path(c, 'tcPr', 'shd')) ?? prev.shd,
+        }
+      }
+    }
+    this.tblCache.set(key, r)
+    return r
+  }
+}
+
+export function readTableBorders(el: XEl | undefined): Record<string, Border | null | undefined> {
+  const out: Record<string, Border | null | undefined> = {}
+  if (!el) return out
+  for (const c of el.c) {
+    const k = c.n === 'start' ? 'left' : c.n === 'end' ? 'right' : c.n
+    const b = border(c)
+    if (b !== undefined) out[k] = b
+  }
+  return out
+}
+
+export function readMargins(el: XEl | undefined): Partial<Record<'top' | 'left' | 'bottom' | 'right', number>> {
+  const out: Partial<Record<'top' | 'left' | 'bottom' | 'right', number>> = {}
+  if (!el) return out
+  for (const c of el.c) {
+    const k = (c.n === 'start' ? 'left' : c.n === 'end' ? 'right' : c.n) as 'top' | 'left' | 'bottom' | 'right'
+    const w = num(c.a.w)
+    if (w !== undefined && (c.a.type === undefined || c.a.type === 'dxa')) out[k] = w / 20
+  }
+  return out
+}

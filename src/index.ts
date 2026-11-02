@@ -1,0 +1,17 @@
+import './core/default-worker'
+
+export { DocViewer, type DocViewerProps } from './react/DocViewer'
+export { DocxView, type DocxViewProps } from './react/docx/DocxView'
+export { XlsxView, type XlsxViewProps } from './react/xlsx/XlsxView'
+export { PptxView, type PptxViewProps } from './react/pptx/PptxView'
+export { SlideView } from './react/pptx/Slide'
+export { useDocument, type DocumentState } from './react/useDocument'
+export { injectStyles, stylesText } from './react/injectStyles'
+export type { Zoom } from './react/common/ZoomControl'
+
+export { DocumentClient, setDefaultWorker, type OpenOptions } from './core/worker/client'
+export type { DocSource } from './core/source'
+export type { DocKind } from './core/opc'
+export type * from './core/docx/types'
+export type * from './core/xlsx/types'
+export type * from './core/pptx/types'
