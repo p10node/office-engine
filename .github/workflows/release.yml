@@ -1,27 +1,31 @@
 name: Release
 
-# Two ways to release:
-#   1. Actions tab -> Release -> Run workflow (pick bump): bumps package.json,
-#      publishes to npm, pushes the release commit + tag, creates a GitHub release.
-#   2. Locally: `npm version patch && git push --follow-tags` -> the pushed tag
-#      triggers this workflow, which publishes that exact version.
+# Release = push a branch named after the version:
 #
-# npm auth: either configure npm Trusted Publishing for this repo/workflow
-# (no secret needed), or add an `NPM_TOKEN` repository secret (automation token).
+#   git switch -c v0.2.0 main && git push -u origin v0.2.0
+#
+# The workflow then runs CI, sets package.json "version" to match the branch
+# (committing `chore(release): v0.2.0` onto the branch if it differs), creates
+# and pushes the `v0.2.0` tag, creates the GitHub release and publishes to npm.
+#
+# - Release notes: docs/releases/<tag>.md is optional. If present it goes on
+#   top, GitHub's generated commit list below it.
+# - Prereleases (`v0.2.0-rc.1`) are marked prerelease on GitHub and go to the
+#   `next` npm dist-tag; everything else goes to `latest`.
+# - Re-running is safe: an existing tag, release or npm version is reused.
+# - Versions are immutable: pushing new commits to a branch whose tag already
+#   exists fails. Cut a new version branch instead.
+#
+# npm auth is Trusted Publishing (OIDC), no token secret. The npm package
+# must trust this repo + `release.yml` with `npm publish` allowed; see
+# docs/development.md.
 
 on:
-  workflow_dispatch:
-    inputs:
-      bump:
-        description: Version bump
-        type: choice
-        options: [patch, minor, major, prepatch, preminor, premajor, prerelease]
-        default: patch
   push:
-    tags: ['v*.*.*']
+    branches: ['v[0-9]+.[0-9]+.[0-9]+*']
 
 concurrency:
-  group: release
+  group: release-${{ github.ref }}
   cancel-in-progress: false
 
 permissions:
@@ -34,86 +38,121 @@ jobs:
   ci:
     uses: ./.github/workflows/ci.yml
 
-  publish:
+  release:
     needs: ci
-    # Manual runs must target a branch (the bump commit is pushed back to it).
-    if: github.event_name == 'push' || github.ref_type == 'branch'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     permissions:
       contents: write # push release commit + tag, create GitHub release
       id-token: write # npm provenance / trusted publishing
+    env:
+      TAG: ${{ github.ref_name }}
     steps:
       - uses: actions/checkout@v7
-
-      - uses: oven-sh/setup-bun@v2
         with:
-          bun-version: ${{ env.BUN_VERSION }}
+          fetch-depth: 0 # need tags and the remote branch head
 
       - uses: actions/setup-node@v7
         with:
           node-version: 24
           registry-url: https://registry.npmjs.org
 
-      # Trusted publishing needs npm >= 11.5.1
-      - run: npm install -g npm@latest
-
-      - run: bun install --frozen-lockfile
-
-      - name: Bump version
-        if: github.event_name == 'workflow_dispatch'
-        env:
-          BUMP: ${{ inputs.bump }}
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          npm version "$BUMP" --preid rc -m "chore(release): v%s"
-
       - name: Resolve version
         id: meta
         run: |
-          name=$(jq -r .name package.json)
-          version=$(jq -r .version package.json)
-          if [ "$GITHUB_EVENT_NAME" = "push" ] && [ "v$version" != "$GITHUB_REF_NAME" ]; then
-            echo "::error::Tag $GITHUB_REF_NAME does not match package.json version v$version"
+          set -euo pipefail
+          semver='^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-[0-9A-Za-z.-]+)?$'
+          if ! [[ "$TAG" =~ $semver ]]; then
+            echo "::error::Branch '$TAG' is not a version (expected vMAJOR.MINOR.PATCH or vMAJOR.MINOR.PATCH-pre)"
             exit 1
           fi
-          case "$version" in *-*) tag=next; pre=true ;; *) tag=latest; pre=false ;; esac
-          if npm view "$name@$version" version >/dev/null 2>&1; then published=true; else published=false; fi
+          version="${TAG#v}"
+          case "$version" in *-*) dist_tag=next; pre=true ;; *) dist_tag=latest; pre=false ;; esac
+
+          head=$(git rev-parse "origin/$TAG")
+          if git rev-parse -q --verify "refs/tags/$TAG" >/dev/null; then
+            tagged=$(git rev-parse "refs/tags/$TAG^{commit}")
+            if [ "$tagged" != "$head" ]; then
+              echo "::error::Tag $TAG already exists at ${tagged:0:7} but branch $TAG is at ${head:0:7}. Versions are immutable: cut a new version branch."
+              exit 1
+            fi
+            git checkout -q "refs/tags/$TAG"
+            tagged=true
+          else
+            if [ "$GITHUB_SHA" != "$head" ]; then
+              echo "::error::Branch $TAG moved to ${head:0:7} after this run started; the run for that push releases it."
+              exit 1
+            fi
+            tagged=false
+          fi
+
           {
             echo "version=$version"
-            echo "dist_tag=$tag"
+            echo "dist_tag=$dist_tag"
             echo "prerelease=$pre"
-            echo "published=$published"
+            echo "tagged=$tagged"
           } >> "$GITHUB_OUTPUT"
 
-      - run: bun run build
-
-      # Provenance requires package.json "repository" to match this repo.
-      - name: Ensure repository field
-        run: |
-          jq -e .repository package.json >/dev/null || \
-            npm pkg set repository.type=git "repository.url=git+https://github.com/$GITHUB_REPOSITORY.git"
-
-      - name: Publish to npm
-        if: steps.meta.outputs.published != 'true'
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-        run: npm publish --provenance --access public --tag "${{ steps.meta.outputs.dist_tag }}"
-
-      - name: Push release commit and tag
-        if: github.event_name == 'workflow_dispatch'
+      - name: Set version and push tag
+        if: steps.meta.outputs.tagged == 'false'
         env:
           VERSION: ${{ steps.meta.outputs.version }}
-        run: git push --atomic origin "HEAD:$GITHUB_REF_NAME" "v$VERSION"
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          if [ "$(jq -r .version package.json)" != "$VERSION" ]; then
+            npm version "$VERSION" --no-git-tag-version
+            git commit -am "chore(release): $TAG"
+          fi
+          git tag -a "$TAG" -m "$TAG"
+          git push --atomic origin "HEAD:refs/heads/$TAG" "refs/tags/$TAG"
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: ${{ env.BUN_VERSION }}
+
+      - run: bun install --frozen-lockfile
+      - run: bun run build
+
+      - name: Pack
+        id: pack
+        run: echo "file=$(npm pack --silent | tail -1)" >> "$GITHUB_OUTPUT"
 
       - name: Create GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
-          VERSION: ${{ steps.meta.outputs.version }}
           PRERELEASE: ${{ steps.meta.outputs.prerelease }}
+          TARBALL: ${{ steps.pack.outputs.file }}
         run: |
-          gh release view "v$VERSION" >/dev/null 2>&1 && exit 0
-          flags="--generate-notes --verify-tag"
-          [ "$PRERELEASE" = "true" ] && flags="$flags --prerelease"
-          gh release create "v$VERSION" --title "v$VERSION" $flags
+          set -euo pipefail
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "GitHub release $TAG already exists"
+            exit 0
+          fi
+          args=(--title "$TAG" --generate-notes --verify-tag)
+          notes="docs/releases/$TAG.md"
+          if [ -f "$notes" ]; then
+            args+=(--notes-file "$notes")
+          else
+            echo "::notice::no $notes, publishing with generated notes only"
+          fi
+          [ "$PRERELEASE" = "true" ] && args+=(--prerelease)
+          gh release create "$TAG" "${args[@]}" "$TARBALL"
+
+      # Trusted publishing needs npm >= 11.5.1
+      - run: npm install -g npm@latest
+
+      - name: Publish to npm (trusted publishing)
+        env:
+          VERSION: ${{ steps.meta.outputs.version }}
+          DIST_TAG: ${{ steps.meta.outputs.dist_tag }}
+          TARBALL: ${{ steps.pack.outputs.file }}
+        run: |
+          set -euo pipefail
+          name=$(jq -r .name package.json)
+          if npm view "$name@$VERSION" version >/dev/null 2>&1; then
+            echo "$name@$VERSION is already on npm"
+            exit 0
+          fi
+          npm publish "$TARBALL" --provenance --access public --tag "$DIST_TAG"

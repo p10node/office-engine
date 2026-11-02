@@ -45,9 +45,24 @@ One-time setup: **Settings → Pages → Source: GitHub Actions**. Build locally
 
 CI (`.github/workflows/ci.yml`) runs typecheck, tests, build and `npm pack --dry-run` on every push to `main` and every PR.
 
-Publishing (`.github/workflows/release.yml`) is triggered by either:
+To release, push a branch named after the version:
 
-- **Actions → Release → Run workflow**, picking `patch` / `minor` / `major` / `pre*`: bumps `package.json`, publishes to npm with provenance, pushes the `chore(release)` commit + `vX.Y.Z` tag, creates a GitHub release.
-- **Pushing a tag** from local: `npm version patch && git push --follow-tags`.
+```sh
+git switch -c v0.2.0 main
+git push -u origin v0.2.0
+```
 
-Prerelease versions (`1.2.0-rc.0`) go to the `next` dist-tag, others to `latest`. npm auth: configure [Trusted Publishing](https://docs.npmjs.com/trusted-publishers) for this repo + `release.yml`, or add an `NPM_TOKEN` repository secret.
+`.github/workflows/release.yml` then runs CI, sets `package.json` `version` to match the branch (committing `chore(release): v0.2.0` onto the branch if it differs), pushes the `v0.2.0` tag, creates the GitHub release with the npm tarball attached, and publishes to npm with provenance.
+
+- Release notes: optional `docs/releases/<tag>.md`, placed above GitHub's generated commit list.
+- Prereleases (`v0.2.0-rc.1`) are marked prerelease on GitHub and go to the `next` dist-tag; others go to `latest`.
+- Re-running the workflow is safe: an existing tag, release or npm version is reused.
+- Versions are immutable: pushing new commits to a branch whose tag already exists fails. Cut a new version branch.
+
+npm auth is [Trusted Publishing](https://docs.npmjs.com/trusted-publishers) (OIDC): the workflow uses no token secret. The package trusts this repo and workflow, set up once with 2FA:
+
+```sh
+npm trust github @p10node/office-engine --repo p10node/office-engine --file release.yml --allow-publish
+```
+
+`npm trust` needs npm >= 11.15.0 and only works on a package that already exists on npm, so the package was bootstrapped with a placeholder `0.0.0` published by hand.
