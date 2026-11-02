@@ -27,9 +27,11 @@ html, body { margin: 0; padding: 0; background: #fff; }
 .de-print-page { position: relative; overflow: hidden; background: #fff; break-after: page; }
 .de-print-page:last-child { break-after: auto; }
 .de-print-page > .de-page { left: 0; top: 0; box-shadow: none; }
-.de-print-table { border-collapse: collapse; table-layout: fixed; }
-.de-print-table td { padding: 0 3px 1px; overflow: hidden; }
+/* position: own paint layer, so clipping cells after layout (fitText) stays cheap */
+.de-print-table { position: relative; border-collapse: collapse; table-layout: fixed; }
+.de-print-table td { padding: 0 3px 1px; vertical-align: bottom; white-space: pre; }
 .de-print-table.de-print-grid td { border: 1px solid #e2e4e7; }
+.de-print-grid + .de-print-grid { margin-top: -1px; }
 @media screen {
   body { background: #e9ebee; }
   .de-print { padding: 24px 16px; }
@@ -84,6 +86,73 @@ async function settle(doc: Document, host: HTMLElement) {
   await Promise.race([doc.fonts?.ready, sleep(3000)])
 }
 
+const RTL = /[\u0590-\u08ff\ufb1d-\ufdff\ufe70-\ufefc]/
+
+/** first index in [lo, hi) where `ok` holds (`ok` false then true), hi when none */
+function search(lo: number, hi: number, ok: (i: number) => boolean) {
+  while (lo < hi) {
+    const mid = (lo + hi) >> 1
+    if (ok(mid)) hi = mid
+    else lo = mid + 1
+  }
+  return lo
+}
+
+/**
+ * Cuts the text of the elements marked `data-de-fit` to what fits inside them ("#" marks numbers: shown as ###).
+ * Cutting, not clipping: a clip (overflow: hidden) per spreadsheet cell makes Chrome's print layout superlinear in
+ * their count — a 20,000-row sheet took minutes and crashed the print preview. Wrapped or right-to-left text is clipped.
+ */
+function fitText(host: HTMLElement) {
+  const view = host.ownerDocument.defaultView!
+  const range = host.ownerDocument.createRange()
+  const box = (text: Text, i: number) => {
+    range.setStart(text, i)
+    range.setEnd(text, i + 1)
+    return range.getBoundingClientRect()
+  }
+  const cuts: [Text, string][] = []
+  const clips: HTMLElement[] = []
+  for (const el of host.querySelectorAll<HTMLElement>('[data-de-fit]')) {
+    const node = el.firstChild
+    if (node?.nodeType !== Node.TEXT_NODE || node.nextSibling) continue
+    const text = node as Text
+    const s = text.data
+    range.selectNodeContents(text)
+    const t = range.getBoundingClientRect()
+    const b = el.getBoundingClientRect()
+    // the padding box: what overflow: hidden would show
+    const left = b.left + el.clientLeft - 0.5
+    const right = b.left + el.clientLeft + el.clientWidth + 0.5
+    if (t.left >= left && t.right <= right) continue
+    const cs = view.getComputedStyle(el)
+    if (el.dataset.deFit === '#') {
+      const room = el.clientWidth - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight)
+      cuts.push([text, '#'.repeat(Math.max(1, Math.floor(room / (t.width / s.length))))])
+    } else if (RTL.test(s) || (cs.whiteSpace !== 'pre' && cs.whiteSpace !== 'nowrap')) {
+      // characters out of visual order, or lines wrapped
+      clips.push(el)
+    } else {
+      const lines: string[] = []
+      let start = 0
+      for (const line of s.split('\n')) {
+        const end = start + line.length
+        // a line's characters run left to right: keep those inside the cell
+        let i = search(start, end, (k) => box(text, k).left >= left)
+        let j = search(i, end, (k) => box(text, k).right > right)
+        if (/[\udc00-\udfff]/.test(s[i] ?? '')) i++
+        if (/[\ud800-\udbff]/.test(s[j - 1] ?? '')) j--
+        lines.push(s.slice(i, Math.max(i, j)))
+        start = end + 1
+      }
+      cuts.push([text, lines.join('\n')])
+    }
+  }
+  // writes after all reads: one layout
+  for (const [text, s] of cuts) text.data = s
+  for (const el of clips) el.style.overflow = 'hidden'
+}
+
 interface Mounted {
   frame: HTMLIFrameElement
   doc: Document
@@ -120,6 +189,7 @@ async function mount(p: Printable, title: string): Promise<Mounted> {
   }
   try {
     await settle(doc, host)
+    fitText(host)
   } catch (e) {
     dispose()
     throw e
@@ -175,7 +245,7 @@ function toDataUrl(blob: Blob): Promise<string> {
 export async function exportHtml(p: Printable, title: string): Promise<Blob> {
   const m = await mount(p, title)
   try {
-    let body = m.host.outerHTML.replace(/ contenteditable="(?:true|false)"/g, '')
+    let body = m.host.outerHTML.replace(/ contenteditable="(?:true|false)"| data-de-fit="#?"/g, '')
     const blobs = new Set(body.match(/blob:[^"'()\s&]+/g) ?? [])
     for (const url of blobs) {
       try {

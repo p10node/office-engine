@@ -15,7 +15,17 @@ async function stubPrint(v: Viewer) {
           const w = (n as HTMLIFrameElement).contentWindow!
           w.print = () => {
             const d = w.document
-            ;(window as any).__printed.push({ pages: d.querySelectorAll('.de-print-page').length, rows: d.querySelectorAll('tr').length, title: d.title, top: document.title, text: d.body.innerText.slice(0, 2000) })
+            const tables = [...d.querySelectorAll('table')]
+            ;(window as any).__printed.push({
+              pages: d.querySelectorAll('.de-print-page').length,
+              rows: d.querySelectorAll('tr').length,
+              tables: tables.length,
+              tableRows: Math.max(0, ...tables.map((t) => t.rows.length)),
+              clipped: [...d.querySelectorAll('td')].filter((td) => (td as HTMLElement).style.overflow === 'hidden').length,
+              title: d.title,
+              top: document.title,
+              text: d.body.innerText.slice(0, 2000),
+            })
           }
           w.document.execCommand = () => false
         }
@@ -24,7 +34,19 @@ async function stubPrint(v: Viewer) {
 }
 const printed = async (v: Viewer) => {
   await v.page.waitForFunction(() => (window as any).__printed?.length > 0, null, { timeout: 30_000 })
-  return (await v.page.evaluate(() => (window as any).__printed.at(-1))) as { pages: number; rows: number; title: string; top: string; text: string }
+  return (await v.page.evaluate(() => (window as any).__printed.at(-1))) as Printed
+}
+interface Printed {
+  pages: number
+  rows: number
+  tables: number
+  /** most rows in one table */
+  tableRows: number
+  /** cells with their own clip */
+  clipped: number
+  title: string
+  top: string
+  text: string
 }
 
 const file = (name: string, text: string, mimeType = 'text/plain') => ({ name, mimeType, buffer: Buffer.from(text) })
@@ -163,6 +185,28 @@ describe('Download as', () => {
     const q = await printed(x)
     expect(q.rows).toBeGreaterThan(50)
     expect(q.text).toContain('Sales by region')
+  })
+
+  test('print: a long sheet goes out as short tables, cells cut to fit instead of clipped', async () => {
+    const v = await viewer({ src: 'samples/sample.xlsx' })
+    await v.page.locator('.de-tab[role=tab]', { hasText: 'Data' }).click()
+    await v.page.waitForFunction(() => document.querySelector('.de-tab[aria-selected=true]')?.textContent === 'Data')
+    await v.page.waitForTimeout(400)
+    const ratio = await v.shown('D2')
+    await stubPrint(v)
+    // the sheet must have loaded completely: try again while it is still loading
+    for (let i = 0; i < 20 && !(await v.page.evaluate(() => (window as any).__printed.length)); i++) {
+      await v.menu('Print')
+      await v.page.waitForTimeout(1000)
+    }
+    const p = await printed(v)
+    expect(p.rows).toBe(5001)
+    expect(p.tables).toBeGreaterThanOrEqual(50)
+    expect(p.tableRows).toBeLessThanOrEqual(100)
+    expect(p.clipped).toBe(0)
+    // decimals shortened like the grid shows them
+    expect(ratio).toMatch(/^0\.\d+$/)
+    expect(p.text).toContain(`1\tItem 1\t651\t${ratio}`)
   })
 })
 
