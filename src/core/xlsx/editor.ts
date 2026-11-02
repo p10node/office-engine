@@ -123,6 +123,12 @@ class StyleEditor {
   root: RNode
   P: string
   private cache = new Map<string, number>()
+  /**
+   * per section: serialized entry → first index. Derived entries reuse identical ones, so derivation
+   * depends only on the table's content — a saved and reopened workbook derives the same indexes
+   * as the live one (collaboration snapshots rely on it).
+   */
+  private found = new Map<string, Map<string, number>>()
   changed = false
 
   constructor(xml: string) {
@@ -148,6 +154,30 @@ class StyleEditor {
     setAttr(sec, 'count', String(n))
     this.changed = true
     return n - 1
+  }
+
+  private lookup(sectionName: string): Map<string, number> {
+    let m = this.found.get(sectionName)
+    if (!m) {
+      const idx = new Map<string, number>()
+      kidsOf(kidOf(this.root, sectionName)).forEach((k, i) => {
+        const s = serialize([k])
+        if (!idx.has(s)) idx.set(s, i)
+      })
+      this.found.set(sectionName, (m = idx))
+    }
+    return m
+  }
+
+  /** index of an entry equal to `node`, appended when there is none */
+  private intern(sectionName: string, node: RNode): number {
+    const s = serialize([node])
+    const m = this.lookup(sectionName)
+    const hit = m.get(s)
+    if (hit !== undefined) return hit
+    const i = this.append(sectionName, node)
+    m.set(s, i)
+    return i
   }
 
   private numFmtId(code: string): number {
@@ -185,7 +215,7 @@ class StyleEditor {
         put('name', el(P + 'name', { val: patch.font }))
         put('scheme', undefined)
       }
-      setAttr(xf, 'fontId', String(this.append('fonts', font)))
+      setAttr(xf, 'fontId', String(this.intern('fonts', font)))
       setAttr(xf, 'applyFont', '1')
     }
     if ('fill' in patch) {
@@ -194,7 +224,7 @@ class StyleEditor {
         const fill = parseRaw(
           `<${P}fill><${P}patternFill patternType="solid"><${P}fgColor rgb="FF${patch.fill.replace('#', '').toUpperCase()}"/><${P}bgColor indexed="64"/></${P}patternFill></${P}fill>`,
         )[0] as RNode
-        setAttr(xf, 'fillId', String(this.append('fills', fill)))
+        setAttr(xf, 'fillId', String(this.intern('fills', fill)))
       }
       setAttr(xf, 'applyFill', '1')
     }
@@ -210,7 +240,7 @@ class StyleEditor {
         setOrdered(b, node, side, order)
       }
       if (!kidOf(b, 'diagonal')) setOrdered(b, el(P + 'diagonal'), 'diagonal', order)
-      setAttr(xf, 'borderId', String(this.append('borders', b)))
+      setAttr(xf, 'borderId', String(this.intern('borders', b)))
       setAttr(xf, 'applyBorder', '1')
     }
     if ('align' in patch || 'wrap' in patch || 'valign' in patch || 'rotate' in patch) {
@@ -230,7 +260,7 @@ class StyleEditor {
       setAttr(xf, 'numFmtId', String(this.numFmtId(patch.numFmt)))
       setAttr(xf, 'applyNumberFormat', '1')
     }
-    const idx = this.append('cellXfs', xf)
+    const idx = this.intern('cellXfs', xf)
     this.cache.set(key, idx)
     return idx
   }
@@ -254,6 +284,8 @@ class StyleEditor {
       const drop = new Set<RChild>(kids.slice(len))
       sec.c = sec.c.filter((c) => !drop.has(c))
       setAttr(sec, 'count', String(len))
+      const idx = this.found.get(name)
+      if (idx) for (const [k, v] of idx) if (v >= len) idx.delete(k)
     }
     for (const [k, v] of this.cache) if (v >= m.cellXfs) this.cache.delete(k)
   }

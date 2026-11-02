@@ -121,6 +121,8 @@ export class Calc {
         const s = this.sheetIndex(sheetName, this.cur)
         if (s < 0) return new FormulaError('#REF!')
         const id = idOf(s, r * MAX_COL + c)
+        // circular reference: an error, not the cell's previous value (which would make results depend on history)
+        if (visiting.has(id)) return new FormulaError('#REF!')
         if (pending.has(id)) this.compute(id, pending, visiting)
         return this.value(s, r, c)
       },

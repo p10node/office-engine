@@ -507,3 +507,37 @@ describe('xlsx new sheet', () => {
     expect(((await re.engine.call('xlsx.cell', [1, 0, 0])) as any).formula).toBe('=Sales!C3*2')
   })
 })
+
+describe('xlsx state survives save/reopen exactly (collaboration snapshots)', () => {
+  test('circular references evaluate to #REF! however often they are recalculated', async () => {
+    const mem = new Blob([await Bun.file(S('sample.xlsx')).arrayBuffer()])
+    const { engine, cell } = await openXlsx(mem)
+    for (let i = 0; i < 3; i++) {
+      // recalculated each time: the previous value must not leak into the result
+      await engine.call('xlsx.set', [0, [{ r: 79, c: 0, input: '=A80&"!"' }]])
+      await engine.call('xlsx.set', [0, [{ r: 80, c: 0, input: '=B81+1' }, { r: 80, c: 1, input: '=A81+1' }]])
+    }
+    expect((await cell(79, 0))[1]).toBe('#REF!')
+    expect((await cell(80, 0))[1]).toBe('#REF!')
+    expect((await cell(80, 1))[1]).toBe('#REF!')
+    const re = await openXlsx((await engine.call('save', [])) as Blob)
+    expect((await re.cell(79, 0))[1]).toBe('#REF!')
+    expect((await re.cell(80, 0))[1]).toBe('#REF!')
+  })
+
+  test('formatting after reopening reuses the styles derived before saving', async () => {
+    const mem = new Blob([await Bun.file(S('sample.xlsx')).arrayBuffer()])
+    const { engine, cell } = await openXlsx(mem)
+    await engine.call('xlsx.set', [0, [{ r: 90, c: 0, input: 'a' }, { r: 91, c: 0, input: 'b' }]])
+    await engine.call('xlsx.format', [0, { r0: 90, c0: 0, r1: 90, c1: 0 }, { b: true, fill: '#ffee00' }])
+    const live = (await cell(90, 0))[2]
+    const re = await openXlsx((await engine.call('save', [])) as Blob)
+    const before = re.info.xlsx!.styles.length
+    await re.engine.call('xlsx.format', [0, { r0: 91, c0: 0, r1: 91, c1: 0 }, { b: true, fill: '#ffee00' }])
+    // same base style + same patch → the identical style already in the file, nothing appended
+    expect((await re.cell(91, 0))[2]).toBe(live)
+    const saved = await ZipArchive.open(new BlobSource((await re.engine.call('save', [])) as Blob))
+    const xfs = new TextDecoder().decode(await saved.bytes('xl/styles.xml')).match(/<cellXfs[^>]*count="(\d+)"/)?.[1]
+    expect(Number(xfs)).toBe(before)
+  })
+})
