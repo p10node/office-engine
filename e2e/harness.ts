@@ -3,13 +3,24 @@
  * Needs a Chromium for playwright-core: `bunx playwright install chromium`.
  */
 import { afterAll, afterEach, beforeAll, expect, setDefaultTimeout } from 'bun:test'
-import { readFileSync } from 'node:fs'
+import { readFileSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { chromium, type Browser, type BrowserContext, type Download, type Locator, type Page } from 'playwright-core'
 import { createServer, type ViteDevServer } from 'vite'
 import type { Block, Paragraph } from '../src/core/docx/types'
 import { Engine } from '../src/core/worker/engine'
 
 export const SAMPLES = `${import.meta.dir}/../playground/public/samples`
+
+/** the last harness failure, in full: a terminal may trim bun's failure block */
+export const FAILURE_LOG = join(tmpdir(), 'docs-engine-e2e-last-failure.log')
+const dumped = new WeakSet<Error>()
+function dump(e: Error, extra = '') {
+  if (dumped.has(e)) return
+  dumped.add(e)
+  writeFileSync(FAILURE_LOG, `${new Date().toISOString()}\n${e.stack ?? e.message}${extra}\n`)
+}
 
 interface Shared {
   base: string
@@ -52,8 +63,14 @@ export async function viewer(params: Params, opts: { wait?: boolean; page?: stri
   const page = await ctx.newPage()
   const v = new Viewer(page, ctx)
   const q = new URLSearchParams(Object.entries(params).map(([k, x]) => [k, String(x === true ? 1 : x === false ? 0 : x)]))
-  await page.goto(`${shared.base}${opts.page ?? ''}?${q}`)
-  if (opts.wait !== false && params.src) await v.ready()
+  try {
+    await page.goto(`${shared.base}${opts.page ?? ''}?${q}`)
+    if (opts.wait !== false && params.src) await v.ready()
+  } catch (e) {
+    const events = await v.events().catch(() => [])
+    dump(e as Error, `\nevents: ${JSON.stringify(events)}\nerrors: ${JSON.stringify(v.errors)}`)
+    throw e
+  }
   return v
 }
 
@@ -87,7 +104,9 @@ export class Viewer {
   /** throws `what` together with what the page recorded (callback events, console and page errors), so a timeout names its cause */
   private async fail(what: string, cause?: Error): Promise<never> {
     const events = (await this.events().catch(() => [])).map(({ b64, ...e }) => e)
-    throw new Error(`${what}${cause ? `: ${cause.message.split('\n')[0]}` : ''}\nevents: ${JSON.stringify(events)}\nerrors: ${JSON.stringify(this.errors)}`)
+    const err = new Error(`${what}${cause ? `: ${cause.message.split('\n')[0]}` : ''}\nevents: ${JSON.stringify(events)}\nerrors: ${JSON.stringify(this.errors)}`)
+    dump(err)
+    throw err
   }
 
   async events(type?: string): Promise<{ type: string; [k: string]: any }[]> {
