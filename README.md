@@ -1,32 +1,19 @@
 # @p10node/office-engine
 
+[![npm version](https://img.shields.io/npm/v/@p10node/office-engine)](https://www.npmjs.com/package/@p10node/office-engine)
+[![npm downloads](https://img.shields.io/npm/dm/@p10node/office-engine)](https://www.npmjs.com/package/@p10node/office-engine)
+[![CI](https://github.com/p10node/office-engine/actions/workflows/ci.yml/badge.svg)](https://github.com/p10node/office-engine/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/npm/l/@p10node/office-engine)](LICENSE)
+
 View + edit **DOCX / XLSX / PPTX** directly in the browser. Loads progressively like Google Docs, handles heavy files, one-line React embed, saves back to the original format.
 
-**[Live demo](https://p10node.github.io/office-engine/demo/)**: samples, heavy files (300k-row sheet, 305-slide deck), drag & drop your own file, edit and download.
+**[npm](https://www.npmjs.com/package/@p10node/office-engine)** · **[Live demo](https://p10node.github.io/office-engine/demo/)** · **[Docs](https://p10node.github.io/office-engine/)**
+
+The demo has samples, heavy files (300k-row sheet, 305-slide deck), drag & drop your own file, edit and download.
 
 | DOCX                                      | XLSX                                      | PPTX                                      |
 |-------------------------------------------|-------------------------------------------|-------------------------------------------|
 | ![DOCX editor](docs/screenshots/docx.png) | ![XLSX editor](docs/screenshots/xlsx.png) | ![PPTX editor](docs/screenshots/pptx.png) |
-
-## Features
-
-- **Progressive loading**: lazy ZIP, HTTP Range requests, streaming XML parser in a Web Worker → UI never blocks
-- **Virtualized views**: only visible pages, cells and slides render
-- **Editing** with a Google Docs-style toolbar: DOCX text, styles, lists, images, tables; XLSX cells, formulas (134 functions), formats, borders, rows/columns, sheets; PPTX text, shapes, images, slides, slideshow
-- **Fast save**: only edited parts are regenerated, everything else keeps its original bytes
-- **File menu**: new, open (also CSV / text / Markdown / HTML), import CSV, rename, download as PDF / HTML / text / CSV, document details, print
-- **Real-time collaboration**: live edits, avatars, collaborators' cursors, offline edits sync on reconnect
-- **Embed anywhere**: React component, hook, vanilla `mount()`, `<office-viewer>` web component, single `<script>` file
-
-Full list, format coverage and limitations: [Features](docs/features.md).
-
-| File                     | Size    | First paint | Fully loaded      |
-|--------------------------|---------|-------------|-------------------|
-| DOCX 20k paragraphs      | 1.2 MB  | ~180 ms     | 2073 pages in ~2s |
-| XLSX 300k rows × 12 cols | 24.8 MB | ~330 ms     | ~2s               |
-| PPTX 305 slides          | 0.3 MB  | ~110 ms     | on-demand         |
-
-Measured in headless Chromium on Apple M-series.
 
 ## Install
 
@@ -61,6 +48,26 @@ Also online at [p10node.github.io/office-engine](https://p10node.github.io/offic
 - [API](docs/api.md): props, custom views, `mount()`, `<office-viewer>`, core API, CSP
 - [Real-time collaboration](docs/collaboration.md)
 - [Development](docs/development.md): playground, architecture, demo deploy, release
+
+## Features
+
+- **Progressive loading**: lazy ZIP, HTTP Range requests, streaming XML parser in a Web Worker → UI never blocks
+- **Virtualized views**: only visible pages, cells and slides render
+- **Editing** with a Google Docs-style toolbar: DOCX text, styles, lists, images, tables; XLSX cells, formulas (134 functions), formats, borders, rows/columns, sheets; PPTX text, shapes, images, slides, slideshow
+- **Fast save**: only edited parts are regenerated, everything else keeps its original bytes
+- **File menu**: new, open (also CSV / text / Markdown / HTML), import CSV, rename, download as PDF / HTML / text / CSV, document details, print
+- **Real-time collaboration**: live edits, avatars, collaborators' cursors, offline edits sync on reconnect
+- **Embed anywhere**: React component, hook, vanilla `mount()`, `<office-viewer>` web component, single `<script>` file
+
+Full list, format coverage and limitations: [Features](docs/features.md).
+
+| File                     | Size    | First paint | Fully loaded      |
+|--------------------------|---------|-------------|-------------------|
+| DOCX 20k paragraphs      | 1.2 MB  | ~180 ms     | 2073 pages in ~2s |
+| XLSX 300k rows × 12 cols | 24.8 MB | ~330 ms     | ~2s               |
+| PPTX 305 slides          | 0.3 MB  | ~110 ms     | on-demand         |
+
+Measured in headless Chromium on Apple M-series.
 
 ## License
 
