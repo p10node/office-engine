@@ -29,26 +29,32 @@ export function useSize<T extends HTMLElement>(): [React.RefObject<T | null>, { 
   return [ref, size]
 }
 
-/** Scroll position of an element, batched to animation frames. */
+/** Scroll position of an element, batched to animation frames. Follows the element when it mounts after the first render. */
 export function useScroll(ref: React.RefObject<HTMLElement | null>): { x: number; y: number } {
   const [pos, setPos] = useState({ x: 0, y: 0 })
+  const [el, setEl] = useState<HTMLElement | null>(null)
+  // a conditionally rendered panel (slide thumbnails) gets its element later than the first effect run
+  useIsoLayoutEffect(() => {
+    if (ref.current !== el) setEl(ref.current)
+  })
   useEffect(() => {
-    const el = ref.current
     if (!el) return
     let raf = 0
+    const read = () => setPos((p) => (p.x === el.scrollLeft && p.y === el.scrollTop ? p : { x: el.scrollLeft, y: el.scrollTop }))
     const on = () => {
       if (raf) return
       raf = requestAnimationFrame(() => {
         raf = 0
-        setPos({ x: el.scrollLeft, y: el.scrollTop })
+        read()
       })
     }
+    read()
     el.addEventListener('scroll', on, { passive: true })
     return () => {
       el.removeEventListener('scroll', on)
       cancelAnimationFrame(raf)
     }
-  }, [ref])
+  }, [el])
   return pos
 }
 

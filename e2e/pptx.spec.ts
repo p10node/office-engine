@@ -169,3 +169,24 @@ describe('pptx editing', () => {
     await v.page.locator('.de-present').waitFor({ state: 'detached' })
   })
 })
+
+describe('pptx thumbnails', () => {
+  test('a long deck: the thumbnail panel renders the slides it is scrolled to', async () => {
+    const v = await viewer({ src: 'samples/large-deck.pptx' })
+    const panel = v.page.locator('.de-thumbs')
+    await panel.waitFor()
+    const num = (n: number) => v.page.locator('.de-thumb-n', { hasText: new RegExp(`^${n}$`) })
+    await num(1).waitFor()
+    // the panel is mounted after the first render (it needs the root width): scrolling it must still move the window
+    await panel.evaluate((el) => {
+      el.scrollTop = el.scrollHeight
+    })
+    await num(305).waitFor({ timeout: 10_000 })
+    expect(await num(1).count()).toBe(0)
+    await panel.evaluate((el) => {
+      el.scrollTop = el.scrollHeight / 2
+    })
+    await num(153).waitFor({ timeout: 10_000 })
+    expect(v.errors).toEqual([])
+  })
+})
