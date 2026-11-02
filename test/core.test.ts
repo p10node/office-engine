@@ -124,6 +124,21 @@ describe('xlsx', () => {
     expect(detail.formula).toBe('=C3*D3')
   })
 
+  test('a sheet asked for again while it is still parsing gets its real header', async () => {
+    // the view requests a sheet that collab replay already started loading: the header it gets must carry the
+    // file's column widths — the view keeps the first header it sees, an empty one left every column at 64 px
+    const prog: SheetProgress[] = []
+    // copied when emitted, as postMessage does: the parse keeps filling the live colInfo array afterwards
+    const engine = new Engine((event, data) => event === 'xlsx:progress' && prog.push(structuredClone(data as SheetProgress)))
+    await engine.open(file('sample.xlsx'), {})
+    await Promise.all([engine.call('xlsx.load', [0]), engine.call('xlsx.load', [0])])
+    await new Promise((r) => setTimeout(r, 300))
+    const headers = prog.filter((p) => p.defaultRowH !== undefined)
+    expect(headers.length).toBeGreaterThanOrEqual(2)
+    for (const h of headers) expect(h.colInfo!.length).toBeGreaterThan(0)
+    expect(prog.at(-1)!.done).toBe(true)
+  })
+
   test('large xlsx loads', async () => {
     if (!existsSync(S('large-sheet.xlsx'))) return
     const { engine, events } = collect()

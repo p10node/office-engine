@@ -364,11 +364,13 @@ export class XlsxWorkbook {
 
   /**
    * Streams a sheet into memory, reporting progress so the UI can grow while parsing.
-   * Calling again for a loaded/in-flight sheet is a no-op.
+   * Calling again for a loaded sheet replays its state; for a sheet still parsing (for another caller) the state is
+   * reported once the parse is done — its header isn't known before, and the view keeps the first header it gets.
    */
   loadSheet(index: number, emit: (p: SheetProgress) => void, onBytes?: (phase: string, loaded: number, total: number) => void): Promise<void> {
     const existing = this.sheetsData.get(index)
     if (existing) {
+      if (existing.loading && !existing.done) return existing.loading.then(() => emit(this.snapshot(index, existing, rowSizesOf(existing), true)))
       emit(this.snapshot(index, existing, rowSizesOf(existing), true))
       return existing.loading ?? Promise.resolve()
     }
