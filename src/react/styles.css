@@ -861,9 +861,10 @@
   box-shadow: 0 2px 6px 2px rgba(60, 64, 67, 0.15), 0 1px 2px rgba(60, 64, 67, 0.3);
   font: 13px/1.35 system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
 }
-.de-outline-head { display: flex; align-items: center; justify-content: space-between; padding: 4px 4px 6px 10px; font-weight: 600; color: #1f1f1f; }
+.de-outline-head { flex-shrink: 0; display: flex; align-items: center; justify-content: space-between; padding: 4px 4px 6px 10px; font-weight: 600; color: #1f1f1f; }
 .de-outline-item {
   display: block;
+  flex-shrink: 0;
   width: 100%;
   padding: 5px 10px;
   border: 0;
@@ -879,7 +880,7 @@
 }
 .de-outline-item:hover { background: #f1f3f4; }
 .de-outline-item.on { color: #0b57d0; font-weight: 600; }
-.de-outline-empty { padding: 8px 10px; color: var(--de-muted); }
+.de-outline-empty { flex-shrink: 0; padding: 8px 10px; color: var(--de-muted); }
 .de-outline-toggle {
   position: absolute;
   top: 12px;
