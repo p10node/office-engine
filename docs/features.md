@@ -51,7 +51,17 @@
 
 ### Toolbar
 
-Single row, buttons that don't fit collapse into `⋮`; custom-drawn dropdowns (font/style preview, number formats with examples, ↑↓/Enter/Esc/type-ahead keys, never steals focus from the document); font size box `− 11 +` accepts direct input; cell borders picked from an icon grid.
+Single row, buttons that don't fit collapse into `⋮`; custom-drawn dropdowns (font/style preview, number formats with examples, ↑↓/Enter/Esc/type-ahead keys, never steals focus from the document); font size box `− 11 +` accepts direct input; cell borders picked from an icon grid; color pickers have a palette plus a **Custom** row (`+` opens the system color picker, recent custom colors are remembered across sessions).
+
+## File menu
+
+- **New**: blank document, spreadsheet or presentation (16:9, Office theme, title / content / blank layouts)
+- **Open** (`Ctrl/⌘+O`): `.docx` `.xlsx` `.pptx` open as they are; `.csv` / `.tsv` become a workbook (numbers and booleans typed, codes like `007` kept as text); `.txt` / `.md` / `.html` become a document (headings, lists, bold / italic / strike, links, code)
+- **Download as**: the native format, PDF, web page (`.html`, images embedded), plain text / Markdown (DOCX), CSV / TSV of the current sheet (XLSX), slide text with notes (PPTX)
+- **Import CSV into new sheet** (XLSX): adds a sheet after the current one with the file's rows
+- **Save** (`Ctrl/⌘+S`), **Rename** (shown name and the name used for saving), **Document details** (file, core properties, page / word / slide counts)
+- **Host entries** (`fileMenuItems`: Share, Version history…) and **Close** (`onClose`)
+- **PDF / Print** (`Ctrl/⌘+P`): rendered off-screen and sent to the browser print dialog (choose "Save as PDF"): DOCX pages as paginated on screen, PPTX one slide per page, XLSX current sheet fitted to the paper width
 
 ## Saving
 

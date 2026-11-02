@@ -1,6 +1,7 @@
 import './core/default-worker'
 
 export { DocViewer, type DocViewerProps } from './react/DocViewer'
+export type { FileMenuItem } from './react/file/FileMenu'
 export { DocxView, type DocxViewProps } from './react/docx/DocxView'
 export { XlsxView, type XlsxViewProps } from './react/xlsx/XlsxView'
 export { PptxView, type PptxViewProps } from './react/pptx/PptxView'

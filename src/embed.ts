@@ -32,12 +32,12 @@ export function mount(el: HTMLElement, options: MountOptions): MountedViewer {
 /**
  * `<office-viewer src="/file.xlsx" style="height:600px"></office-viewer>`
  * Rendered inside a shadow root so host page CSS cannot leak in.
- * Attributes: src, name, editable, toolbar ("false" to hide), thumbnails ("false" to hide);
+ * Attributes: src, name, editable, toolbar / thumbnails / save / download / file-menu / open ("false" to hide);
  * real-time collaboration: collab (hub WebSocket URL), room, user (display name).
  * Property: `file` (File/Blob/ArrayBuffer) for local data.
  */
 export class OfficeViewerElement extends HTMLElement {
-  static observedAttributes = ['src', 'name', 'toolbar', 'thumbnails', 'editable', 'collab', 'room', 'user']
+  static observedAttributes = ['src', 'name', 'toolbar', 'thumbnails', 'editable', 'save', 'download', 'file-menu', 'open', 'collab', 'room', 'user']
   private viewer?: MountedViewer
   private _file?: Blob | ArrayBuffer
 
@@ -76,6 +76,10 @@ export class OfficeViewerElement extends HTMLElement {
       toolbar: this.getAttribute('toolbar') !== 'false',
       thumbnails: this.getAttribute('thumbnails') !== 'false',
       editable: this.hasAttribute('editable') && this.getAttribute('editable') !== 'false',
+      allowSave: this.getAttribute('save') !== 'false',
+      allowDownload: this.getAttribute('download') !== 'false',
+      fileMenu: this.getAttribute('file-menu') !== 'false',
+      allowOpen: this.getAttribute('open') !== 'false',
       collab:
         this.getAttribute('collab') && this.getAttribute('room')
           ? { transport: this.getAttribute('collab')!, room: this.getAttribute('room')!, user: { name: this.getAttribute('user') || 'Guest' } }

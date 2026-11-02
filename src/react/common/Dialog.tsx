@@ -80,6 +80,45 @@ export function PromptDialog({ spec, onClose }: { spec: PromptSpec; onClose: () 
   )
 }
 
+/** Yes / no question (no window.confirm: works in sandboxed / embedded pages). */
+export function ConfirmDialog(props: { title: string; message: ReactNode; ok: string; onOk: () => void; onClose: () => void }) {
+  const okRef = useRef<HTMLButtonElement>(null)
+  useEffect(() => okRef.current?.focus(), [])
+  return (
+    <div
+      className="de-dialog-back"
+      onMouseDown={(e) => e.target === e.currentTarget && props.onClose()}
+      onKeyDown={(e) => {
+        if (e.key === 'Escape') {
+          e.stopPropagation()
+          props.onClose()
+        }
+      }}
+    >
+      <div className="de-dialog" role="alertdialog" aria-label={props.title}>
+        <div className="de-dialog-title">{props.title}</div>
+        <div className="de-dialog-note">{props.message}</div>
+        <div className="de-dialog-btns">
+          <button type="button" className="de-btn" onClick={props.onClose}>
+            Cancel
+          </button>
+          <button
+            ref={okRef}
+            type="button"
+            className="de-btn de-btn-primary"
+            onClick={() => {
+              props.onClose()
+              props.onOk()
+            }}
+          >
+            {props.ok}
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 /** Short-lived message at the bottom of the viewer. */
 export function Toast({ text, onDone }: { text: string; onDone: () => void }) {
   useEffect(() => {

@@ -55,7 +55,8 @@ export interface ImageActions {
   original: () => void
   replace: () => void
   alt: () => void
-  download: () => void
+  /** undefined when downloads are disabled */
+  download?: () => void
 }
 
 export function DocxToolbar(props: {
@@ -130,7 +131,7 @@ export function DocxToolbar(props: {
           <Btn icon="imgOrig" title="Original size" onClick={image.original} />
           <Btn icon="imgReplace" title="Replace image" onClick={image.replace} />
           <Btn icon="alt" title="Alt text" active={!!st.img.alt} onClick={image.alt} />
-          <Btn icon="save" title="Download image" onClick={image.download} />
+          {image.download && <Btn icon="save" title="Download image" onClick={image.download} />}
           <Btn icon="trash" title="Delete image" onClick={() => editor.deleteSelection()} />
         </>
       )}

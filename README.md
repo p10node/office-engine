@@ -14,6 +14,7 @@ View + edit **DOCX / XLSX / PPTX** directly in the browser. Loads progressively 
 - **Virtualized views**: only visible pages, cells and slides render
 - **Editing** with a Google Docs-style toolbar: DOCX text, styles, lists, images, tables; XLSX cells, formulas (134 functions), formats, borders, rows/columns, sheets; PPTX text, shapes, images, slides, slideshow
 - **Fast save**: only edited parts are regenerated, everything else keeps its original bytes
+- **File menu**: new, open (also CSV / text / Markdown / HTML), import CSV, rename, download as PDF / HTML / text / CSV, document details, print
 - **Real-time collaboration**: live edits, avatars, collaborators' cursors, offline edits sync on reconnect
 - **Embed anywhere**: React component, hook, vanilla `mount()`, `<office-viewer>` web component, single `<script>` file
 

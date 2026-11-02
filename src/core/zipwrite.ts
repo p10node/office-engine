@@ -77,7 +77,7 @@ function dosNow(): { time: number; date: number } {
  * zero-copy when the source is a Blob); changed/added entries are deflated.
  * `changes`: path → new data, or null to delete.
  */
-export async function rebuildZip(zip: ZipArchive, changes: Map<string, PartData | null>, type = 'application/zip'): Promise<Blob> {
+export async function rebuildZip(zip: ZipArchive | null, changes: Map<string, PartData | null>, type = 'application/zip'): Promise<Blob> {
   const enc = new TextEncoder()
   const parts: BlobPart[] = []
   const central: Uint8Array[] = []
@@ -130,7 +130,7 @@ export async function rebuildZip(zip: ZipArchive, changes: Map<string, PartData 
     writeEntry(name, 8, d.crc, d.csize, d.size, time, date, d.chunks as BlobPart[])
   }
 
-  for (const e of zip.list()) {
+  for (const e of zip?.list() ?? []) {
     const key = normalize(e.name)
     const ch = pending.get(key)
     if (ch) {
@@ -138,7 +138,7 @@ export async function rebuildZip(zip: ZipArchive, changes: Map<string, PartData 
       if (ch.data !== null) await writeNew(e.name, ch.data)
       continue
     }
-    let raw = await zip.rawData(e)
+    let raw = await zip!.rawData(e)
     // Bun drops lazily-read file slices when composing Blobs: materialize there (browsers stay zero-copy)
     if (IS_BUN && raw instanceof Blob) raw = new Uint8Array(await raw.arrayBuffer())
     writeEntry(e.name, e.method, e.crc, e.compSize, e.size, e.time, e.date, [raw as BlobPart])
@@ -154,4 +154,9 @@ export async function rebuildZip(zip: ZipArchive, changes: Map<string, PartData 
   ev.setUint32(12, cdSize, true)
   ev.setUint32(16, offset, true)
   return new Blob([...parts, ...(central as BlobPart[]), eocd], { type })
+}
+
+/** Writes a new archive (all entries deflated). */
+export function writeZip(entries: Map<string, PartData>, type = 'application/zip'): Promise<Blob> {
+  return rebuildZip(null, entries, type)
 }

@@ -1,5 +1,5 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type CSSProperties, type MutableRefObject, type ReactNode } from 'react'
-import type { BookOp, CellDetail, CellOut, FindMatch, FindOptions, FmtPatch, Merge, Range, SheetOp, SheetProgress, WorkbookMeta, XlsxEditResult } from '../../core/xlsx/types'
+import type { BookOp, CellDetail, CellInput, CellOut, FindMatch, FindOptions, FmtPatch, Merge, Range, SheetOp, SheetProgress, WorkbookMeta, XlsxEditResult } from '../../core/xlsx/types'
 import { colName } from '../../core/xlsx/workbook'
 import { closeFormula, formulaContext, isFormula, rangeText, type FormulaContext } from '../../core/xlsx/formula/assist'
 import { argSlot, functionInfo, suggestFunctions, type FnInfo } from '../../core/xlsx/formula/catalog'
@@ -7,13 +7,14 @@ import { MAX_COL, MAX_ROW } from '../../core/xlsx/formula/types'
 import type { DocumentClient } from '../../core/worker/client'
 import { getPeers, publishLocal, subscribePeers } from '../../collab/hosts'
 import { useForceUpdate, useScroll, useSize } from '../common/hooks'
-import { useViewer } from '../common/Slots'
+import { useFileOps, useViewer } from '../common/Slots'
 import { Status } from '../common/Status'
 import { ContextMenu, MOD, type MenuItem } from '../common/ContextMenu'
 import { Toast } from '../common/Dialog'
 import { FindBar } from '../docx/FindBar'
 import { XlsxToolbar, type MergeMode } from './XlsxToolbar'
 import { Axis } from './axis'
+import { sheetPrintable, sheetText } from './print'
 
 const BLOCK = 128
 const HH = 22
@@ -212,6 +213,42 @@ export function XlsxView({ client, onStatus, initialSheet }: XlsxViewProps) {
     : `${state.rows.toLocaleString()} rows × ${state.cols.toLocaleString()} cols${state.done ? '' : ' · loading…'}`
 
   const viewer = useViewer()
+  useFileOps({
+    printable: () => sheetPrintable(client, cur, store.sheet(cur), meta),
+    text: (format) => sheetText(client, cur, store.sheet(cur), format === 'tsv' ? '\t' : ','),
+    stats: () => {
+      const s = store.sheet(cur)
+      return [
+        ['Sheets', `${meta.sheets.length}${meta.sheets.some((x) => x.hidden) ? ` (${meta.sheets.filter((x) => x.hidden).length} hidden)` : ''}`],
+        ['Current sheet', meta.sheets[cur]?.name ?? ''],
+        ['Used range', `${s.rows.toLocaleString()} rows × ${s.cols.toLocaleString()} columns${s.done ? '' : ' (loading)'}`],
+      ]
+    },
+    importTable: async (rows, name) => {
+      const res = await client.call('xlsx.bookOp', { op: 'add', name, after: cur })
+      store.applied(res, meta)
+      viewer.setDirty(true)
+      const idx = cur + 1
+      setActive(idx)
+      // cells can be written once the new sheet is loaded
+      await new Promise<void>((resolve, reject) => {
+        let off = () => {}
+        const check = () => {
+          const s = store.sheet(idx)
+          if (s.error) reject(new Error(s.error))
+          else if (s.done) resolve()
+          else return
+          off()
+        }
+        off = store.subscribe(check)
+        check()
+      })
+      const cells: CellInput[] = []
+      rows.forEach((row, r) => row.forEach((input, c) => input !== '' && cells.push({ r, c, input })))
+      if (cells.length) store.applied(await client.call('xlsx.set', idx, cells), meta)
+      bump()
+    },
+  })
   const [renaming, setRenaming] = useState<number | null>(null)
   const [tabMenu, setTabMenu] = useState<{ index: number; x: number; y: number } | null>(null)
   const bookOp = async (op: BookOp, goTo?: number) => {
@@ -397,6 +434,21 @@ const ARROWS: Record<string, [number, number]> = { ArrowUp: [-1, 0], ArrowDown: 
 
 export const rectOf = (s: Selection): Range => ({ r0: Math.min(s.ar, s.fr), c0: Math.min(s.ac, s.fc), r1: Math.max(s.ar, s.fr), c1: Math.max(s.ac, s.fc) })
 
+/** grows a range until it holds every merged cell it touches (like Excel / Sheets selections) */
+export function withMerges(r: Range, merges: Merge[]): Range {
+  let out = r
+  for (let changed = true; changed; ) {
+    changed = false
+    for (const m of merges) {
+      if (m.r1 < out.r0 || m.r0 > out.r1 || m.c1 < out.c0 || m.c0 > out.c1) continue
+      if (m.r0 >= out.r0 && m.r1 <= out.r1 && m.c0 >= out.c0 && m.c1 <= out.c1) continue
+      out = { r0: Math.min(out.r0, m.r0), c0: Math.min(out.c0, m.c0), r1: Math.max(out.r1, m.r1), c1: Math.max(out.c1, m.c1) }
+      changed = true
+    }
+  }
+  return out
+}
+
 function SheetGrid({ store, sheet, meta, client, edit, setEdit, hold, onSheet }: GridProps) {
   const viewer = useViewer()
   const editable = viewer.editable
@@ -476,7 +528,9 @@ function SheetGrid({ store, sheet, meta, client, edit, setEdit, hold, onSheet }:
   const styles = meta.styles
   const basePx = fontPx(meta.baseFont.fontSize, 14.67)
   const mergeAt = (r: number, c: number) => s.merges.find((m) => r >= m.r0 && r <= m.r1 && c >= m.c0 && c <= m.c1)
-  const rect = rectOf(sel)
+  const rect = withMerges(rectOf(sel), s.merges)
+  /** one cell, or exactly one merged cell */
+  const oneCell = (rect.r0 === rect.r1 && rect.c0 === rect.c1) || s.merges.some((m) => m.r0 === rect.r0 && m.c0 === rect.c0 && m.r1 === rect.r1 && m.c1 === rect.c1)
   const selRef = useRef(rect)
   selRef.current = rect
   // collaboration: share the selection, show the collaborators' ones
@@ -559,6 +613,8 @@ function SheetGrid({ store, sheet, meta, client, edit, setEdit, hold, onSheet }:
       }
       if (color) style.color = color
       if (whiteSpace) style.whiteSpace = whiteSpace as CSSProperties['whiteSpace']
+      // a merged cell hides the gridlines inside it (its own right / bottom edge lines stay visible)
+      if (merged && !rest.background) style.background = 'linear-gradient(#fff, #fff) 0 0 / calc(100% - 1px) calc(100% - 1px) no-repeat'
       const overflow = ov > cw
       return (
         <div key={`${r}:${c}`} className={overflow ? 'de-cell de-ov' : 'de-cell'} style={style}>
@@ -586,7 +642,7 @@ function SheetGrid({ store, sheet, meta, client, edit, setEdit, hold, onSheet }:
       }
     }
     // selection range + active cell
-    if (rect.r1 >= rr0 && rect.r0 <= rr1 && rect.c1 >= cc0 && rect.c0 <= cc1 && (rect.r0 !== rect.r1 || rect.c0 !== rect.c1)) {
+    if (rect.r1 >= rr0 && rect.r0 <= rr1 && rect.c1 >= cc0 && rect.c0 <= cc1 && !oneCell) {
       out.push(
         <div
           key="range"
@@ -779,9 +835,12 @@ function SheetGrid({ store, sheet, meta, client, edit, setEdit, hold, onSheet }:
     begin(current, current, 'edit')
   }
 
+  // Enter and the editor's blur can both commit before React re-renders: write once
+  const committed = useRef<EditState | null>(null)
   const commit = (move?: [number, number]) => {
     const e = edit
-    if (!e) return
+    if (!e || committed.current === e) return
+    committed.current = e
     setEdit(null)
     const value = closeFormula(e.value)
     if (value !== e.initial) void run(client.call('xlsx.set', e.sheet, [{ r: e.r, c: e.c, input: value }]))
@@ -1145,7 +1204,8 @@ function SheetGrid({ store, sheet, meta, client, edit, setEdit, hold, onSheet }:
   })
 
   const sheetOp = (op: SheetOp) => run(client.call('xlsx.sheetOp', sheet, op))
-  const merged = !!s.merges.find((m) => m.r0 === rect.r0 && m.c0 === rect.c0 && m.r1 === rect.r1 && m.c1 === rect.c1)
+  // the selection holds merged cells (it always covers them whole): Unmerge / toggle unmerges them all
+  const merged = s.merges.some((m) => m.r0 >= rect.r0 && m.r1 <= rect.r1 && m.c0 >= rect.c0 && m.c1 <= rect.c1)
   const toggleMerge = () => void sheetOp({ op: merged ? 'unmerge' : 'merge', range: rect })
   const merge = (mode: MergeMode) => void sheetOp(mode === 'unmerge' ? { op: 'unmerge', range: rect } : { op: 'merge', range: rect, mode })
   const freeze = (kind: 'none' | 'row' | 'col' | 'sel') =>
@@ -1153,7 +1213,7 @@ function SheetGrid({ store, sheet, meta, client, edit, setEdit, hold, onSheet }:
   /** AutoSum-style: the function over the numbers above (or left of) the active cell */
   const autoFn = (fn = 'SUM') => {
     const { ar, ac } = sel
-    if (rect.r0 !== rect.r1 || rect.c0 !== rect.c1) {
+    if (!oneCell) {
       // a selected block: result goes under it
       const ref = `${colName(rect.c0)}${rect.r0 + 1}:${colName(rect.c1)}${rect.r1 + 1}`
       void run(client.call('xlsx.set', sheet, [{ r: rect.r1 + 1, c: rect.c0, input: `=${fn}(${ref})` }]))
@@ -1410,7 +1470,7 @@ function SheetGrid({ store, sheet, meta, client, edit, setEdit, hold, onSheet }:
         <div className="de-fx-ref">
           {colName(sel.ac)}
           {sel.ar + 1}
-          {(rect.r0 !== rect.r1 || rect.c0 !== rect.c1) && `:${colName(rect.c1)}${rect.r1 + 1}`}
+          {!oneCell && `:${colName(rect.c1)}${rect.r1 + 1}`}
         </div>
         {editable ? (
           <input

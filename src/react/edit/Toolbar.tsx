@@ -6,6 +6,7 @@ import {
   useLayoutEffect,
   useRef,
   useState,
+  useSyncExternalStore,
   type CSSProperties,
   type ReactElement,
   type ReactNode,
@@ -127,6 +128,14 @@ const P: Record<string, ReactNode> = {
   delRow: <path d="M4 8h16v8H4zM9 10.5l6 3m0-3-6 3" />,
   delCol: <path d="M8 4h8v16H8zM10.5 9l3 6m0-6-3 6" />,
   hide: <path d="M3 3l18 18M10.6 6.1A10 10 0 0 1 12 6c6.5 0 10 6 10 6a17 17 0 0 1-3.1 3.8M6.6 7.6C3.8 9.3 2 12 2 12s3.5 6 10 6c1.6 0 3-.4 4.3-1M9.9 9.9a3 3 0 0 0 4.2 4.2" />,
+  file: <path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8zM14 3v5h5" />,
+  open: <path d="M4 19V6a1 1 0 0 1 1-1h4l2 2h7a1 1 0 0 1 1 1v2M4 19l2.6-7.2a1 1 0 0 1 .9-.8H20a1 1 0 0 1 1 1.3L18.6 19z" />,
+  print: <path d="M7 9V4h10v5M7 17H5a1 1 0 0 1-1-1v-6a1 1 0 0 1 1-1h14a1 1 0 0 1 1 1v6a1 1 0 0 1-1 1h-2M7 14h10v6H7z" />,
+  pdf: <path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8zM14 3v5h5M8.5 16.5v-4h1.2a1.2 1.2 0 0 1 0 2.4H8.5M13 12.5v4h.8a1.6 1.6 0 0 0 1.6-1.6v-.8a1.6 1.6 0 0 0-1.6-1.6z" strokeWidth={1.5} />,
+  html: <path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8zM14 3v5h5M10 12l-2 2.5 2 2.5M14 12l2 2.5-2 2.5" />,
+  doc: <path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8zM14 3v5h5M9 13h6M9 17h4" />,
+  slides: <path d="M4 5h16v11H4zM12 16v4M8 20h8" />,
+  info: <path d="M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18zM12 11v5M12 8h.01" />,
 }
 
 export function Icon({ name, size = 18 }: { name: string; size?: number }) {
@@ -204,6 +213,8 @@ export interface DropOption<T> {
   disabled?: boolean
   /** separator above this option */
   sep?: boolean
+  /** group heading above this option */
+  head?: string
 }
 
 /**
@@ -225,6 +236,8 @@ export function Dropdown<T extends string | number>(props: {
   disabled?: boolean
   /** popup aligned to the trigger's right edge */
   alignRight?: boolean
+  /** extra class of the trigger button */
+  className?: string
 }) {
   const { options } = props
   const [open, setOpen] = useState(false)
@@ -292,6 +305,12 @@ export function Dropdown<T extends string | number>(props: {
     const vw = document.documentElement.clientWidth
     if (r.right > vw - 8) setShift((s) => s - (r.right - vw + 8))
     else if (r.left < 8) setShift((s) => s + (8 - r.left))
+    // the viewer clips its content: keep the list above its bottom edge (scrolls when longer)
+    const root = el.closest('.de-root')
+    const bottom = Math.min(document.documentElement.clientHeight, root ? root.getBoundingClientRect().bottom : Infinity)
+    const cssMax = parseFloat(getComputedStyle(el).maxHeight)
+    const room = bottom - r.top - 8
+    if (room > 0) el.style.maxHeight = `${Math.max(120, Math.min(Number.isFinite(cssMax) ? cssMax : room, room))}px`
   }, [open])
   useLayoutEffect(() => {
     if (open) listRef.current?.querySelector(`[data-i="${hi}"]`)?.scrollIntoView({ block: 'nearest' })
@@ -302,7 +321,7 @@ export function Dropdown<T extends string | number>(props: {
     <span ref={ref} className="de-dd-wrap">
       <button
         type="button"
-        className={open ? 'de-dd de-dd-open' : 'de-dd'}
+        className={(open ? 'de-dd de-dd-open' : 'de-dd') + (props.className ? ' ' + props.className : '')}
         style={{ width: props.width }}
         title={props.title}
         aria-label={props.title}
@@ -334,6 +353,11 @@ export function Dropdown<T extends string | number>(props: {
           {options.map((o, i) => (
             <Fragment key={String(o.value)}>
               {o.sep && i > 0 && <div className="de-dd-sep" role="separator" />}
+              {o.head && (
+                <div className="de-dd-head" role="presentation">
+                  {o.head}
+                </div>
+              )}
               <div
                 data-i={i}
                 role="option"
@@ -559,32 +583,100 @@ const PALETTE = [
   '#93c47d', '#76a5af', '#6d9eeb', '#6fa8dc', '#8e7cc3', '#c27ba0', '#1155cc', '#38761d',
 ]
 
+// custom colors picked by the user: shared by every color button, kept across sessions
+const CUSTOM_KEY = 'office-engine:custom-colors'
+const MAX_CUSTOM = 7
+const HEX6 = /^#[0-9a-f]{6}$/
+let customColors: string[] | null = null
+const customListeners = new Set<() => void>()
+
+function getCustomColors(): string[] {
+  if (customColors) return customColors
+  customColors = []
+  try {
+    const v: unknown = JSON.parse(localStorage.getItem(CUSTOM_KEY) ?? '[]')
+    if (Array.isArray(v)) customColors = v.filter((c): c is string => typeof c === 'string' && HEX6.test(c)).slice(0, MAX_CUSTOM)
+  } catch {
+    // storage unavailable (private mode, sandbox)
+  }
+  return customColors
+}
+
+function addCustomColor(c: string) {
+  customColors = [c, ...getCustomColors().filter((x) => x !== c)].slice(0, MAX_CUSTOM)
+  try {
+    localStorage.setItem(CUSTOM_KEY, JSON.stringify(customColors))
+  } catch {
+    // not persisted
+  }
+  customListeners.forEach((f) => f())
+}
+
+const subscribeCustom = (f: () => void) => {
+  customListeners.add(f)
+  return () => {
+    customListeners.delete(f)
+  }
+}
+
 export function ColorBtn(props: { icon: string; title: string; value?: string; onPick: (c: string | null) => void; palette?: string[]; noneLabel?: string }) {
   const [open, setOpen] = useState(false)
   const ref = useRef<HTMLSpanElement>(null)
+  const pickerRef = useRef<HTMLInputElement>(null)
+  const custom = useSyncExternalStore(subscribeCustom, getCustomColors, getCustomColors)
   useDismiss(ref, open, () => setOpen(false))
+  const onPick = useRef(props.onPick)
+  onPick.current = props.onPick
+  const cur = props.value?.toLowerCase()
+
+  // native 'change' fires once the OS picker is confirmed (React's onChange would fire while dragging)
+  useEffect(() => {
+    const el = pickerRef.current
+    if (!el) return
+    const on = () => {
+      const c = el.value.toLowerCase()
+      if (!HEX6.test(c)) return
+      addCustomColor(c)
+      onPick.current(c)
+    }
+    el.addEventListener('change', on)
+    return () => el.removeEventListener('change', on)
+  }, [])
+
+  const openPicker = () => {
+    const el = pickerRef.current
+    if (!el) return
+    el.value = cur && HEX6.test(cur) ? cur : (custom[0] ?? '#000000')
+    setOpen(false)
+    try {
+      el.showPicker()
+    } catch {
+      el.click()
+    }
+  }
+  const swatch = (c: string) => (
+    <button key={c} type="button" title={c} className={cur === c ? 'on' : undefined} style={{ background: c }} onClick={() => (props.onPick(c), setOpen(false))} />
+  )
   return (
     <span ref={ref} className="de-tb-color">
       <button type="button" className={open ? 'de-tb de-tb-on' : 'de-tb'} title={props.title} aria-label={props.title} aria-expanded={open} onMouseDown={keep} onClick={() => setOpen((o) => !o)}>
         <Icon name={props.icon} />
         <span className="de-tb-swatch" style={{ background: props.value ?? 'transparent' }} />
       </button>
+      {/* kept mounted while the OS picker is open (the popover closes) */}
+      <input ref={pickerRef} type="color" className="de-tb-native" tabIndex={-1} aria-hidden />
       {open && (
         <PopBox onMouseDown={keep}>
           <button type="button" className="de-tb-none" onClick={() => (props.onPick(null), setOpen(false))}>
             {props.noneLabel ?? 'None'}
           </button>
+          <div className="de-tb-grid">{(props.palette ?? PALETTE).map(swatch)}</div>
+          <div className="de-tb-custom">Custom</div>
           <div className="de-tb-grid">
-            {(props.palette ?? PALETTE).map((c) => (
-              <button
-                key={c}
-                type="button"
-                title={c}
-                className={props.value?.toLowerCase() === c ? 'on' : undefined}
-                style={{ background: c }}
-                onClick={() => (props.onPick(c), setOpen(false))}
-              />
-            ))}
+            {custom.map(swatch)}
+            <button type="button" className="de-tb-add" title="Custom color…" aria-label="Custom color" onClick={openPicker}>
+              <Icon name="plus" size={14} />
+            </button>
           </div>
         </PopBox>
       )}

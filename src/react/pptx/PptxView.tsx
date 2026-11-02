@@ -2,7 +2,8 @@ import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import type { Box, PresentationMeta, ShapeKind, ShapeOp, SlideModel, SlideOp } from '../../core/pptx/types'
 import type { DocumentClient } from '../../core/worker/client'
 import { useForceUpdate, useIsoLayoutEffect, useScroll, useSize } from '../common/hooks'
-import { useViewer } from '../common/Slots'
+import { useFileOps, useViewer } from '../common/Slots'
+import { slidesToText } from '../file/text'
 import { Status } from '../common/Status'
 import { ZoomControl, type Zoom } from '../common/ZoomControl'
 import { getSel } from '../edit/input'
@@ -166,6 +167,35 @@ const THUMB_W = 188
 export function PptxView({ client, onStatus, initialZoom = 'fit', thumbnails = true }: PptxViewProps) {
   const viewer = useViewer()
   const meta = client.info.pptx as PresentationMeta
+  useFileOps({
+    printable: async () => {
+      const m = client.info.pptx as PresentationMeta
+      // hidden flags are known once a slide is parsed: filter on the models
+      const all = await Promise.all(m.slides.map((s) => client.call('pptx.slide', s.index)))
+      const shown = all.filter((s) => !s.hidden)
+      const slides = shown.length ? shown : all
+      return {
+        size: `${m.w}px ${m.h}px`,
+        margin: '0',
+        node: slides.map((model) => (
+          <div key={model.index} className="de-print-page" style={{ width: m.w, height: m.h }}>
+            <SlideView model={{ ...model, hidden: false }} client={client} scale={1} />
+          </div>
+        )),
+      }
+    },
+    text: async () => {
+      const m = client.info.pptx as PresentationMeta
+      return slidesToText(await Promise.all(m.slides.map((s) => client.call('pptx.slide', s.index))))
+    },
+    stats: () => {
+      const m = client.info.pptx as PresentationMeta
+      return [
+        ['Slides', m.count.toLocaleString()],
+        ['Slide size', `${+(m.w / 96).toFixed(2)} × ${+(m.h / 96).toFixed(2)} in`],
+      ]
+    },
+  })
   const [rootRef, rootSize] = useSize<HTMLDivElement>()
   const [scrollRef, size] = useSize<HTMLDivElement>()
   const scroll = useScroll(scrollRef)
@@ -394,6 +424,8 @@ export function PptxView({ client, onStatus, initialZoom = 'fit', thumbnails = t
       box = { x: (meta.w - dims.w * k) / 2, y: (meta.h - dims.h * k) / 2, w: dims.w * k, h: dims.h * k }
     }
     const m = await runShapes(slide, [{ op: 'insert', kind, box, rid, text: kind === 'text' ? 'Text' : undefined }], true)
+    // the new shape is selected: arrow keys, Delete, ⌘D act on it right away
+    scrollRef.current?.focus({ preventScroll: true })
     if (m && kind === 'text') {
       const el = m.els[m.els.length - 1]
       if (el?.t === 'shape' && el.sid !== undefined && el.text) {

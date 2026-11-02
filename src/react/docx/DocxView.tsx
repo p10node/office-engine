@@ -4,7 +4,7 @@ import { DEFAULT_PAGE } from '../../core/docx/types'
 import { registerHost } from '../../collab/hosts'
 import type { DocumentClient } from '../../core/worker/client'
 import { lowerIndex, useForceUpdate, useIsoLayoutEffect, useScroll, useSize } from '../common/hooks'
-import { useViewer } from '../common/Slots'
+import { useFileOps, useViewer } from '../common/Slots'
 import { Status } from '../common/Status'
 import { ZoomControl, type Zoom } from '../common/ZoomControl'
 import { ContextMenu, MOD, type MenuItem } from '../common/ContextMenu'
@@ -13,8 +13,9 @@ import { domFromPos, getSel, opInsert, posFromDom } from '../edit/input'
 import { download, pickFiles } from '../edit/Toolbar'
 import { runsText, type RRun } from '../edit/rich'
 import { DocxEditor, type DocState, type FormatState } from './DocxEditor'
-import { DocxToolbar } from './DocxToolbar'
+import { DocxToolbar, type ImageActions } from './DocxToolbar'
 import { FindBar, type Match } from './FindBar'
+import { docxToMarkdown, docxToText } from '../file/text'
 import { BlockView, contextual, type RenderCtx } from './render'
 
 const PX = 4 / 3
@@ -396,6 +397,46 @@ export function DocxView({ client, onStatus, initialZoom = 'fit' }: DocxViewProp
 
   const docStyle: CSSProperties = { fontFamily: meta?.font, fontSize: meta ? `${meta.sz}pt` : undefined }
 
+  // ---- File → Download as / Print: the pages as laid out on screen ----
+  useFileOps({
+    printable: async () => {
+      if (!complete) throw new Error('The document is still loading — try again in a moment')
+      return {
+        size: `${page.w}pt ${page.h}pt`,
+        margin: '0',
+        node: pages.map((p, i) => (
+          <div key={i} className="de-print-page" style={{ width: `${page.w}pt`, height: `${page.h}pt` }}>
+            <PageView index={i} count={pages.length} slice={p} blocks={st.blocks} meta={meta} page={page} top={0} left={0} height={pageH} zoom={1} client={client} docStyle={docStyle} editing={false} />
+          </div>
+        )),
+      }
+    },
+    text: async (format) => {
+      if (!done) throw new Error('The document is still loading — try again in a moment')
+      return format === 'md' ? docxToMarkdown(st.blocks) : docxToText(st.blocks)
+    },
+    stats: () => {
+      let chars = 0
+      let paras = 0
+      const count = (b: Block) => {
+        if (b.t === 'p') {
+          const t = runsText(b.runs as RRun[])
+          chars += t.length
+          if (t.trim()) paras++
+        } else if (b.t === 'tbl') for (const r of b.rows) for (const c of r.cells) c.blocks.forEach(count)
+      }
+      st.blocks.forEach(count)
+      const more = complete ? '' : '+'
+      return [
+        ['Pages', pages.length.toLocaleString() + more],
+        ['Words', words.toLocaleString() + more],
+        ['Characters', chars.toLocaleString() + more],
+        ['Paragraphs', paras.toLocaleString() + more],
+        ['Page size', `${+(page.w / 72).toFixed(2)} × ${+(page.h / 72).toFixed(2)} in`],
+      ]
+    },
+  })
+
   // ---- dialogs / clipboard ----
   const askLink = () => {
     const cur = editor.state()?.link
@@ -446,20 +487,22 @@ export function DocxView({ client, onStatus, initialZoom = 'fit' }: DocxViewProp
   }
   const pickImage = () => void pickFiles().then((f) => void (f.length && editor.insertImages(f)))
   const imgEl = () => (img && pagesRef.current ? (findObj(pagesRef.current, img.pa, img.o) as HTMLImageElement | null) : null)
-  const imageActions = {
+  const imageActions: ImageActions = {
     original: () => {
       const el = imgEl()
       if (el?.naturalWidth) editor.imageOriginal(el.naturalWidth, el.naturalHeight)
     },
     replace: () => void pickFiles('image/*', false).then((f) => f[0] && editor.replaceImage(f[0])),
     alt: askAlt,
-    download: () => {
-      const el = imgEl()
-      if (!el?.src || !img) return
-      void fetch(el.src)
-        .then((r) => r.blob())
-        .then((b) => download(b, img.target.split('/').pop() ?? 'image'))
-    },
+    download: !viewer.canDownload
+      ? undefined
+      : () => {
+          const el = imgEl()
+          if (!el?.src || !img) return
+          void fetch(el.src)
+            .then((r) => r.blob())
+            .then((b) => download(b, img.target.split('/').pop() ?? 'image'))
+        },
   }
 
   // ---- image selection overlay (resize handles) ----
@@ -533,7 +576,7 @@ export function DocxView({ client, onStatus, initialZoom = 'fit' }: DocxViewProp
         { label: 'Fit to page width', icon: 'fit', run: () => editor.resizeImage('fit') },
         { label: 'Replace image…', icon: 'imgReplace', run: imageActions.replace },
         { label: 'Alt text…', icon: 'alt', run: askAlt },
-        { label: 'Download image', icon: 'save', run: imageActions.download },
+        ...(imageActions.download ? [{ label: 'Download image', icon: 'save', run: imageActions.download } as MenuItem] : []),
         { label: 'Delete image', icon: 'trash', run: () => editor.deleteSelection() },
       )
     }

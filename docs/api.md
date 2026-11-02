@@ -9,6 +9,40 @@ import { DocViewer } from '@p10node/office-engine'
 <DocViewer src="https://cdn.example.com/report.xlsx" />          // URL → Range requests
 <DocViewer src={url} headers={{ Authorization: `Bearer ${t}` }} credentials="include" />
 <DocViewer src={file} editable onSave={(blob, name) => upload(blob, name)} />  // editing
+<DocViewer src={file} allowSave={false} allowDownload={false} />  // no Save/Download, no image download
+<DocViewer src={file} fileMenu={false} />                         // no File menu
+```
+
+### File menu
+
+| Item                      | DOCX                       | XLSX                           | PPTX                       |
+|---------------------------|----------------------------|--------------------------------|----------------------------|
+| New                       | blank document             | blank spreadsheet              | blank presentation         |
+| Open… (`Ctrl+O`)          | any supported file         | any supported file             | any supported file         |
+| Import CSV into new sheet | –                          | `.csv` / `.tsv`                | –                          |
+| Save (`Ctrl+S`)           | ✓                          | ✓                              | ✓                          |
+| Rename…                   | ✓                          | ✓                              | ✓                          |
+| Download as (native)      | `.docx`                    | `.xlsx`                        | `.pptx`                    |
+| PDF                       | pages as shown             | current sheet, fit to width    | one slide per page         |
+| Web page                  | `.html`, images inlined    | `.html`                        | `.html`, images inlined    |
+| Text                      | `.txt`, `.md`              | `.csv`, `.tsv` (current sheet) | `.txt` (incl. notes)       |
+| Document details          | pages, words, characters   | sheets, used range             | slides, slide size         |
+| Print (`Ctrl+P`)          | ✓                          | ✓                              | ✓                          |
+| Host items, Close         | `fileMenuItems`, `onClose` | `fileMenuItems`, `onClose`     | `fileMenuItems`, `onClose` |
+
+Open converts other formats: `.csv` / `.tsv` → workbook, `.txt` / `.md` / `.html` → document (headings, lists, bold / italic, links). Converted files start unsaved; Save writes the Office file.
+New / Open replace the shown document until the host passes another `src` (unsaved changes are confirmed first; both are hidden during collaboration).
+Rename changes the shown name and the name used by Save / Download (`onRename` receives it); it does not reload the document.
+Document details also lists the file's core properties (title, author, created, modified…).
+PDF goes through the browser print dialog ("Save as PDF"), so text stays selectable. `allowDownload={false}` also hides Download as / Print and blocks `Ctrl+P`.
+
+```tsx
+<DocViewer
+  src={file}
+  fileMenuItems={[{ label: 'Share…', icon: 'open', onClick: share }, { label: 'Version history', onClick: history }]}
+  onRename={(name) => api.rename(id, name)}
+  onClose={() => router.back()}
+/>
 ```
 
 CSS is auto-injected, no import needed. Container must have a height.
@@ -27,6 +61,13 @@ CSS is auto-injected, no import needed. Container must have a height.
 | `styleTarget`   | `Document \| ShadowRoot`                       | document | Where CSS is injected                                          |
 | `editable`      | `boolean`                                      | `false`  | Open in edit mode                                              |
 | `allowEdit`     | `boolean`                                      | `true`   | Show Edit/View button                                          |
+| `allowSave`     | `boolean`                                      | `true`   | Show Save/Download button, enable Ctrl+S                       |
+| `allowDownload` | `boolean`                                      | `true`   | Allow downloads to device (save without `onSave`, images)      |
+| `fileMenu`      | `boolean`                                      | `true`   | File menu: open, download as PDF / HTML / text, print          |
+| `allowOpen`     | `boolean`                                      | `true`   | File → New / Open (off during collaboration)                   |
+| `fileMenuItems` | `FileMenuItem[]`                               | –        | Extra File menu entries (`label`, `onClick`, `icon`, `hint`)   |
+| `onRename`      | `(name) => void`                               | –        | File → Rename result (extension included)                      |
+| `onClose`       | `() => void`                                   | –        | Adds File → Close                                              |
 | `onSave`        | `(blob, name) => void`                         | download | Receives saved file (downloads by default)                     |
 | `onDirtyChange` | `(dirty) => void`                              | –        | Whether there are unsaved changes                              |
 | `collab`        | `CollabOptions`                                | –        | Real-time collaboration, see [collaboration](collaboration.md) |
@@ -57,7 +98,7 @@ if (client?.kind === 'xlsx') return <div className="de-root"><XlsxView client={c
 </script>
 ```
 
-`<office-viewer>`: attributes `src`, `name`, `editable`, `toolbar="false"`, `thumbnails="false"`, `collab` / `room` / `user` (real-time collaboration); property `.file = File`; events `load`, `error`.
+`<office-viewer>`: attributes `src`, `name`, `editable`, `toolbar="false"`, `thumbnails="false"`, `save="false"`, `download="false"`, `file-menu="false"`, `open="false"`, `collab` / `room` / `user` (real-time collaboration); property `.file = File`; events `load`, `error`.
 
 ## Core API (no React)
 
