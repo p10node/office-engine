@@ -72,12 +72,22 @@ export class Viewer {
     })
   }
 
-  /** document rendered (and its first progressive work settled) */
+  /** document rendered (and its first progressive work settled); a load error fails here, with its message */
   async ready(kind?: keyof typeof READY) {
-    await this.page.waitForFunction(() => window.__events?.some((e) => e.type === 'load' || e.type === 'error'), null, { timeout: 30_000 })
+    await this.page
+      .waitForFunction(() => window.__events?.some((e) => e.type === 'load' || e.type === 'error'), null, { timeout: 30_000 })
+      .catch((e: Error) => this.fail('document did not load', e))
+    const err = (await this.events('error')).at(-1)
+    if (err && !(await this.events('load')).length) await this.fail(`document failed to load: ${err.message}`)
     const k = kind ?? ((await this.events('load')).at(-1)?.kind as keyof typeof READY)
-    if (k) await this.page.locator(READY[k]).first().waitFor({ timeout: 30_000 })
+    if (k) await this.page.locator(READY[k]).first().waitFor({ timeout: 30_000 }).catch((e: Error) => this.fail(`${k} did not render`, e))
     await this.page.waitForTimeout(400)
+  }
+
+  /** throws `what` together with what the page recorded (callback events, console and page errors), so a timeout names its cause */
+  private async fail(what: string, cause?: Error): Promise<never> {
+    const events = (await this.events().catch(() => [])).map(({ b64, ...e }) => e)
+    throw new Error(`${what}${cause ? `: ${cause.message.split('\n')[0]}` : ''}\nevents: ${JSON.stringify(events)}\nerrors: ${JSON.stringify(this.errors)}`)
   }
 
   async events(type?: string): Promise<{ type: string; [k: string]: any }[]> {
