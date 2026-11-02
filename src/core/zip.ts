@@ -4,6 +4,9 @@ export interface ZipEntry {
   name: string
   method: number
   flags: number
+  crc: number
+  time: number
+  date: number
   compSize: number
   size: number
   localOffset: number
@@ -80,6 +83,9 @@ export class ZipArchive {
       if (cdv.getUint32(p, true) !== SIG_CEN) break
       const flags = cdv.getUint16(p + 8, true)
       const method = cdv.getUint16(p + 10, true)
+      const time = cdv.getUint16(p + 12, true)
+      const date = cdv.getUint16(p + 14, true)
+      const crc = cdv.getUint32(p + 16, true)
       let compSize = cdv.getUint32(p + 20, true)
       let size = cdv.getUint32(p + 24, true)
       const nameLen = cdv.getUint16(p + 28, true)
@@ -104,7 +110,7 @@ export class ZipArchive {
         }
       }
       if (!name.endsWith('/')) {
-        this.entries.set(normalize(name), { name, method, flags, compSize, size, localOffset })
+        this.entries.set(normalize(name), { name, method, flags, crc, time, date, compSize, size, localOffset })
       }
       p += 46 + nameLen + extraLen + commentLen
     }
@@ -129,6 +135,12 @@ export class ZipArchive {
     if (dv.getUint32(0, true) !== SIG_LOC) throw new Error(`Corrupt ZIP local header for ${e.name}`)
     e.dataOffset = e.localOffset + 30 + dv.getUint16(26, true) + dv.getUint16(28, true)
     return e.dataOffset
+  }
+
+  /** Compressed bytes of an entry, as stored (zero-copy Blob slice when the source allows). */
+  async rawData(e: ZipEntry): Promise<Blob | Uint8Array> {
+    const off = await this.dataOffset(e)
+    return this.src.slice ? this.src.slice(off, e.compSize) : this.src.read(off, e.compSize)
   }
 
   /** Decompressed stream of an entry. `onRaw` reports compressed bytes consumed. */

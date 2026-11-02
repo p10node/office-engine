@@ -3,7 +3,7 @@ import { kid, kids, num, type XEl } from '../xml'
 import { readPPr, readRPr } from './styles'
 import type { ParaStyle, RunStyle } from './types'
 
-interface Level {
+export interface Level {
   start: number
   fmt: string
   text: string
@@ -97,6 +97,27 @@ export class Numbering {
       }
       this.nums.set(n.a.numId, inst)
     }
+  }
+
+  reset() {
+    this.counters.clear()
+  }
+
+  /** First list instance whose level 0 is a bullet / a number, without overrides. */
+  findList(kind: 'bullet' | 'number'): string | undefined {
+    for (const [id, inst] of this.nums) {
+      if (Object.keys(inst.starts).length) continue
+      const l0 = this.abstracts.get(inst.abstractId)?.[0]
+      if (!l0) continue
+      if (kind === 'bullet' ? l0.fmt === 'bullet' : l0.fmt === 'decimal') return id
+    }
+    return undefined
+  }
+
+  ids(): { abstract: number; num: number } {
+    const a = [...this.abstracts.keys()].map(Number).filter(Number.isFinite)
+    const n = [...this.nums.keys()].map(Number).filter(Number.isFinite)
+    return { abstract: a.length ? Math.max(...a) + 1 : 0, num: n.length ? Math.max(...n) + 1 : 1 }
   }
 
   level(numId: string, ilvl: number): Level | undefined {

@@ -31,7 +31,7 @@ def png(w=640, h=320, hue=0):
         t = x / w
         d.line([(x, 0), (x, h)], fill=(int(40 + 180 * t), int(90 + 60 * (1 - t)), int(200 - 120 * t + hue) % 256))
     d.ellipse([w * 0.35, h * 0.2, w * 0.65, h * 0.8], fill=(255, 255, 255))
-    d.text((20, 20), 'docs-engine', fill=(255, 255, 255))
+    d.text((20, 20), 'office-engine', fill=(255, 255, 255))
     b = io.BytesIO()
     img.save(b, 'PNG')
     b.seek(0)
@@ -104,7 +104,7 @@ def make_docx(path, paragraphs=0):
     doc = Document()
     sec = doc.sections[0]
     hp = sec.header.paragraphs[0]
-    hp.text = 'docs-engine sample — header'
+    hp.text = 'office-engine sample — header'
     hp.alignment = WD_ALIGN_PARAGRAPH.RIGHT
     fp = sec.footer.paragraphs[0]
     fp.alignment = WD_ALIGN_PARAGRAPH.CENTER
@@ -271,7 +271,7 @@ def make_pptx(path, extra=0):
     prs.slide_height = Inches(7.5)
 
     s = prs.slides.add_slide(prs.slide_layouts[0])
-    s.shapes.title.text = 'docs-engine'
+    s.shapes.title.text = 'office-engine'
     s.placeholders[1].text = 'Progressive Office viewer for the browser'
 
     s = prs.slides.add_slide(prs.slide_layouts[1])

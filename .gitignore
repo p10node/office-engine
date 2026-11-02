@@ -4,3 +4,4 @@ dist-playground
 playground/public/samples/large-*
 *.log
 .DS_Store
+dist-site

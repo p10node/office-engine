@@ -30,13 +30,14 @@ export function mount(el: HTMLElement, options: MountOptions): MountedViewer {
 }
 
 /**
- * `<docs-viewer src="/file.xlsx" style="height:600px"></docs-viewer>`
+ * `<office-viewer src="/file.xlsx" style="height:600px"></office-viewer>`
  * Rendered inside a shadow root so host page CSS cannot leak in.
- * Attributes: src, name, toolbar ("false" to hide), thumbnails ("false" to hide).
+ * Attributes: src, name, editable, toolbar ("false" to hide), thumbnails ("false" to hide);
+ * real-time collaboration: collab (hub WebSocket URL), room, user (display name).
  * Property: `file` (File/Blob/ArrayBuffer) for local data.
  */
-export class DocsViewerElement extends HTMLElement {
-  static observedAttributes = ['src', 'name', 'toolbar', 'thumbnails']
+export class OfficeViewerElement extends HTMLElement {
+  static observedAttributes = ['src', 'name', 'toolbar', 'thumbnails', 'editable', 'collab', 'room', 'user']
   private viewer?: MountedViewer
   private _file?: Blob | ArrayBuffer
 
@@ -74,6 +75,11 @@ export class DocsViewerElement extends HTMLElement {
       name: this.getAttribute('name') ?? undefined,
       toolbar: this.getAttribute('toolbar') !== 'false',
       thumbnails: this.getAttribute('thumbnails') !== 'false',
+      editable: this.hasAttribute('editable') && this.getAttribute('editable') !== 'false',
+      collab:
+        this.getAttribute('collab') && this.getAttribute('room')
+          ? { transport: this.getAttribute('collab')!, room: this.getAttribute('room')!, user: { name: this.getAttribute('user') || 'Guest' } }
+          : undefined,
       onLoad: (client) => this.dispatchEvent(new CustomEvent('load', { detail: { kind: client.kind, name: client.name } })),
       onError: (error) => this.dispatchEvent(new CustomEvent('error', { detail: error })),
     }
@@ -84,8 +90,8 @@ export class DocsViewerElement extends HTMLElement {
   }
 }
 
-export function defineElement(tag = 'docs-viewer') {
-  if (typeof customElements !== 'undefined' && !customElements.get(tag)) customElements.define(tag, DocsViewerElement)
+export function defineElement(tag = 'office-viewer') {
+  if (typeof customElements !== 'undefined' && !customElements.get(tag)) customElements.define(tag, OfficeViewerElement)
 }
 
 defineElement()

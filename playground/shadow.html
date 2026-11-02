@@ -1,0 +1,14 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>office-engine — shadow DOM embed</title>
+    <style>body{margin:0;padding:12px;font:14px system-ui} office-viewer{height:85vh;border:1px solid #ddd;border-radius:8px;overflow:hidden}</style>
+  </head>
+  <body>
+    <office-viewer src="/samples/sample.docx" editable></office-viewer>
+    <script type="module">
+      import '../src/embed.ts'
+    </script>
+  </body>
+</html>

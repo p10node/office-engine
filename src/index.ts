@@ -15,3 +15,7 @@ export type { DocKind } from './core/opc'
 export type * from './core/docx/types'
 export type * from './core/xlsx/types'
 export type * from './core/pptx/types'
+
+export { startCollab, CollabHub, CollabSession, MemoryTransport, WebSocketTransport, type Collab, type CollabOptions, type CollabStatus, type Transport } from './collab'
+export type { PeerInfo, UserInfo } from './collab/protocol'
+export { useCollab, CollabBar, PeerOverlay } from './collab/react'

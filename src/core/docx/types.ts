@@ -46,14 +46,48 @@ export interface ParaStyle {
   contextual?: boolean
 }
 
+/** [paragraph id, run ordinal] of the source run in the original XML */
+export type SrcRef = [number, number]
+
+/** Direct formatting changed by the user (written back as explicit run properties). */
+export interface RunSet {
+  b?: boolean
+  i?: boolean
+  u?: string
+  strike?: boolean
+  color?: string | null
+  sz?: number
+  /** raw font name */
+  font?: string
+  hl?: string | null
+  va?: 'sup' | 'sub' | null
+}
+
+/**
+ * Inline content. Tabs and line breaks are carried as '\t' / '\n' inside text.
+ * Everything that isn't 'text' counts as one character when editing.
+ */
 export type Inline =
-  | { t: 'text'; text: string; s: RunStyle; href?: string }
-  | { t: 'tab'; s: RunStyle }
-  | { t: 'br'; s: RunStyle }
-  | { t: 'img'; target: string; w: number; h: number; alt?: string; href?: string }
-  | { t: 'field'; kind: 'PAGE' | 'NUMPAGES'; s: RunStyle }
-  | { t: 'box'; w: number; h: number; blocks: Block[]; fill?: string; border?: string }
-  | { t: 'shape'; w: number; h: number; label?: string }
+  | { t: 'text'; text: string; s: RunStyle; href?: string; lk?: string; src?: SrcRef; d?: RunSet }
+  | {
+      t: 'img'
+      target: string
+      w: number
+      h: number
+      alt?: string
+      href?: string
+      src?: SrcRef
+      rid?: string
+      resized?: boolean
+      /** alt text changed by the user */
+      altSet?: boolean
+      /** picture replaced (rid points to the new image part) */
+      repl?: boolean
+    }
+  | { t: 'field'; kind: 'PAGE' | 'NUMPAGES'; s: RunStyle; src?: SrcRef }
+  | { t: 'box'; w: number; h: number; blocks: Block[]; fill?: string; border?: string; src?: SrcRef }
+  | { t: 'shape'; w: number; h: number; label?: string; src?: SrcRef }
+  | { t: 'ref'; text: string; s: RunStyle; src?: SrcRef }
 
 export interface ListMarker {
   text: string
@@ -72,6 +106,112 @@ export interface Paragraph {
   markFont?: string
   /** explicit page break before this paragraph (from w:br type=page or pageBreakBefore) */
   pb?: boolean
+  /** paragraph id (editable paragraphs only); split parts share it */
+  pid?: number
+  /** read-only (inside fields spanning paragraphs, text boxes, nested tables…) */
+  ro?: boolean
+  /** paragraph style id */
+  sid?: string
+  /** list kind + level when numbered */
+  lst?: 'bullet' | 'number'
+  ilvl?: number
+  // ---- editor bookkeeping (main thread) ----
+  /** template paragraph (original pid) */
+  from?: number
+  /** original paragraphs whose bookmarks/comments this one carries */
+  orig?: number[]
+  /** paragraph-level changes */
+  pd?: ParaDirty
+  /** changed since load */
+  edited?: boolean
+  /** keeps the template's section break */
+  keepSect?: boolean
+  /** render version (bumped to force DOM rebuild after IME composition) */
+  ver?: number
+  /** formatting for text typed into this (empty) paragraph */
+  caret?: Inline
+}
+
+export interface ParaDirty {
+  style?: string
+  align?: 'left' | 'center' | 'right' | 'justify'
+  list?: 'bullet' | 'number' | 'none'
+  ilvl?: number
+  indL?: number
+  /** line spacing multiple (1, 1.15, 1.5, 2…) */
+  line?: number
+  /** spacing before / after in pt */
+  before?: number
+  after?: number
+  pageBreak?: boolean
+}
+
+export type SpecRun =
+  | { text: string; src?: SrcRef; set?: RunSet; lk?: string }
+  | { obj: 'copy'; src: SrcRef; size?: [number, number]; alt?: string; rid?: string }
+  | { obj: 'image'; rid: string; w: number; h: number; name?: string; alt?: string }
+  | { obj: 'field'; kind: 'PAGE' | 'NUMPAGES'; set?: RunSet }
+
+export interface ParaSpec {
+  pid: number
+  from: number
+  orig?: number[]
+  pd?: ParaDirty
+  /** page-break separated parts */
+  parts: SpecRun[][]
+  pristine?: boolean
+  keepSect?: boolean
+}
+
+export interface CellSpec {
+  src?: [number, number]
+  colSpan: number
+  rowSpan: number
+  paras: ParaSpec[]
+  shd?: string
+}
+
+export interface TableSpec {
+  tid: number
+  item?: number
+  cols: number[]
+  rows: { src?: number; cells: CellSpec[] }[]
+}
+
+export interface TableOp {
+  tid: number
+  item?: number
+  /** paragraph the (new) table follows */
+  anchor?: number
+  /** null deletes the table */
+  spec: TableSpec | null
+}
+
+export interface EditOp {
+  anchor: number
+  list: ParaSpec[]
+  remove?: number[]
+  /** return re-converted blocks (needed after style/list changes) */
+  want?: boolean
+}
+
+export interface EditResult {
+  blocks: Record<number, Block[]>
+  markers: Record<number, { text: string; s: RunStyle; tab: boolean; lst?: 'bullet' | 'number' } | null>
+}
+
+/** built-in paragraph styles the picker always offers (created on first use when missing) */
+export type CanonStyle = 'normal' | 'title' | 'subtitle' | 'h1' | 'h2' | 'h3' | 'h4' | 'h5' | 'h6'
+
+export interface StyleInfo {
+  id: string
+  name: string
+  next?: string
+  canon?: CanonStyle
+  /** heading level 0-8 (outline) */
+  outline?: number
+  /** run look of the style, for the style picker */
+  preview?: { b?: boolean; i?: boolean; color?: string; sz?: number; font?: string }
 }
 
 export interface CellBorders {
@@ -83,6 +223,8 @@ export interface CellBorders {
 
 export interface TableCell {
   blocks: Block[]
+  /** [row, tc] index in the original table XML (template for cell properties) */
+  src?: [number, number]
   colSpan: number
   rowSpan: number
   w?: number
@@ -94,6 +236,8 @@ export interface TableCell {
 
 export interface TableRow {
   cells: TableCell[]
+  /** original row index */
+  src?: number
   h?: number
   exact?: boolean
   header?: boolean
@@ -101,6 +245,10 @@ export interface TableRow {
 
 export interface Table {
   t: 'tbl'
+  /** body item index of an original top-level table */
+  item?: number
+  /** set once the table is regenerated by the editor (new or structurally changed) */
+  tid?: number
   cols: number[]
   rows: TableRow[]
   align?: 'left' | 'center' | 'right'
@@ -130,6 +278,8 @@ export type Block = Paragraph | Table | SectionBreak
 
 export interface DocxMeta {
   page: PageSetup
+  /** quick paragraph styles for the style picker */
+  styles?: StyleInfo[]
   header?: Block[]
   footer?: Block[]
   firstHeader?: Block[]

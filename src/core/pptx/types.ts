@@ -38,6 +38,10 @@ export interface TRun {
   href?: string
   hl?: string
   br?: boolean
+  /** slide field (number/date): kept as an object when editing */
+  fld?: boolean
+  /** [paragraph, run] index in the original shape XML */
+  src?: [number, number]
 }
 
 export interface TPara {
@@ -50,8 +54,13 @@ export interface TPara {
   spcBef: number
   spcAft: number
   bullet?: { text: string; color?: string; font?: string; sz: number }
+  /** outline level and bullet kind (editor state) */
+  lvl?: number
+  buKind?: 'none' | 'bullet' | 'number'
   runs: TRun[]
   endSz: number
+  /** template paragraph index in the original shape XML */
+  k?: number
 }
 
 export interface TextBody {
@@ -60,13 +69,40 @@ export interface TextBody {
   wrap: boolean
   vert?: string
   paras: TPara[]
+  /** placeholder without text (editable, invisible when viewing) */
+  empty?: boolean
 }
 
-export type SlideEl =
-  | { t: 'shape'; box: Box; geom: string; adj?: Record<string, number>; fill?: Fill; stroke?: Stroke; text?: TextBody; path?: string }
+/** `top`: id of the slide-level element (selection / move); `sid`: own id of a text shape (text editing) */
+export type SlideEl = (
+  | { t: 'shape'; box: Box; geom: string; adj?: Record<string, number>; fill?: Fill; stroke?: Stroke; text?: TextBody; path?: string; sid?: number }
   | { t: 'pic'; box: Box; target?: string; crop?: [number, number, number, number]; stroke?: Stroke; geom?: string; video?: boolean }
   | { t: 'table'; box: Box; cols: number[]; rows: { h: number; cells: TCell[] }[] }
   | { t: 'placeholder'; box: Box; label: string }
+) & { top?: number }
+
+/** 'text', 'line', 'image' or any DrawingML preset geometry name (rect, ellipse, star5, chevron…) */
+export type ShapeKind = 'text' | 'line' | 'image' | (string & {})
+
+export type ShapeOp =
+  | { op: 'xfrm'; top: number; box: Box }
+  | { op: 'delete'; top: number }
+  | { op: 'fill'; top: number; color: string | null }
+  | { op: 'line'; top: number; color?: string | null; w?: number; dash?: string }
+  | { op: 'order'; top: number; to: 'front' | 'back' | 'forward' | 'backward' }
+  | { op: 'duplicate'; top: number; dx?: number; dy?: number }
+  /** vertical text anchor of a text shape (by shape id) */
+  | { op: 'anchor'; sid: number; anchor: 't' | 'ctr' | 'b' }
+  /** slide background color (null = follow layout) */
+  | { op: 'bg'; color: string | null }
+  | { op: 'insert'; kind: ShapeKind; box: Box; text?: string; rid?: string }
+
+export type SlideOp =
+  | { op: 'add'; after: number; layout?: 'title' | 'content' | 'blank' }
+  | { op: 'duplicate'; index: number }
+  | { op: 'delete'; index: number }
+  | { op: 'move'; from: number; to: number }
+  | { op: 'hide'; index: number; hidden: boolean }
 
 export interface TCell {
   text?: TextBody
@@ -95,4 +131,35 @@ export interface PresentationMeta {
   h: number
   count: number
   slides: { index: number; path: string; hidden: boolean }[]
+}
+
+export interface PRunSet {
+  b?: boolean
+  i?: boolean
+  u?: boolean
+  strike?: boolean
+  sz?: number
+  color?: string | null
+  font?: string
+  hl?: string | null
+  /** percent of the font size (+30 superscript, -25 subscript), null = normal */
+  baseline?: number | null
+}
+
+export interface PRunSpec {
+  text: string
+  src?: [number, number]
+  set?: PRunSet
+  fld?: boolean
+}
+
+export interface PParaSpec {
+  k?: number
+  algn?: 'left' | 'center' | 'right' | 'justify'
+  /** outline level 0-8 */
+  lvl?: number
+  bullet?: 'none' | 'bullet' | 'number'
+  /** line spacing multiplier */
+  lnPct?: number
+  runs: PRunSpec[]
 }

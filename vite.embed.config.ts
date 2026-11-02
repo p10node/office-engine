@@ -1,7 +1,7 @@
 import react from '@vitejs/plugin-react'
 import { defineConfig } from 'vite'
 
-// Standalone <script> build (React bundled): window.DocsEngine + <docs-viewer> element.
+// Standalone <script> build (React bundled): window.OfficeEngine + <office-viewer> element.
 export default defineConfig({
   plugins: [react()],
   define: { 'process.env.NODE_ENV': JSON.stringify('production') },
@@ -11,9 +11,9 @@ export default defineConfig({
     target: 'es2020',
     lib: {
       entry: 'src/embed.ts',
-      name: 'DocsEngine',
+      name: 'OfficeEngine',
       formats: ['iife'],
-      fileName: () => 'docs-engine.embed.js',
+      fileName: () => 'office-engine.embed.js',
     },
   },
   worker: { format: 'es' },

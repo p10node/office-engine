@@ -1,9 +1,9 @@
 import { cssFont } from '../fonts'
 import type { Theme } from '../theme'
 import { kid, kids, num, onOff, path, type XEl } from '../xml'
-import type { Border, ParaStyle, RunStyle } from './types'
+import type { Border, CanonStyle, ParaStyle, RunStyle, StyleInfo } from './types'
 
-const HIGHLIGHT: Record<string, string> = {
+export const HIGHLIGHT: Record<string, string> = {
   yellow: '#ffff00', green: '#00ff00', cyan: '#00ffff', magenta: '#ff00ff', blue: '#0000ff', red: '#ff0000',
   darkBlue: '#000080', darkCyan: '#008080', darkGreen: '#008000', darkMagenta: '#800080', darkRed: '#800000',
   darkYellow: '#808000', darkGray: '#808080', lightGray: '#c0c0c0', black: '#000000', white: '#ffffff',
@@ -152,6 +152,10 @@ interface StyleDef {
   basedOn?: string
   el: XEl
   isDefault: boolean
+  name: string
+  next?: string
+  quick: boolean
+  hidden: boolean
 }
 
 export interface ResolvedParaStyle {
@@ -172,6 +176,24 @@ export interface ResolvedTableStyle {
   cellMar: Partial<Record<'top' | 'left' | 'bottom' | 'right', number>>
   shd?: string
   cond: Record<string, CondFormat>
+}
+
+const CANON_BY_NAME: Record<string, CanonStyle> = {
+  normal: 'normal',
+  title: 'title',
+  subtitle: 'subtitle',
+  'heading 1': 'h1',
+  'heading 2': 'h2',
+  'heading 3': 'h3',
+  'heading 4': 'h4',
+  'heading 5': 'h5',
+  'heading 6': 'h6',
+  heading1: 'h1',
+  heading2: 'h2',
+  heading3: 'h3',
+  heading4: 'h4',
+  heading5: 'h5',
+  heading6: 'h6',
 }
 
 export class StyleSheet {
@@ -198,11 +220,63 @@ export class StyleSheet {
         basedOn: kid(s, 'basedOn')?.a.val,
         el: s,
         isDefault: s.a.default === '1' || s.a.default === 'true',
+        name: kid(s, 'name')?.a.val ?? id,
+        next: kid(s, 'next')?.a.val,
+        quick: !!kid(s, 'qFormat'),
+        hidden: !!kid(s, 'semiHidden') || !!kid(s, 'hidden'),
       }
       this.defs.set(id, def)
       if (def.isDefault && def.type === 'paragraph') this.defaultPara = id
       if (def.isDefault && def.type === 'table') this.defaultTable = id
     }
+  }
+
+  /** registers a style element added to styles.xml */
+  add(s: XEl) {
+    const id = s.a.styleId
+    if (!id) return
+    this.defs.set(id, {
+      id,
+      type: s.a.type ?? 'paragraph',
+      basedOn: kid(s, 'basedOn')?.a.val,
+      el: s,
+      isDefault: false,
+      name: kid(s, 'name')?.a.val ?? id,
+      next: kid(s, 'next')?.a.val,
+      quick: !!kid(s, 'qFormat'),
+      hidden: false,
+    })
+    this.paraCache.clear()
+  }
+
+  /** ids of the built-in paragraph styles present in the document (matched by name, any locale id) */
+  canonical(): Partial<Record<CanonStyle, string>> {
+    const out: Partial<Record<CanonStyle, string>> = {}
+    if (this.defaultPara) out.normal = this.defaultPara
+    for (const d of this.defs.values()) {
+      if (d.type !== 'paragraph') continue
+      const k = CANON_BY_NAME[d.name.toLowerCase()] ?? CANON_BY_NAME[d.id.toLowerCase()]
+      if (k && !out[k]) out[k] = d.id
+    }
+    return out
+  }
+
+  has(id: string): boolean {
+    return this.defs.has(id)
+  }
+
+  /** Paragraph styles offered in the style picker (Normal, Title, Heading 1…). */
+  quickStyles(): StyleInfo[] {
+    const pretty = (n: string) => n.replace(/^heading (\d)$/i, 'Heading $1').replace(/^\w/, (c) => c.toUpperCase())
+    const canon = this.canonical()
+    const canonOf = new Map(Object.entries(canon).map(([k, id]) => [id, k as CanonStyle]))
+    return [...this.defs.values()]
+      .filter((d) => d.type === 'paragraph' && (d.isDefault || canonOf.has(d.id) || (d.quick && !d.hidden)))
+      .map((d) => {
+        const r = this.para(d.id)
+        const { b, i, color, sz, font } = r.rs
+        return { id: d.id, name: pretty(d.name), next: d.next, canon: canonOf.get(d.id), outline: r.ps.outline, preview: { b, i, color, sz, font } }
+      })
   }
 
   private chain(id: string | undefined): StyleDef[] {

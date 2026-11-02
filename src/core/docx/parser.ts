@@ -1,13 +1,13 @@
 import { OpcPackage, relOfType, type Rels } from '../opc'
 import { parseTheme, type Theme } from '../theme'
 import { emuToPt } from '../units'
-import { desc, descAll, kid, kids, num, parseXmlStream, path, TreeBuilder, type XEl } from '../xml'
+import { desc, descAll, kid, kids, num, parseXml, parseXmlStream, path, TreeBuilder, type SaxHandler, type XEl } from '../xml'
 import { Numbering } from './numbering'
 import {
-  borderCss, merge, readMargins, readPPr, readRPr, readTableBorders, shading, StyleSheet,
+  borderCss, merge, readMargins, readPPr, readRPr, readTableBorders, shading, StyleSheet, type NumPr,
 } from './styles'
 import type {
-  Block, CellBorders, DocxMeta, Inline, PageSetup, Paragraph, ParaStyle, RunStyle, Table, TableCell, TableRow,
+  Block, CellBorders, DocxMeta, Inline, ListMarker, PageSetup, Paragraph, ParaStyle, RunSet, RunStyle, SrcRef, Table, TableCell, TableRow,
 } from './types'
 import { DEFAULT_PAGE } from './types'
 
@@ -23,14 +23,40 @@ interface Sink {
   pageBreak(): void
 }
 
+export type Layer = { ps: ParaStyle; rs: RunStyle }
+
+export interface ParaRecord {
+  layer?: Layer
+  num?: NumPr
+  ro: boolean
+  sid: string
+  lst?: 'bullet' | 'number'
+  marker?: ListMarker
+}
+
+/** run ordinal → original source (reconversion of generated XML) */
+export interface GenRun {
+  src?: SrcRef
+  d?: RunSet
+}
+
+export interface ConvHooks {
+  /** registers an editable paragraph; returns its id */
+  para?(el: XEl, rec: ParaRecord): number | undefined
+  forced?: { pid: number; root: XEl; map: GenRun[]; layer?: Layer; marker?: ListMarker; rec?: ParaRecord }
+  /** body item currently being converted (tables remember it) */
+  item?: () => number
+}
+
 function fieldKind(instr: string): 'PAGE' | 'NUMPAGES' | undefined {
   const m = /^\s*(PAGE|NUMPAGES|SECTIONPAGES)\b/i.exec(instr)
   if (!m) return undefined
   return m[1].toUpperCase() === 'PAGE' ? 'PAGE' : 'NUMPAGES'
 }
 
-function sameStyle(a: RunStyle, b: RunStyle): boolean {
+function sameRecord(a: object | undefined, b: object | undefined): boolean {
   if (a === b) return true
+  if (!a || !b) return !a && !b
   const ka = Object.keys(a)
   if (ka.length !== Object.keys(b).length) return false
   for (const k of ka) if ((a as Record<string, unknown>)[k] !== (b as Record<string, unknown>)[k]) return false
@@ -66,16 +92,56 @@ export function pageSetup(sectPr: XEl | undefined): PageSetup {
   }
 }
 
-class Converter {
+const RUN_STOP = new Set(['p', 'del', 'moveFrom', 'oMath', 'oMathPara', 'pPr', 'rPr', 'r'])
+
+/** Runs of a paragraph in preorder (the ordinal is the run's identity for write-back). */
+export function collectRuns(p: XEl): Map<XEl, number> {
+  const m = new Map<XEl, number>()
+  const rec = (n: XEl) => {
+    for (const c of n.c) {
+      if (c.n === 'r') m.set(c, m.size)
+      if (!RUN_STOP.has(c.n)) rec(c)
+    }
+  }
+  rec(p)
+  return m
+}
+
+/** Paragraphs of a body item (root included) in preorder. */
+export function collectParas(roots: XEl[], into = new Map<XEl, number>()): Map<XEl, number> {
+  const rec = (n: XEl) => {
+    if (n.n === 'p') into.set(n, into.size)
+    for (const c of n.c) rec(c)
+  }
+  for (const r of roots) rec(r)
+  return into
+}
+
+export function markerOf(numbering: Numbering, num: NumPr, markRs: RunStyle): { marker: ListMarker; lst: 'bullet' | 'number' } | undefined {
+  const listed = numbering.next(num.numId, num.ilvl)
+  if (!listed) return undefined
+  const ms = merge<RunStyle>(markRs, listed.level.rs)
+  delete ms.u
+  delete ms.hl
+  return {
+    marker: { text: listed.level.suff === 'space' ? listed.text + ' ' : listed.text, s: ms, tab: listed.level.suff === 'tab' },
+    lst: listed.level.fmt === 'bullet' ? 'bullet' : 'number',
+  }
+}
+
+export class Converter {
   private fields: FieldState[] = []
-  private prev?: { p: Paragraph; styleId: string }
-  private tableLayer?: { ps: ParaStyle; rs: RunStyle }
+  private tableLayer?: Layer
+  private boxDepth = 0
+  private tableDepth = 0
+  private cur?: { pid?: number; runs: Map<XEl, number>; forced?: ConvHooks['forced'] }
 
   constructor(
     private styles: StyleSheet,
     private numbering: Numbering,
     private theme: Theme,
     private rels: Rels,
+    private hooks: ConvHooks = {},
   ) {}
 
   blocks(el: XEl, out: Block[]): void {
@@ -84,9 +150,7 @@ class Converter {
         this.paragraph(el, out)
         break
       case 'tbl':
-        this.prev = undefined
         out.push(this.table(el))
-        this.prev = undefined
         break
       case 'sdt':
         for (const c of kid(el, 'sdtContent')?.c ?? []) this.blocks(c, out)
@@ -104,64 +168,103 @@ class Converter {
     const pPr = kid(el, 'pPr')
     const d = readPPr(pPr)
     const st = this.styles.para(d.styleId)
-    const layer = this.tableLayer
+    const forced = this.hooks.forced?.root === el ? this.hooks.forced : undefined
+    const layer = forced ? forced.layer : this.tableLayer
     const numPr = d.numPr ?? st.numPr
-    const listed = numPr && numPr.numId !== '0' ? this.numbering.next(numPr.numId, numPr.ilvl) : undefined
-    const ps = merge<ParaStyle>(this.styles.docPs, layer?.ps, st.ps, listed?.level.ps, d.ps)
+    const level = numPr && numPr.numId !== '0' ? this.numbering.level(numPr.numId, numPr.ilvl) : undefined
+    const ps = merge<ParaStyle>(this.styles.docPs, layer?.ps, st.ps, level?.ps, d.ps)
     const base = merge<RunStyle>(this.styles.docRs, layer?.rs, st.rs)
     const markRs = merge<RunStyle>(base, readRPr(kid(pPr, 'rPr'), this.theme))
-    // contextual spacing: no space between paragraphs of the same style
-    const styleId = d.styleId ?? this.styles.defaultPara ?? ''
-    if (this.prev && this.prev.styleId === styleId) {
-      if (ps.contextual) ps.before = 0
-      if (this.prev.p.ps.contextual) this.prev.p.ps = { ...this.prev.p.ps, after: 0 }
-    }
-    let cur: Paragraph = { t: 'p', ps, runs: [], markSz: markRs.sz, markFont: markRs.font }
+    const sid = d.styleId ?? this.styles.defaultPara ?? ''
+    let cur: Paragraph = { t: 'p', ps, runs: [], markSz: markRs.sz, markFont: markRs.font, sid }
     if (ps.pageBreakBefore) cur.pb = true
-    if (listed && listed.text !== undefined) {
-      const ms = merge<RunStyle>(markRs, listed.level.rs)
-      delete ms.u
-      delete ms.hl
-      cur.marker = { text: listed.level.suff === 'space' ? listed.text + ' ' : listed.text, s: ms, tab: listed.level.suff === 'tab' }
+    let lst: 'bullet' | 'number' | undefined
+    if (level && numPr) {
+      if (forced) {
+        lst = level.fmt === 'bullet' ? 'bullet' : 'number'
+        if (forced.marker) cur.marker = forced.marker
+        else cur.marker = { text: level.fmt === 'bullet' ? '•' : '', s: merge<RunStyle>(markRs, level.rs), tab: level.suff === 'tab' }
+      } else {
+        const m = markerOf(this.numbering, numPr, markRs)
+        if (m) {
+          cur.marker = m.marker
+          lst = m.lst
+        }
+      }
+      if (lst) {
+        cur.lst = lst
+        cur.ilvl = numPr.ilvl
+      }
     }
+    const rec: ParaRecord = {
+      layer,
+      num: numPr && numPr.numId !== '0' ? numPr : undefined,
+      ro: this.fields.length > 0 || this.boxDepth > 0 || this.tableDepth > 1,
+      sid,
+      lst,
+      marker: cur.marker,
+    }
+    if (forced) forced.rec = rec
+    const pid = forced ? forced.pid : this.hooks.para?.(el, rec)
+    if (pid !== undefined) cur.pid = pid
+    const saved = this.cur
+    this.cur = { pid, runs: collectRuns(el), forced }
     const parts: Paragraph[] = [cur]
     const sink: Sink = {
       push: (x) => {
         const runs = cur.runs
         const last = runs[runs.length - 1]
-        if (x.t === 'text' && last?.t === 'text' && last.href === x.href && sameStyle(last.s, x.s)) last.text += x.text
+        if (x.t === 'text' && last?.t === 'text' && last.href === x.href && last.lk === x.lk && sameRecord(last.s, x.s) && sameRecord(last.d, x.d)) last.text += x.text
         else runs.push(x)
       },
       pageBreak: () => {
-        cur = { t: 'p', ps, runs: [], markSz: markRs.sz, markFont: markRs.font, pb: true }
+        cur = { t: 'p', ps, runs: [], markSz: markRs.sz, markFont: markRs.font, pb: true, sid }
+        if (pid !== undefined) cur.pid = pid
         parts.push(cur)
       },
     }
-    this.inlines(el.c, base, undefined, sink)
-    // A trailing page break leaves an empty paragraph that only carries the break.
-    for (const p of parts) out.push(p)
-    this.prev = { p: parts[parts.length - 1], styleId }
+    this.inlines(el.c, base, undefined, undefined, sink)
+    this.cur = saved
+    if (this.fields.length > 0) rec.ro = true
+    for (const p of parts) {
+      if (rec.ro) p.ro = true
+      out.push(p)
+    }
     if (d.sectPr) out.push({ t: 'sect', page: pageSetup(d.sectPr), kind: kid(d.sectPr, 'type')?.a.val ?? 'nextPage' })
   }
 
-  private inlines(children: XEl[], base: RunStyle, href: string | undefined, sink: Sink): void {
+  /** source reference + user formatting of a run element */
+  private srcOf(r: XEl): { src?: SrcRef; d?: RunSet } {
+    const cur = this.cur
+    if (!cur) return {}
+    const k = cur.runs.get(r)
+    if (k === undefined) return {}
+    if (cur.forced) {
+      const g = cur.forced.map[k]
+      return g ? { src: g.src, d: g.d } : {}
+    }
+    return cur.pid !== undefined ? { src: [cur.pid, k] } : {}
+  }
+
+  private inlines(children: XEl[], base: RunStyle, href: string | undefined, lk: string | undefined, sink: Sink): void {
     for (const c of children) {
       switch (c.n) {
         case 'r':
-          this.run(c, base, href, sink)
+          this.run(c, base, href, lk, sink)
           break
         case 'hyperlink': {
           const id = c.a['r:id']
           const target = id ? this.rels.get(id)?.target : c.a.anchor ? '#' + c.a.anchor : undefined
-          this.inlines(c.c, base, target ?? href, sink)
+          const link = id ? 'r:' + id : c.a.anchor ? 'a:' + c.a.anchor : undefined
+          this.inlines(c.c, base, target ?? href, link ?? lk, sink)
           break
         }
         case 'fldSimple': {
           const kind = fieldKind(c.a.instr ?? '')
           if (kind) {
             const r = kid(c, 'r')
-            sink.push({ t: 'field', kind, s: merge(base, readRPr(kid(r, 'rPr'), this.theme)) })
-          } else this.inlines(c.c, base, href, sink)
+            sink.push({ t: 'field', kind, s: merge(base, readRPr(kid(r, 'rPr'), this.theme)), ...(r ? this.srcOf(r) : {}) })
+          } else this.inlines(c.c, base, href, lk, sink)
           break
         }
         case 'ins':
@@ -170,10 +273,10 @@ class Converter {
         case 'bdo':
         case 'dir':
         case 'moveTo':
-          this.inlines(c.c, base, href, sink)
+          this.inlines(c.c, base, href, lk, sink)
           break
         case 'sdt':
-          this.inlines(kid(c, 'sdtContent')?.c ?? [], base, href, sink)
+          this.inlines(kid(c, 'sdtContent')?.c ?? [], base, href, lk, sink)
           break
         case 'oMath':
         case 'oMathPara': {
@@ -185,10 +288,12 @@ class Converter {
     }
   }
 
-  private run(r: XEl, base: RunStyle, href: string | undefined, sink: Sink): void {
+  private run(r: XEl, base: RunStyle, href: string | undefined, lk: string | undefined, sink: Sink): void {
     const rPr = kid(r, 'rPr')
     const s = merge<RunStyle>(base, this.styles.char(kid(rPr, 'rStyle')?.a.val), readRPr(rPr, this.theme))
     if (s.vanish) return
+    const { src, d } = this.srcOf(r)
+    const text = (t: string, style = s, link = href) => sink.push({ t: 'text', text: t, s: style, href: link, lk: link === href ? lk : undefined, src, d })
     for (const c of r.c) {
       const f = this.fields[this.fields.length - 1]
       switch (c.n) {
@@ -200,12 +305,11 @@ class Converter {
             f.kind = fieldKind(f.instr)
             const link = /HYPERLINK\s+(?:\\l\s+)?"([^"]+)"/.exec(f.instr)
             if (link) f.href = /\\l/.test(f.instr) ? '#' + link[1] : link[1]
-            if (f.kind) sink.push({ t: 'field', kind: f.kind, s })
+            if (f.kind) sink.push({ t: 'field', kind: f.kind, s, src })
           } else if (type === 'end') {
-            // Field without a result part (e.g. PAGE in some generators)
             if (f && f.phase === 'instr') {
               const kind = fieldKind(f.instr)
-              if (kind) sink.push({ t: 'field', kind, s })
+              if (kind) sink.push({ t: 'field', kind, s, src })
             }
             this.fields.pop()
           }
@@ -215,43 +319,41 @@ class Converter {
           if (f) f.instr += c.t
           break
         case 't':
-        case 'delText':
-          if (c.n === 'delText') break
           if (f && (f.phase === 'instr' || f.kind)) break
-          if (c.t) sink.push({ t: 'text', text: c.t, s, href: f?.href ?? href })
+          if (c.t) text(c.t, s, f?.href ?? href)
           break
         case 'tab':
         case 'ptab':
-          if (!f || (f.phase === 'result' && !f.kind)) sink.push({ t: 'tab', s })
+          if (!f || (f.phase === 'result' && !f.kind)) text('\t')
           break
         case 'br':
           if (c.a.type === 'page') sink.pageBreak()
-          else sink.push({ t: 'br', s })
+          else text('\n')
           break
         case 'cr':
-          sink.push({ t: 'br', s })
+          text('\n')
           break
         case 'noBreakHyphen':
-          sink.push({ t: 'text', text: '\u2011', s, href })
+          text('\u2011')
           break
         case 'softHyphen':
-          sink.push({ t: 'text', text: '\u00AD', s, href })
+          text('\u00AD')
           break
         case 'sym': {
           const code = parseInt(c.a.char ?? '', 16)
-          if (code) sink.push({ t: 'text', text: String.fromCharCode(code >= 0xf000 ? code - 0xf000 : code), s: { ...s, font: c.a.font ? `"${c.a.font}", ${s.font ?? 'serif'}` : s.font }, href })
+          if (code) text(String.fromCharCode(code >= 0xf000 ? code - 0xf000 : code), { ...s, font: c.a.font ? `"${c.a.font}", ${s.font ?? 'serif'}` : s.font })
           break
         }
         case 'drawing':
-          this.drawing(c, href, sink)
+          this.drawing(c, href, sink, src)
           break
         case 'pict':
         case 'object':
-          this.vml(c, href, sink)
+          this.vml(c, href, sink, src)
           break
         case 'footnoteReference':
         case 'endnoteReference':
-          sink.push({ t: 'text', text: c.a.id ?? '*', s: { ...s, va: 'sup' } })
+          sink.push({ t: 'ref', text: c.a.id ?? '*', s: { ...s, va: 'sup' }, src })
           break
       }
     }
@@ -263,7 +365,17 @@ class Converter {
     return rel && !rel.external ? rel.target : undefined
   }
 
-  private drawing(d: XEl, href: string | undefined, sink: Sink): void {
+  private boxBlocks(roots: XEl[]): Block[] {
+    const blocks: Block[] = []
+    const saved = this.cur
+    this.boxDepth++
+    for (const t of roots) for (const c of t.c) this.blocks(c, blocks)
+    this.boxDepth--
+    this.cur = saved
+    return blocks
+  }
+
+  private drawing(d: XEl, href: string | undefined, sink: Sink, src?: SrcRef): void {
     const box = kid(d, 'inline') ?? kid(d, 'anchor')
     if (!box) return
     const ext = kid(box, 'extent')
@@ -273,42 +385,52 @@ class Converter {
     const gd = path(box, 'graphic', 'graphicData')
     const txbx = descAll(gd, 'txbxContent')
     if (txbx.length) {
-      const blocks: Block[] = []
-      for (const t of txbx) for (const c of t.c) this.blocks(c, blocks)
+      const blocks = this.boxBlocks(txbx)
       const spPr = desc(gd, 'spPr')
       const fill = path(spPr, 'solidFill', 'srgbClr')?.a.val
       const ln = path(spPr, 'ln', 'solidFill', 'srgbClr')?.a.val
-      sink.push({ t: 'box', w, h, blocks, fill: fill ? '#' + fill : undefined, border: ln ? `1px solid #${ln}` : undefined })
+      sink.push({ t: 'box', w, h, blocks, fill: fill ? '#' + fill : undefined, border: ln ? `1px solid #${ln}` : undefined, src })
       return
     }
     const blip = desc(gd, 'blip')
     const target = this.target(blip?.a['r:embed'])
     if (target) {
       const click = this.rels.get(kid(docPr, 'hlinkClick')?.a['r:id'] ?? '')?.target
-      sink.push({ t: 'img', target, w, h, alt: docPr?.a.descr || docPr?.a.title || undefined, href: click ?? href })
+      sink.push({ t: 'img', target, w, h, alt: docPr?.a.descr || docPr?.a.title || undefined, href: click ?? href, src, rid: blip?.a['r:embed'] })
       return
     }
-    if (desc(gd, 'chart')) sink.push({ t: 'shape', w, h, label: 'Chart' })
-    else if (desc(gd, 'relIds')) sink.push({ t: 'shape', w, h, label: 'Diagram' })
+    if (desc(gd, 'chart')) sink.push({ t: 'shape', w, h, label: 'Chart', src })
+    else if (desc(gd, 'relIds')) sink.push({ t: 'shape', w, h, label: 'Diagram', src })
+    else sink.push({ t: 'shape', w: 0, h: 0, src })
   }
 
-  private vml(el: XEl, href: string | undefined, sink: Sink): void {
+  private vml(el: XEl, href: string | undefined, sink: Sink, src?: SrcRef): void {
     const tb = desc(el, 'txbxContent')
     const shape = desc(el, 'shape') ?? desc(el, 'rect')
     const style = shape?.a.style
     const w = cssLen(style, 'width') ?? 0
     const h = cssLen(style, 'height') ?? 0
     if (tb) {
-      const blocks: Block[] = []
-      for (const c of tb.c) this.blocks(c, blocks)
-      sink.push({ t: 'box', w, h, blocks })
+      sink.push({ t: 'box', w, h, blocks: this.boxBlocks([tb]), src })
       return
     }
     const target = this.target(desc(el, 'imagedata')?.a['r:id'])
-    if (target && w && h) sink.push({ t: 'img', target, w, h, href })
+    if (target && w && h) sink.push({ t: 'img', target, w, h, href, src })
+    else sink.push({ t: 'shape', w: 0, h: 0, src })
   }
 
   table(el: XEl): Table {
+    this.tableDepth++
+    try {
+      const t = this.tableInner(el)
+      if (this.tableDepth === 1 && this.hooks.item) t.item = this.hooks.item()
+      return t
+    } finally {
+      this.tableDepth--
+    }
+  }
+
+  private tableInner(el: XEl): Table {
     const tblPr = kid(el, 'tblPr')
     const ts = this.styles.table(kid(tblPr, 'tblStyle')?.a.val)
     const look = readLook(kid(tblPr, 'tblLook'))
@@ -325,7 +447,7 @@ class Converter {
     rowEls.forEach((tr, ri) => {
       const trPr = kid(tr, 'trPr')
       const th = kid(trPr, 'trHeight')
-      const row: TableRow = { cells: [] }
+      const row: TableRow = { cells: [], src: ri }
       if (th?.a.val) {
         row.h = Number(th.a.val) / 20
         row.exact = th.a.hRule === 'exact'
@@ -333,7 +455,7 @@ class Converter {
       if (kid(trPr, 'tblHeader')) row.header = true
       let col = num(kid(trPr, 'gridBefore')?.a.val, 0)!
       const cells: Tmp[] = []
-      for (const tc of flatten(tr, 'tc')) {
+      for (const [tci, tc] of flatten(tr, 'tc').entries()) {
         const tcPr = kid(tc, 'tcPr')
         const span = Math.max(1, num(kid(tcPr, 'gridSpan')?.a.val, 1)!)
         const vmEl = kid(tcPr, 'vMerge')
@@ -366,6 +488,7 @@ class Converter {
         const tcW = kid(tcPr, 'tcW')
         cells.push({
           blocks,
+          src: [ri, tci],
           colSpan: span,
           rowSpan: 1,
           w: tcW && (tcW.a.type ?? 'dxa') === 'dxa' ? Number(tcW.a.w) / 20 : undefined,
@@ -461,14 +584,114 @@ export interface DocxStreamCallbacks {
   initialHoldMs?: number
 }
 
+export interface PInfo extends ParaRecord {
+  item: number
+  ord: number
+}
+
+/** Splits document.xml into prefix / body items / suffix while streaming, keeping exact source text. */
+class Capture implements SaxHandler {
+  prefix = ''
+  items: string[] = []
+  suffix = ''
+  private buf = ''
+  private tail = ''
+  private pending = ''
+  private inItem = false
+  private depth = 0
+  private els: XEl[] = []
+
+  constructor(
+    private tb: TreeBuilder,
+    private onItem: (index: number, els: XEl[]) => void,
+  ) {}
+
+  raw = (seg: string) => {
+    this.flush()
+    this.pending = seg
+  }
+
+  /** TreeBuilder onElement target */
+  element = (el: XEl) => {
+    this.els.push(el)
+  }
+
+  private flush() {
+    if (!this.pending) return
+    if (this.inItem) this.buf += this.pending
+    else this.tail += this.pending
+    this.pending = ''
+  }
+
+  open(name: string, attrs: Record<string, string>): boolean | void {
+    if (this.depth === 2) {
+      if (this.items.length) this.items[this.items.length - 1] += this.tail
+      else this.prefix += this.tail
+      this.tail = ''
+      this.inItem = true
+      this.buf = ''
+      this.els = []
+    }
+    this.flush()
+    const skip = this.tb.open(name, attrs)
+    if (!skip) this.depth++
+    return skip
+  }
+
+  close(name: string): void {
+    this.flush()
+    this.tb.close(name)
+    this.depth--
+    if (this.depth === 2 && this.inItem) {
+      this.inItem = false
+      this.items.push(this.buf)
+      this.buf = ''
+      this.onItem(this.items.length - 1, this.els)
+      this.els = []
+    }
+  }
+
+  text(t: string): void {
+    this.flush()
+    this.tb.text(t)
+  }
+
+  finish() {
+    this.flush()
+    if (!this.items.length) this.prefix += this.tail
+    else this.suffix = this.tail
+    this.tail = ''
+  }
+}
+
 export class DocxDocument {
+  // ---- edit state ----
+  /** raw XML of each body child (exact source) */
+  items: string[] = []
+  prefix = ''
+  suffix = ''
+  info = new Map<number, PInfo>()
+  /** where each original paragraph lives in the source (never changes) */
+  origLoc = new Map<number, { item: number; ord: number }>()
+  /** original paragraph id per (item, ord) */
+  ordPid = new Map<string, number>()
+  itemParas = new Map<number, number[]>()
+  /** (item:ord) → paragraph ids now standing in for that original paragraph */
+  groups = new Map<string, number[]>()
+  genXml = new Map<number, string>()
+  /** whole body items replaced by the editor (regenerated tables; '' = deleted) */
+  itemXml = new Map<number, string>()
+  private nextPid = 1
+  private captured = false
+  private edited = false
+
   private constructor(
-    private pkg: OpcPackage,
-    private mainPath: string,
-    private rels: Rels,
-    private styles: StyleSheet,
-    private numbering: Numbering,
-    private theme: Theme,
+    readonly pkg: OpcPackage,
+    readonly mainPath: string,
+    public rels: Rels,
+    readonly styles: StyleSheet,
+    public numbering: Numbering,
+    readonly theme: Theme,
   ) {}
 
   static async open(pkg: OpcPackage, mainPath: string): Promise<DocxDocument> {
@@ -480,6 +703,14 @@ export class DocxDocument {
     const styles = new StyleSheet(stylesRel ? await pkg.xml(stylesRel.target) : undefined, theme)
     const numbering = new Numbering(numRel ? await pkg.xml(numRel.target) : undefined, theme)
     return new DocxDocument(pkg, mainPath, rels, styles, numbering, theme)
+  }
+
+  get dirty() {
+    return this.edited || this.pkg.dirty
+  }
+
+  markEdited() {
+    this.edited = true
   }
 
   private async headerFooter(id: string | undefined): Promise<Block[] | undefined> {
@@ -494,8 +725,32 @@ export class DocxDocument {
   }
 
   async stream(cb: DocxStreamCallbacks): Promise<void> {
-    const conv = new Converter(this.styles, this.numbering, this.theme, this.rels)
-    const baseMeta = { font: this.styles.docRs.font ?? '"Times New Roman", serif', sz: this.styles.docRs.sz ?? 10 }
+    let item = 0
+    let ords = new Map<XEl, number>()
+    const hooks: ConvHooks = {
+      item: () => item,
+      para: (el, rec) => {
+        const ord = ords.get(el)
+        if (ord === undefined) return undefined
+        const pid = this.nextPid++
+        const info = rec as PInfo
+        info.item = item
+        info.ord = ord
+        this.info.set(pid, info)
+        this.origLoc.set(pid, { item, ord })
+        this.ordPid.set(`${item}:${ord}`, pid)
+        let list = this.itemParas.get(item)
+        if (!list) this.itemParas.set(item, (list = []))
+        list[ord] = pid
+        return pid
+      },
+    }
+    const conv = new Converter(this.styles, this.numbering, this.theme, this.rels, hooks)
+    const baseMeta = {
+      font: this.styles.docRs.font ?? '"Times New Roman", serif',
+      sz: this.styles.docRs.sz ?? 10,
+      styles: this.styles.quickStyles(),
+    }
     let pending: Block[] = []
     let finalSect: XEl | undefined
     let firstSect: PageSetup | undefined
@@ -503,21 +758,26 @@ export class DocxDocument {
     const hold = cb.initialHoldMs ?? 350
     let lastFlush = 0
     let held = true
-    const tb = new TreeBuilder({
-      emitDepth: 2,
-      onElement: (el) => {
+    const onItem = (index: number, els: XEl[]) => {
+      item = index
+      ords = collectParas(els)
+      for (const el of els) {
         if (el.n === 'sectPr') {
           finalSect = el
-          return
+          continue
         }
         const before = pending.length
         conv.blocks(el, pending)
-        if (!firstSect) for (let i = before; i < pending.length; i++) {
-          const b = pending[i]
-          if (b.t === 'sect') firstSect = b.page
-        }
-      },
-    })
+        if (!firstSect)
+          for (let i = before; i < pending.length; i++) {
+            const b = pending[i]
+            if (b.t === 'sect') firstSect = b.page
+          }
+      }
+    }
+    let capture: Capture | undefined
+    const tb = new TreeBuilder({ emitDepth: 2, onElement: (el) => capture!.element(el) })
+    capture = new Capture(tb, onItem)
     const flush = () => {
       if (!pending.length) return
       cb.onBlocks(pending)
@@ -525,8 +785,9 @@ export class DocxDocument {
       lastFlush = Date.now()
     }
     const stream = await this.pkg.zip.stream(this.mainPath, cb.onProgress)
-    await parseXmlStream(stream, tb, {
+    await parseXmlStream(stream, capture, {
       signal: cb.signal,
+      raw: capture.raw,
       onChunk: async () => {
         const now = Date.now()
         if (held) {
@@ -543,6 +804,11 @@ export class DocxDocument {
         }
       },
     })
+    capture.finish()
+    this.items = capture.items
+    this.prefix = capture.prefix
+    this.suffix = capture.suffix
+    this.captured = true
     const sect = finalSect
     const meta: DocxMeta = { page: pageSetup(sect), ...baseMeta, final: true }
     if (sect) {
@@ -558,5 +824,53 @@ export class DocxDocument {
     cb.onMeta(meta)
     flush()
   }
-}
 
+  get ready() {
+    return this.captured
+  }
+
+  /** Re-converts generated paragraph XML into blocks (styles, list levels resolved by the engine). */
+  reconvert(pid: number, xml: string, map: GenRun[], layer: Layer | undefined, marker?: ListMarker): { blocks: Block[]; rec: ParaRecord } {
+    const root = parseXml(xml)
+    const forced: NonNullable<ConvHooks['forced']> = { pid, root, map, layer, marker }
+    const conv = new Converter(this.styles, this.numbering, this.theme, this.rels, { forced })
+    const out: Block[] = []
+    conv.paragraph(root, out)
+    return { blocks: out, rec: forced.rec! }
+  }
+
+  /** Recomputes list markers in document order; returns changed ones. */
+  recomputeMarkers(): Map<number, PInfo> {
+    const changed = new Map<number, PInfo>()
+    this.numbering.reset()
+    const items = [...this.itemParas.keys()].sort((a, b) => a - b)
+    for (const item of items) {
+      const arr = this.itemParas.get(item)!
+      for (let ord = 0; ord < arr.length; ord++) {
+        const pid0 = arr[ord]
+        if (pid0 === undefined) continue
+        const pids = this.groups.get(`${item}:${ord}`) ?? [pid0]
+        for (const pid of pids) {
+          const inf = this.info.get(pid)
+          if (!inf) continue
+          let next: ListMarker | undefined
+          let lst: 'bullet' | 'number' | undefined
+          if (inf.num) {
+            const base = inf.marker?.s ?? {}
+            const m = markerOf(this.numbering, inf.num, base)
+            if (m) {
+              next = { ...m.marker, s: inf.marker?.s ?? m.marker.s }
+              lst = m.lst
+            }
+          }
+          if ((next?.text ?? null) !== (inf.marker?.text ?? null) || lst !== inf.lst) {
+            inf.marker = next
+            inf.lst = lst
+            changed.set(pid, inf)
+          }
+        }
+      }
+    }
+    return changed
+  }
+}

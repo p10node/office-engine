@@ -41,7 +41,12 @@ function runStyle(r: TRun): CSSProperties {
   return s
 }
 
-export function TextView({ text, flow }: { text: TextBody; flow?: boolean }) {
+export interface TextEdit {
+  /** contentEditable root callback */
+  root: (el: HTMLDivElement | null) => void
+}
+
+export function TextView({ text, flow, edit }: { text: TextBody; flow?: boolean; edit?: TextEdit }) {
   const [l, t, r, b] = text.ins
   const style: CSSProperties = {
     ...(flow ? { position: 'relative', inset: 'auto', minHeight: '100%' } : {}),
@@ -49,8 +54,16 @@ export function TextView({ text, flow }: { text: TextBody; flow?: boolean }) {
     justifyContent: text.anchor === 'ctr' ? 'center' : text.anchor === 'b' ? 'flex-end' : 'flex-start',
   }
   if (text.vert) style.writingMode = text.vert === 'vert270' ? 'sideways-lr' : 'vertical-rl'
+  if (text.empty && !edit) return <div className="de-txt" style={style} />
   return (
-    <div className={text.wrap ? 'de-txt' : 'de-txt de-nowrap'} style={style}>
+    <div
+      ref={edit?.root}
+      className={(text.wrap ? 'de-txt' : 'de-txt de-nowrap') + (edit ? ' de-txt-edit' : '')}
+      style={style}
+      contentEditable={edit ? true : undefined}
+      suppressContentEditableWarning
+      spellCheck={edit ? false : undefined}
+    >
       {text.paras.map((p, i) => {
         const ps: CSSProperties = {
           textAlign: p.algn,
@@ -60,10 +73,26 @@ export function TextView({ text, flow }: { text: TextBody; flow?: boolean }) {
           paddingBottom: p.spcAft || undefined,
           lineHeight: p.lnPx ? `${p.lnPx}px` : p.lnPct ? +(p.lnPct * 1.2).toFixed(3) : 1.2,
         }
-        if (!p.runs.length) ps.fontSize = `${p.endSz}pt`
+        if (!p.runs.length || p.runs.every((x) => !x.text && !x.br)) ps.fontSize = `${p.endSz}pt`
         const hang = p.indent < 0 ? -p.indent : 0
-        const nodes: ReactNode[] = p.runs.map((r, k) =>
-          r.br ? (
+        let o = 0
+        const nodes: ReactNode[] = p.runs.map((r, k) => {
+          const at = o
+          o += r.fld ? 1 : r.br ? 1 : r.text.length
+          if (edit) {
+            if (r.fld)
+              return (
+                <span key={k} data-o={at} data-obj="" contentEditable={false} style={runStyle(r)}>
+                  {r.text}
+                </span>
+              )
+            return (
+              <span key={k} data-o={at} style={runStyle(r)}>
+                {r.br ? '\n' : r.text}
+              </span>
+            )
+          }
+          return r.br ? (
             <br key={k} />
           ) : r.href ? (
             <a key={k} href={r.href} target="_blank" rel="noreferrer noopener" style={{ color: 'inherit' }}>
@@ -73,20 +102,29 @@ export function TextView({ text, flow }: { text: TextBody; flow?: boolean }) {
             <span key={k} style={runStyle(r)}>
               {r.text}
             </span>
-          ),
-        )
+          )
+        })
+        const empty = o === 0
         return (
-          <div key={i} style={ps}>
-            {p.bullet && (
+          <div key={i} style={ps} data-pa={edit ? String(i) : undefined}>
+            {p.bullet && !empty && (
               <span
                 className="de-bul"
+                contentEditable={edit ? false : undefined}
                 style={{ minWidth: hang || undefined, paddingRight: hang ? undefined : '0.4em', fontSize: `${p.bullet.sz}pt`, color: p.bullet.color, fontFamily: p.bullet.font }}
               >
                 {p.bullet.text}
               </span>
             )}
             {nodes}
-            {!p.runs.length && '\u200B'}
+            {empty &&
+              (edit ? (
+                <span data-o={0} data-empty="">
+                  {'\u200B'}
+                </span>
+              ) : (
+                '\u200B'
+              ))}
           </div>
         )
       })}
@@ -102,7 +140,13 @@ function Marker({ id, s }: { id: string; s: Stroke }) {
   )
 }
 
-function ShapeView({ el, client, live }: { el: Extract<SlideEl, { t: 'shape' }>; client: DocumentClient; live: boolean }) {
+export interface SlideEditing {
+  sid: number
+  text: TextBody
+  edit: TextEdit
+}
+
+function ShapeView({ el, client, live, editing }: { el: Extract<SlideEl, { t: 'shape' }>; client: DocumentClient; live: boolean; editing?: SlideEditing }) {
   const id = useId().replace(/:/g, '')
   const { box } = el
   const isLine = LINE_GEOMS.has(el.geom)
@@ -117,7 +161,7 @@ function ShapeView({ el, client, live }: { el: Extract<SlideEl, { t: 'shape' }>;
   const w = Math.max(box.w, 1)
   const h = Math.max(box.h, 1)
   return (
-    <div className="de-el" style={boxStyle(box)}>
+    <div className="de-el" style={boxStyle(box)} data-sid={el.sid !== undefined && el.text ? el.sid : undefined} data-top={el.top}>
       {isRect && !s && (solid || css) ? (
         <div style={{ position: 'absolute', inset: 0, ...(css ?? { background: solid }) }} />
       ) : (
@@ -157,7 +201,7 @@ function ShapeView({ el, client, live }: { el: Extract<SlideEl, { t: 'shape' }>;
           )}
         </>
       )}
-      {el.text && <TextView text={el.text} />}
+      {editing && editing.sid === el.sid ? <TextView text={editing.text} edit={editing.edit} /> : el.text && <TextView text={el.text} />}
     </div>
   )
 }
@@ -166,6 +210,7 @@ function PicView({ el, client, live }: { el: Extract<SlideEl, { t: 'pic' }>; cli
   const url = useMediaUrl(client, el.target, live)
   const { box } = el
   const style: CSSProperties = { ...boxStyle(box), overflow: 'hidden' }
+  const top = el.top
   if (el.geom === 'ellipse') style.borderRadius = '50%'
   else if (el.geom === 'roundRect') style.borderRadius = Math.min(box.w, box.h) * 0.1667
   if (el.stroke) style.outline = `${el.stroke.w}px solid ${el.stroke.c}`
@@ -179,7 +224,7 @@ function PicView({ el, client, live }: { el: Extract<SlideEl, { t: 'pic' }>; cli
   const flip = box.flipH || box.flipV ? `scale(${box.flipH ? -1 : 1}, ${box.flipV ? -1 : 1})` : undefined
   if (flip) img.transform = flip
   return (
-    <div className="de-el" style={style}>
+    <div className="de-el" style={style} data-top={top}>
       {url && url !== 'unsupported' ? (
         <img src={url} alt="" style={img} draggable={false} />
       ) : url === 'unsupported' ? (
@@ -209,7 +254,7 @@ function CellView({ cell, client, live, h }: { cell: TCell; client: DocumentClie
 
 function TableView({ el, client, live }: { el: Extract<SlideEl, { t: 'table' }>; client: DocumentClient; live: boolean }) {
   return (
-    <div className="de-el" style={{ ...boxStyle(el.box), height: 'auto' }}>
+    <div className="de-el" style={{ ...boxStyle(el.box), height: 'auto' }} data-top={el.top}>
       <table className="de-stbl">
         <colgroup>
           {el.cols.map((w, i) => (
@@ -228,17 +273,17 @@ function TableView({ el, client, live }: { el: Extract<SlideEl, { t: 'table' }>;
   )
 }
 
-function ElView({ el, client, live }: { el: SlideEl; client: DocumentClient; live: boolean }) {
+function ElView({ el, client, live, editing }: { el: SlideEl; client: DocumentClient; live: boolean; editing?: SlideEditing }) {
   switch (el.t) {
     case 'shape':
-      return <ShapeView el={el} client={client} live={live} />
+      return <ShapeView el={el} client={client} live={live} editing={editing} />
     case 'pic':
       return <PicView el={el} client={client} live={live} />
     case 'table':
       return <TableView el={el} client={client} live={live} />
     case 'placeholder':
       return (
-        <div className="de-el de-ph" style={{ ...boxStyle(el.box), display: 'flex' }}>
+        <div className="de-el de-ph" style={{ ...boxStyle(el.box), display: 'flex' }} data-top={el.top}>
           {el.label}
         </div>
       )
@@ -251,16 +296,20 @@ export interface SlideViewProps {
   scale: number
   /** load media (false for far-away thumbnails) */
   live?: boolean
+  editing?: SlideEditing
+  /** extra layer drawn in slide coordinates (selection handles) */
+  overlay?: ReactNode
 }
 
-export const SlideView = memo(function SlideView({ model, client, scale, live = true }: SlideViewProps) {
+export const SlideView = memo(function SlideView({ model, client, scale, live = true, editing, overlay }: SlideViewProps) {
   const bg = useFillCss(client, model.bg, live)
   return (
     <div className={model.hidden ? 'de-slide de-hidden-slide' : 'de-slide'} style={{ width: model.w * scale, height: model.h * scale }}>
       <div className="de-slide-inner" style={{ width: model.w, height: model.h, transform: `scale(${scale})`, background: '#fff', ...(bg ?? {}) }}>
         {model.els.map((el, i) => (
-          <ElView key={i} el={el} client={client} live={live} />
+          <ElView key={i} el={el} client={client} live={live} editing={editing} />
         ))}
+        {overlay}
       </div>
     </div>
   )

@@ -3,7 +3,7 @@
   "configVersion": 1,
   "workspaces": {
     "": {
-      "name": "@eldora/docs-engine",
+      "name": "@p10node/office-engine",
       "devDependencies": {
         "@types/bun": "^1.4.4",
         "@types/react": "^19.3.0",

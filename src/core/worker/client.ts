@@ -85,7 +85,22 @@ export class DocumentClient {
     else p.reject(new Error(msg.error))
   }
 
+  /**
+   * Set by a collaboration session: sees every call first and handles the ones that change the
+   * document (returns a promise), or returns undefined to let the call through unchanged.
+   */
+  interceptor?: (method: keyof Methods, args: unknown[]) => Promise<unknown> | undefined
+
   call<M extends keyof Methods>(method: M, ...args: Parameters<Methods[M]>): Promise<ReturnType<Methods[M]>> {
+    if (this.interceptor && !this.destroyed) {
+      const r = this.interceptor(method, args)
+      if (r) return r as Promise<ReturnType<Methods[M]>>
+    }
+    return this.direct(method, ...args)
+  }
+
+  /** calls the engine directly, bypassing `interceptor` */
+  direct<M extends keyof Methods>(method: M, ...args: Parameters<Methods[M]>): Promise<ReturnType<Methods[M]>> {
     if (this.destroyed) return Promise.reject(new Error('Document closed'))
     if (this.engine) return this.engine.call(method, args) as Promise<ReturnType<Methods[M]>>
     const id = ++this.seq
@@ -94,6 +109,11 @@ export class DocumentClient {
       const transfer = args[0] instanceof ArrayBuffer ? [args[0]] : []
       this.worker!.postMessage({ id, method, args } satisfies Req, transfer)
     })
+  }
+
+  /** dispatches an event to listeners on this thread (e.g. remote changes applied by a collaboration session) */
+  notify<K extends keyof Events>(event: K, data: Events[K]) {
+    this.onMessage({ event, data })
   }
 
   on<K extends keyof Events>(event: K, fn: Listener<K>): () => void {

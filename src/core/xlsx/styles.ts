@@ -122,7 +122,7 @@ export function parseSheetStyles(root: XEl | undefined, theme: Theme): SheetStyl
       const ind = num(al.a.indent)
       if (ind) css[hAlign === 'right' ? 'paddingRight' : 'paddingLeft'] = `${ind * 9 + 2}px`
       const rot = num(al.a.textRotation)
-      if (rot && rot !== 255) css.textRotate = rot > 90 ? 90 - rot : rot
+      if (rot) css.textRotate = rot === 255 ? 255 : rot > 90 ? 90 - rot : rot
     }
     return { numFmt: numFmts.get(id) ?? BUILTIN_FORMATS[id] ?? 'General', fontPt: font?.sz ?? f0.sz ?? 11, css, hAlign, wrap }
   })

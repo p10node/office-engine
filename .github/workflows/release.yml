@@ -1,0 +1,119 @@
+name: Release
+
+# Two ways to release:
+#   1. Actions tab -> Release -> Run workflow (pick bump): bumps package.json,
+#      publishes to npm, pushes the release commit + tag, creates a GitHub release.
+#   2. Locally: `npm version patch && git push --follow-tags` -> the pushed tag
+#      triggers this workflow, which publishes that exact version.
+#
+# npm auth: either configure npm Trusted Publishing for this repo/workflow
+# (no secret needed), or add an `NPM_TOKEN` repository secret (automation token).
+
+on:
+  workflow_dispatch:
+    inputs:
+      bump:
+        description: Version bump
+        type: choice
+        options: [patch, minor, major, prepatch, preminor, premajor, prerelease]
+        default: patch
+  push:
+    tags: ['v*.*.*']
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  BUN_VERSION: 1.4.4
+
+jobs:
+  ci:
+    uses: ./.github/workflows/ci.yml
+
+  publish:
+    needs: ci
+    # Manual runs must target a branch (the bump commit is pushed back to it).
+    if: github.event_name == 'push' || github.ref_type == 'branch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: write # push release commit + tag, create GitHub release
+      id-token: write # npm provenance / trusted publishing
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: ${{ env.BUN_VERSION }}
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+
+      # Trusted publishing needs npm >= 11.5.1
+      - run: npm install -g npm@latest
+
+      - run: bun install --frozen-lockfile
+
+      - name: Bump version
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          BUMP: ${{ inputs.bump }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          npm version "$BUMP" --preid rc -m "chore(release): v%s"
+
+      - name: Resolve version
+        id: meta
+        run: |
+          name=$(jq -r .name package.json)
+          version=$(jq -r .version package.json)
+          if [ "$GITHUB_EVENT_NAME" = "push" ] && [ "v$version" != "$GITHUB_REF_NAME" ]; then
+            echo "::error::Tag $GITHUB_REF_NAME does not match package.json version v$version"
+            exit 1
+          fi
+          case "$version" in *-*) tag=next; pre=true ;; *) tag=latest; pre=false ;; esac
+          if npm view "$name@$version" version >/dev/null 2>&1; then published=true; else published=false; fi
+          {
+            echo "version=$version"
+            echo "dist_tag=$tag"
+            echo "prerelease=$pre"
+            echo "published=$published"
+          } >> "$GITHUB_OUTPUT"
+
+      - run: bun run build
+
+      # Provenance requires package.json "repository" to match this repo.
+      - name: Ensure repository field
+        run: |
+          jq -e .repository package.json >/dev/null || \
+            npm pkg set repository.type=git "repository.url=git+https://github.com/$GITHUB_REPOSITORY.git"
+
+      - name: Publish to npm
+        if: steps.meta.outputs.published != 'true'
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: npm publish --provenance --access public --tag "${{ steps.meta.outputs.dist_tag }}"
+
+      - name: Push release commit and tag
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          VERSION: ${{ steps.meta.outputs.version }}
+        run: git push --atomic origin "HEAD:$GITHUB_REF_NAME" "v$VERSION"
+
+      - name: Create GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.meta.outputs.version }}
+          PRERELEASE: ${{ steps.meta.outputs.prerelease }}
+        run: |
+          gh release view "v$VERSION" >/dev/null 2>&1 && exit 0
+          flags="--generate-notes --verify-tag"
+          [ "$PRERELEASE" = "true" ] && flags="$flags --prerelease"
+          gh release create "v$VERSION" --title "v$VERSION" $flags

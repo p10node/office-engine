@@ -1,19 +1,20 @@
 import { OpcPackage, relOfType, type Rels } from '../opc'
-import { parseTheme } from '../theme'
+import { parseTheme, type Theme } from '../theme'
+import { Calc } from './calc'
 import { kid, kids, num, parseXmlStream, type Attrs, type SaxHandler } from '../xml'
 import { formatValue, formatText } from './numfmt'
 import { parseSheetStyles, type SheetStyles } from './styles'
-import type { BlockOut, CellDetail, CellOut, ColInfo, Merge, RowOut, SheetInfo, SheetProgress, WorkbookMeta } from './types'
+import type { BlockOut, CellDetail, CellOut, ColInfo, FindMatch, FindOptions, Merge, RowOut, SheetInfo, SheetProgress, WorkbookMeta } from './types'
 
-const T_NUM = 0
-const T_SST = 1
-const T_STR = 2
-const T_BOOL = 3
-const T_ERR = 4
-const T_DATE = 5
-const T_EMPTY = 6
+export const T_NUM = 0
+export const T_SST = 1
+export const T_STR = 2
+export const T_BOOL = 3
+export const T_ERR = 4
+export const T_DATE = 5
+export const T_EMPTY = 6
 
-const MAX_COL = 16384
+export const MAX_COL = 16384
 
 const decodeX = (s: string) => (s.indexOf('_x') >= 0 ? s.replace(/_x([0-9A-Fa-f]{4})_/g, (_, h: string) => String.fromCharCode(parseInt(h, 16))) : s)
 
@@ -38,7 +39,7 @@ export function colName(c: number): string {
   return s
 }
 
-function parseRef(ref: string): [number, number] {
+export function parseRef(ref: string): [number, number] {
   let i = 0
   while (i < ref.length && ref.charCodeAt(i) >= 65) i++
   return [Number(ref.slice(i)) - 1, colIndex(ref.slice(0, i))]
@@ -52,7 +53,29 @@ export function parseRange(ref: string): Merge | undefined {
   return { r0, c0, r1, c1 }
 }
 
-class SheetData {
+export class SheetData {
+  /** shared formula groups: si → master cell key + formula text */
+  shared = new Map<number, { master: number; text: string }>()
+  /** dependent cell key → shared formula si */
+  depOf = new Map<number, number>()
+  /** edited cell keys (r * MAX_COL + c) */
+  edited = new Set<number>()
+  /** row heights in pt / hidden flags (from the file or the editor) */
+  rowAttrs = new Map<number, { ht?: number; hidden?: boolean }>()
+  /** rows grown to fit a large font (no explicit height in the file): px */
+  autoRowH = new Map<number, number>()
+  /** whole-sheet rewrite needed (rows/cols inserted or deleted) */
+  structural = false
+  /** sections to regenerate on save */
+  dirtyCols = false
+  dirtyMerges = false
+  dirtyView = false
+  /** rows whose height/visibility changed */
+  dirtyRows = new Set<number>()
+  /** formulas rewritten because another sheet changed */
+  formulaChanged = false
+  /** formula cells stored without a cached value (to compute after load) */
+  uncached: number[] = []
   rows: (unknown[] | undefined)[] = []
   maxRow = -1
   maxCol = -1
@@ -78,6 +101,7 @@ class SheetHandler implements SaxHandler {
   private formula = ''
   private hasVal = false
   private capture = 0 // 1 v, 2 f, 3 inline t
+  private fShared = -1
   private inIs = false
   newSizes: [number, number][] = []
   headerReady = false
@@ -105,6 +129,7 @@ class SheetHandler implements SaxHandler {
         return
       case 'f':
         this.capture = 2
+        this.fShared = a.t === 'shared' && a.si !== undefined ? Number(a.si) : -1
         return
       case 'is':
         this.inIs = true
@@ -121,6 +146,7 @@ class SheetHandler implements SaxHandler {
         this.col = -1
         this.rowCells = []
         const hidden = a.hidden === '1' || a.hidden === 'true'
+        if (hidden || a.ht) this.d.rowAttrs.set(this.row, { ht: a.ht ? Number(a.ht) : undefined, hidden: hidden || undefined })
         this.rowHasHt = hidden || !!a.ht
         this.rowMaxPt = 0
         if (hidden) this.newSizes.push([this.row, 0])
@@ -186,9 +212,18 @@ class SheetHandler implements SaxHandler {
         if (!cells) return
         const c = this.col
         if (c > this.d.maxCol) this.d.maxCol = c
-        if (this.formula) this.d.formulas.set(this.row * MAX_COL + c, this.formula)
-        if (!this.hasVal) {
-          if (this.cStyle) cells.push(c, T_EMPTY, '', this.cStyle)
+        const key = this.row * MAX_COL + c
+        if (this.formula) this.d.formulas.set(key, this.formula)
+        if (this.fShared >= 0) {
+          if (this.formula) this.d.shared.set(this.fShared, { master: key, text: this.formula })
+          else this.d.depOf.set(key, this.fShared)
+          this.fShared = -1
+        }
+        if (!this.hasVal || (this.formula && this.val === '' && this.cType !== 'str')) {
+          if (this.formula) {
+            this.d.uncached.push(this.row * MAX_COL + c)
+            cells.push(c, T_EMPTY, '', this.cStyle)
+          } else if (this.cStyle) cells.push(c, T_EMPTY, '', this.cStyle)
           return
         }
         let type = T_NUM
@@ -233,7 +268,10 @@ class SheetHandler implements SaxHandler {
       case 'row':
         if (!this.rowHasHt && this.rowMaxPt > this.basePt * 1.15) {
           const px = Math.round(this.rowMaxPt * (4 / 3) * 1.3 + 3)
-          if (px > this.d.defaultRowH) this.newSizes.push([this.row, px])
+          if (px > this.d.defaultRowH) {
+            this.newSizes.push([this.row, px])
+            this.d.autoRowH.set(this.row, px)
+          }
         }
         if (this.rowCells && this.rowCells.length) this.d.rows[this.row] = this.rowCells
         if (this.row > this.d.maxRow) this.d.maxRow = this.row
@@ -268,16 +306,19 @@ class SstHandler implements SaxHandler {
 }
 
 export class XlsxWorkbook {
-  private sheetsData = new Map<number, SheetData>()
-  private sst: string[] = []
+  sheetsData = new Map<number, SheetData>()
+  readonly calc = new Calc(this)
+  sst: string[] = []
   private sstLoading?: Promise<void>
 
   private constructor(
-    private pkg: OpcPackage,
-    private rels: Rels,
+    readonly pkg: OpcPackage,
+    readonly mainPath: string,
+    readonly rels: Rels,
     readonly sheets: SheetInfo[],
-    private styles: SheetStyles,
+    public styles: SheetStyles,
     readonly date1904: boolean,
+    readonly theme: Theme,
   ) {}
 
   static async open(pkg: OpcPackage, mainPath: string): Promise<XlsxWorkbook> {
@@ -295,11 +336,17 @@ export class XlsxWorkbook {
     const styles = parseSheetStyles(stylesRel ? await pkg.xml(stylesRel.target) : undefined, theme)
     const pr = kid(root, 'workbookPr')
     const date1904 = pr?.a.date1904 === '1' || pr?.a.date1904 === 'true'
-    return new XlsxWorkbook(pkg, rels, sheets, styles, date1904)
+    return new XlsxWorkbook(pkg, mainPath, rels, sheets, styles, date1904, theme)
   }
 
   meta(): WorkbookMeta {
-    return { sheets: this.sheets, styles: this.styles.xfs.map((x) => x.css), baseFont: this.styles.baseFont, date1904: this.date1904 }
+    return {
+      sheets: this.sheets,
+      styles: this.styles.xfs.map((x) => x.css),
+      formats: this.styles.xfs.map((x) => x.numFmt),
+      baseFont: this.styles.baseFont,
+      date1904: this.date1904,
+    }
   }
 
   private loadSst(onProgress?: (loaded: number, total: number) => void): Promise<void> {
@@ -309,7 +356,7 @@ export class XlsxWorkbook {
         if (!rel || !this.pkg.has(rel.target)) return
         const h = new SstHandler()
         this.sst = h.strings
-        await parseXmlStream(await this.pkg.zip.stream(rel.target, onProgress), h)
+        await parseXmlStream(await this.pkg.stream(rel.target, onProgress), h)
       })()
     }
     return this.sstLoading
@@ -322,7 +369,7 @@ export class XlsxWorkbook {
   loadSheet(index: number, emit: (p: SheetProgress) => void, onBytes?: (phase: string, loaded: number, total: number) => void): Promise<void> {
     const existing = this.sheetsData.get(index)
     if (existing) {
-      emit(this.snapshot(index, existing, [], true))
+      emit(this.snapshot(index, existing, rowSizesOf(existing), true))
       return existing.loading ?? Promise.resolve()
     }
     const d = new SheetData()
@@ -335,7 +382,7 @@ export class XlsxWorkbook {
         const h = new SheetHandler(d, this.styles.xfs.map((x) => x.fontPt), this.styles.xfs[0]?.fontPt ?? 11)
         let sentHeader = false
         let last = 0
-        await parseXmlStream(await this.pkg.zip.stream(info.path, (l, t) => onBytes?.('sheet', l, t)), h, {
+        await parseXmlStream(await this.pkg.stream(info.path, (l, t) => onBytes?.('sheet', l, t)), h, {
           onChunk: async () => {
             const now = Date.now()
             if (!sentHeader && h.headerReady) {
@@ -352,6 +399,16 @@ export class XlsxWorkbook {
         })
         d.done = true
         emit({ ...this.snapshot(index, d, h.newSizes.splice(0), !sentHeader), merges: d.merges })
+        if (d.uncached.length) {
+          // files written by libraries often omit cached formula results: compute them (other sheets may be referenced)
+          const keys = d.uncached.splice(0)
+          void (async () => {
+            await Promise.all(this.sheets.map((s) => (s.index === index ? null : this.loadSheet(s.index, () => {}))))
+            this.calc.invalidate()
+            this.calc.computeMissing(index, keys)
+            emit({ ...this.snapshot(index, d, [], false), recalc: true })
+          })()
+        }
       } catch (e) {
         d.done = true
         d.error = (e as Error).message
@@ -422,6 +479,37 @@ export class XlsxWorkbook {
     return { sheet, r0, r1, rows, complete: d.done || r1 <= d.maxRow }
   }
 
+  /** cells whose shown value (or formula) contains `query`, in row order */
+  find(sheet: number, query: string, opts: FindOptions = {}, limit = 20_000): FindMatch[] {
+    const d = this.sheetsData.get(sheet)
+    const out: FindMatch[] = []
+    if (!d || !query) return out
+    const norm = (t: string) => (opts.matchCase ? t : t.toLowerCase())
+    const q = norm(query)
+    const xfs = this.styles.xfs
+    for (let r = 0; r < d.rows.length && out.length < limit; r++) {
+      const row = d.rows[r]
+      if (!row) continue
+      for (let k = 0; k < row.length && out.length < limit; k += 4) {
+        const c = row[k] as number
+        const t = row[k + 1] as number
+        const v = row[k + 2]
+        const f = opts.formulas ? d.formulas.get(r * MAX_COL + c) : undefined
+        let text: string
+        if (f) text = '=' + f
+        else if (t === T_NUM) text = formatValue(v as number, (xfs[row[k + 3] as number] ?? xfs[0])?.numFmt, this.date1904).text
+        else if (t === T_SST) text = this.sst[v as number] ?? ''
+        else if (t === T_BOOL) text = v ? 'TRUE' : 'FALSE'
+        else if (t === T_EMPTY) text = ''
+        else text = String(v)
+        if (!text) continue
+        const h = norm(text)
+        if (opts.whole ? h === q : h.includes(q)) out.push({ r, c, text })
+      }
+    }
+    return out
+  }
+
   cell(sheet: number, r: number, c: number): CellDetail | undefined {
     const d = this.sheetsData.get(sheet)
     const row = d?.rows[r]
@@ -442,4 +530,12 @@ export class XlsxWorkbook {
     const d = this.sheetsData.get(sheet)
     if (d?.done) this.sheetsData.delete(sheet)
   }
+}
+
+/** pixel heights of every non-default row: explicit heights / hidden rows win over font-grown ones */
+export function rowSizesOf(d: SheetData): [number, number][] {
+  const out: [number, number][] = []
+  for (const [r, px] of d.autoRowH) if (!d.rowAttrs.has(r)) out.push([r, px])
+  for (const [r, a] of d.rowAttrs) out.push([r, a.hidden ? 0 : a.ht !== undefined ? Math.round((a.ht * 4) / 3) : (d.autoRowH.get(r) ?? d.defaultRowH)])
+  return out
 }

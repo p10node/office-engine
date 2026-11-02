@@ -1,6 +1,6 @@
 import css from './styles.css?inline'
 
-const ID = 'docs-engine-styles'
+const ID = 'office-engine-styles'
 
 /** Injects the viewer stylesheet once into a document or shadow root. */
 export function injectStyles(target: Document | ShadowRoot | undefined = typeof document !== 'undefined' ? document : undefined) {

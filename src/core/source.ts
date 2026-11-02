@@ -7,6 +7,8 @@ export interface ByteSource {
   readonly name?: string
   read(offset: number, length: number): Promise<Uint8Array>
   stream(offset: number, length: number): ReadableStream<Uint8Array>
+  /** Zero-copy sub-Blob when available (used when re-zipping unchanged entries). */
+  slice?(offset: number, length: number): Blob
 }
 
 export type ProgressFn = (loaded: number, total: number) => void
@@ -21,6 +23,9 @@ export class BlobSource implements ByteSource {
   }
   stream(offset: number, length: number): ReadableStream<Uint8Array> {
     return this.blob.slice(offset, offset + length).stream() as ReadableStream<Uint8Array>
+  }
+  slice(offset: number, length: number): Blob {
+    return this.blob.slice(offset, offset + length)
   }
 }
 
@@ -168,6 +173,8 @@ export class HttpRangeSource implements ByteSource {
   async read(offset: number, length: number): Promise<Uint8Array> {
     const end = Math.min(offset + length, this.size)
     if (end <= offset) return new Uint8Array(0)
+    // big reads would thrash the block cache: fetch directly
+    if (end - offset > (this.maxBlocks * this.blockSize) / 2) return this.fetchRange(offset, end)
     const bs = this.blockSize
     const first = Math.floor(offset / bs)
     const last = Math.floor((end - 1) / bs)

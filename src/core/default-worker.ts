@@ -1,4 +1,4 @@
 import DocWorker from './worker/worker?worker&inline'
 import { setDefaultWorker } from './worker/client'
 
-setDefaultWorker(() => new DocWorker({ name: 'docs-engine' }))
+setDefaultWorker(() => new DocWorker({ name: 'office-engine' }))

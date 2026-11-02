@@ -4,7 +4,85 @@ import { OpcPackage, relOfType, type Rels } from '../opc'
 import { parseTheme, type Theme } from '../theme'
 import { emuToPx } from '../units'
 import { kid, kids, num, path, textOf, type XEl } from '../xml'
-import type { Box, Fill, PresentationMeta, SlideEl, SlideModel, Stroke, TCell, TextBody, TPara, TRun } from './types'
+import type { Box, Fill, PParaSpec, PresentationMeta, PRunSet, SlideEl, SlideModel, Stroke, TCell, TextBody, TPara, TRun } from './types'
+import {
+  clone, el, escText, getAttr, isNode, kidOf, kidsOf, local, parseRaw, prefixOf, removeKids, serialize, setAttr, setOrdered, walkOoxml,
+  type RChild, type RNode,
+} from '../raw'
+
+export const PPTX_MIME = 'application/vnd.openxmlformats-officedocument.presentationml.presentation'
+
+interface GenPara {
+  k?: number
+  runs: ([number, number] | undefined)[]
+}
+
+const RPR_KIDS = ['ln', 'noFill', 'solidFill', 'gradFill', 'blipFill', 'pattFill', 'grpFill', 'effectLst', 'effectDag', 'highlight', 'uLnTx', 'uLn', 'uFillTx', 'uFill', 'latin', 'ea', 'cs', 'sym', 'hlinkClick', 'hlinkMouseOver', 'rtl', 'extLst']
+const FILLS = new Set(['noFill', 'solidFill', 'gradFill', 'blipFill', 'pattFill', 'grpFill'])
+const ALGN_OUT: Record<string, string> = { left: 'l', center: 'ctr', right: 'r', justify: 'just' }
+
+function findShape(nodes: RChild[], sid: number): RNode | undefined {
+  let found: RNode | undefined
+  for (const n of nodes) {
+    if (!isNode(n)) continue
+    walkOoxml(n, (c) => {
+      if (found) return true
+      if (local(c.q) !== 'sp') return
+      const nv = kidOf(c, 'nvSpPr')
+      const id = getAttr(kidOf(nv, 'cNvPr') ?? c, 'id')
+      if (id !== undefined && Number(id) === sid) found = c
+      return true
+    })
+  }
+  return found
+}
+
+function applyPRunSet(rPr: RNode, set: PRunSet, A: string) {
+  if (set.sz !== undefined) setAttr(rPr, 'sz', String(Math.round(set.sz * 100)))
+  if (set.b !== undefined) setAttr(rPr, 'b', set.b ? '1' : '0')
+  if (set.i !== undefined) setAttr(rPr, 'i', set.i ? '1' : '0')
+  if (set.u !== undefined) setAttr(rPr, 'u', set.u ? 'sng' : 'none')
+  if (set.strike !== undefined) setAttr(rPr, 'strike', set.strike ? 'sngStrike' : 'noStrike')
+  if ('color' in set) {
+    removeKids(rPr, (l) => FILLS.has(l))
+    if (set.color) setOrdered(rPr, el(A + 'solidFill', {}, [el(A + 'srgbClr', { val: set.color.replace('#', '').toUpperCase() })]), 'solidFill', RPR_KIDS)
+  }
+  if (set.font) setOrdered(rPr, el(A + 'latin', { typeface: set.font }), 'latin', RPR_KIDS)
+  if ('hl' in set) setOrdered(rPr, set.hl ? el(A + 'highlight', {}, [el(A + 'srgbClr', { val: set.hl.replace('#', '').toUpperCase() })]) : undefined, 'highlight', RPR_KIDS)
+  if ('baseline' in set) setAttr(rPr, 'baseline', set.baseline ? String(Math.round(set.baseline * 1000)) : undefined)
+}
+
+const PPR_KIDS = ['lnSpc', 'spcBef', 'spcAft', 'buClrTx', 'buClr', 'buSzTx', 'buSzPct', 'buSzPts', 'buFontTx', 'buFont', 'buNone', 'buAutoNum', 'buChar', 'buBlip', 'tabLst', 'defRPr', 'extLst']
+const BULLETS = new Set(['buNone', 'buAutoNum', 'buChar', 'buBlip'])
+
+/** paragraph-level changes made in the editor */
+function applyPPr(ppr: RNode, spec: PParaSpec, A: string) {
+  if (spec.algn) setAttr(ppr, 'algn', ALGN_OUT[spec.algn])
+  if (spec.lvl !== undefined && String(spec.lvl) !== (getAttr(ppr, 'lvl') ?? '0')) {
+    setAttr(ppr, 'lvl', spec.lvl ? String(spec.lvl) : undefined)
+    // explicit margins would pin the old level's indent
+    setAttr(ppr, 'marL', undefined)
+    setAttr(ppr, 'indent', undefined)
+  }
+  if (spec.bullet) {
+    removeKids(ppr, (l) => BULLETS.has(l))
+    if (spec.bullet === 'none') {
+      setOrdered(ppr, el(A + 'buNone'), 'buNone', PPR_KIDS)
+      if (getAttr(ppr, 'indent')?.startsWith('-')) setAttr(ppr, 'indent', '0')
+    } else {
+      const node = spec.bullet === 'bullet' ? el(A + 'buChar', { char: '•' }) : el(A + 'buAutoNum', { type: 'arabicPeriod' })
+      if (spec.bullet === 'bullet') setOrdered(ppr, el(A + 'buFont', { typeface: 'Arial' }), 'buFont', PPR_KIDS)
+      setOrdered(ppr, node, spec.bullet === 'bullet' ? 'buChar' : 'buAutoNum', PPR_KIDS)
+      if (!getAttr(ppr, 'marL')) {
+        const lvl = Number(getAttr(ppr, 'lvl') ?? 0)
+        setAttr(ppr, 'marL', String(342900 + lvl * 457200))
+        setAttr(ppr, 'indent', '-342900')
+      }
+    }
+  }
+  if (spec.lnPct) setOrdered(ppr, el(A + 'lnSpc', {}, [el(A + 'spcPct', { val: String(Math.round(spec.lnPct * 100000)) })]), 'lnSpc', PPR_KIDS)
+  ppr.self = ppr.c.length === 0
+}
 
 interface RunProps {
   sz?: number
@@ -121,8 +199,8 @@ export class PptxPresentation {
   readonly meta: PresentationMeta
 
   private constructor(
-    private pkg: OpcPackage,
-    private mainPath: string,
+    readonly pkg: OpcPackage,
+    readonly mainPath: string,
     private defaultTextStyle: XEl | undefined,
     meta: PresentationMeta,
   ) {
@@ -226,6 +304,116 @@ export class PptxPresentation {
 
   get defaults() {
     return this.defaultTextStyle
+  }
+
+  // ---------------------------------------------------------------- editing
+
+  private genMaps = new Map<string, GenPara[]>()
+  /** structural edits (shapes, slides) */
+  touched = false
+  /** shape edits (slide XML before / after) for undo; text edits drop the entries of their slide */
+  undoStack: { path: string; before: string; after: string }[] = []
+  redoStack: { path: string; before: string; after: string }[] = []
+  private originals = new Map<string, string>()
+  private lateShapes = new Map<string, string>()
+
+  /**
+   * Takes the slide XML that text edits use as template (their run references point into it).
+   * Done lazily on the first text edit; collaboration takes it up front so every client uses the same.
+   */
+  async keepOriginal(path: string) {
+    if (!this.originals.has(path)) this.originals.set(path, await this.pkg.text(path))
+  }
+
+  genMap(path: string, sid: number): GenPara[] | undefined {
+    return this.genMaps.get(`${path}#${sid}`)
+  }
+
+  get dirty() {
+    return this.genMaps.size > 0 || this.touched
+  }
+
+  /** Rewrites the paragraphs of shape `sid` on slide `index` and returns the re-rendered slide. */
+  async setText(index: number, sid: number, paras: PParaSpec[]): Promise<SlideModel> {
+    const info = this.meta.slides[index]
+    if (!info) throw new Error(`No slide #${index}`)
+    const p = info.path
+    await this.keepOriginal(p)
+    const curNodes = parseRaw(await this.pkg.text(p))
+    const shape = findShape(curNodes, sid)
+    // a shape added after the slide's original was taken is its own template
+    const key = `${p}#${sid}`
+    if (shape && !this.lateShapes.has(key) && !findShape(parseRaw(this.originals.get(p)!), sid)) this.lateShapes.set(key, serialize([shape]))
+    const late = this.lateShapes.get(key)
+    const origShape = late ? (parseRaw(late)[0] as RNode) : findShape(parseRaw(this.originals.get(p)!), sid)
+    if (!shape || !origShape) throw new Error(`Shape ${sid} not found`)
+    let txBody = kidOf(shape, 'txBody')
+    const origBody = kidOf(origShape, 'txBody')
+    const origParas = kidsOf(origBody, 'p')
+    const P = prefixOf(shape.q)
+    const A = prefixOf((kidOf(origBody, 'bodyPr') ?? origParas[0])?.q ?? 'a:x') || 'a:'
+    if (!txBody) {
+      txBody = el(P + 'txBody', {}, [el(A + 'bodyPr'), el(A + 'lstStyle')])
+      shape.c.push(txBody)
+      shape.self = false
+    }
+    const origRuns = origParas.map((op) => kidsOf(op).filter((c) => ['r', 'br', 'fld'].includes(local(c.q))))
+    const map: GenPara[] = []
+    const out: RNode[] = paras.map((spec) => {
+      const tpl = spec.k !== undefined ? origParas[spec.k] : origParas[origParas.length - 1]
+      const node = el(A + 'p')
+      const tplPPr = kidOf(tpl, 'pPr')
+      const wants = spec.algn || spec.lvl !== undefined || spec.bullet || spec.lnPct
+      const ppr = tplPPr ? clone(tplPPr) : wants ? el(A + 'pPr') : undefined
+      if (ppr && wants) applyPPr(ppr, spec, A)
+      if (ppr) node.c.push(ppr)
+      const end = kidOf(tpl, 'endParaRPr')
+      const gp: GenPara = { k: spec.k, runs: [] }
+      const baseRPr = (src?: [number, number]) => {
+        const r = src ? origRuns[src[0]]?.[src[1]] : undefined
+        const rp: RNode | undefined = kidOf(r, 'rPr') ?? (end ? { ...clone(end), q: A + 'rPr' } : undefined)
+        return rp ? clone(rp) : el(A + 'rPr', { lang: 'en-US', dirty: '0' })
+      }
+      for (const run of spec.runs) {
+        if (run.fld && run.src) {
+          const f = origRuns[run.src[0]]?.[run.src[1]]
+          if (f) {
+            node.c.push(clone(f))
+            gp.runs.push(run.src)
+          }
+          continue
+        }
+        const pieces = run.text.split('\n')
+        pieces.forEach((piece, i) => {
+          const rPr = baseRPr(run.src)
+          if (run.set) applyPRunSet(rPr, run.set, A)
+          if (i > 0) {
+            node.c.push(el(A + 'br', {}, [{ ...clone(rPr) }]))
+            gp.runs.push(run.src)
+          }
+          if (piece) {
+            node.c.push(el(A + 'r', {}, [rPr, el(A + 't', {}, [escText(piece)])]))
+            gp.runs.push(run.src)
+          }
+        })
+      }
+      node.c.push(end ? clone(end) : el(A + 'endParaRPr', { lang: 'en-US', dirty: '0' }))
+      node.self = false
+      map.push(gp)
+      return node
+    })
+    const keep = txBody.c.filter((c) => !(isNode(c) && local(c.q) === 'p'))
+    txBody.c = [...keep, ...out]
+    txBody.self = false
+    this.pkg.setPart(p, serialize(curNodes))
+    this.genMaps.set(`${p}#${sid}`, map)
+    this.undoStack = this.undoStack.filter((e) => e.path !== p)
+    this.redoStack = this.redoStack.filter((e) => e.path !== p)
+    return this.slide(index)
+  }
+
+  save(): Promise<Blob> {
+    return this.pkg.save(PPTX_MIME)
   }
 }
 
@@ -460,10 +648,14 @@ class SlideRenderer {
     return out
   }
 
-  private textBody(txBody: XEl | undefined, chain: XEl[], ph: { type: string } | undefined, styleFont?: XEl, part?: Part): TextBody | undefined {
+  private textBody(
+    txBody: XEl | undefined, chain: XEl[], ph: { type: string } | undefined, styleFont?: XEl, part?: Part, sid?: number,
+  ): TextBody | undefined {
     if (!txBody) return undefined
     const paras = kids(txBody, 'p')
-    if (!paras.some((p) => p.c.some((c) => c.n === 'r' || c.n === 'fld') )) return undefined
+    const empty = !paras.some((p) => p.c.some((c) => c.n === 'r' || c.n === 'fld'))
+    if (empty && sid === undefined) return undefined
+    const gm = sid !== undefined ? this.pres.genMap(this.slide.path, sid) : undefined
     const m = this.master
     let base: XEl | undefined
     if (ph) {
@@ -504,12 +696,14 @@ class SlideRenderer {
     ]
     const counters: number[] = []
     const rels = part?.rels ?? this.slide.rels
-    const out: TPara[] = paras.map((p) => {
+    const out: TPara[] = paras.map((p, pi) => {
       const pPr = kid(p, 'pPr')
       const lvl = Math.min(8, num(pPr?.a.lvl, 0)!)
       const L = this.readLvl(pPr, lv[lvl])
       const runs: TRun[] = []
+      let j = 0
       for (const c of p.c) {
+        const src: [number, number] | undefined = c.n === 'r' || c.n === 'fld' || c.n === 'br' ? (gm ? gm[pi]?.runs[j++] : [pi, j++]) : undefined
         if (c.n === 'r' || c.n === 'fld') {
           const rp = this.readRun(kid(c, 'rPr'), { ...L.r })
           let text = textOf(kid(c, 't'))
@@ -521,11 +715,12 @@ class SlideRenderer {
             sz: (rp.sz ?? 18) * fontScale,
             b: rp.b, i: rp.i, u: rp.u || !!href, strike: rp.strike,
             color: rp.color ?? (href ? this.theme.colors.hlink : undefined),
-            font: rp.font, baseline: rp.baseline, caps: rp.caps, href, hl: rp.hl,
+            font: rp.font, baseline: rp.baseline, caps: rp.caps, href, hl: rp.hl, src,
+            ...(c.n === 'fld' ? { fld: true } : {}),
           })
         } else if (c.n === 'br') {
           const rp = this.readRun(kid(c, 'rPr'), { ...L.r })
-          runs.push({ text: '', br: true, sz: (rp.sz ?? 18) * fontScale })
+          runs.push({ text: '', br: true, sz: (rp.sz ?? 18) * fontScale, src })
         }
       }
       const endR = this.readRun(kid(p, 'endParaRPr'), { ...L.r })
@@ -554,12 +749,15 @@ class SlideRenderer {
         spcBef: spc(L.bef),
         spcAft: spc(L.aft),
         bullet,
+        lvl: lvl || undefined,
+        buKind: L.bu?.kind === 'char' ? 'bullet' : L.bu?.kind === 'auto' ? 'number' : undefined,
         runs,
         endSz: (endR.sz ?? 18) * fontScale,
+        k: gm ? gm[pi]?.k : pi,
       }
     })
     const anchor = bodyAttrs.anchor === 'ctr' ? 'ctr' : bodyAttrs.anchor === 'b' ? 'b' : 't'
-    return { anchor, ins, wrap: bodyAttrs.wrap !== 'none', vert: bodyAttrs.vert && bodyAttrs.vert !== 'horz' ? bodyAttrs.vert : undefined, paras: out }
+    return { anchor, ins, wrap: bodyAttrs.wrap !== 'none', vert: bodyAttrs.vert && bodyAttrs.vert !== 'horz' ? bodyAttrs.vert : undefined, paras: out, empty: empty || undefined }
   }
 
   // ---- shape tree ----------------------------------------------------------------
@@ -583,10 +781,13 @@ class SlideRenderer {
     return { chain, ph }
   }
 
-  walk(part: Part, tree: XEl | undefined, xf: Xform, out: SlideEl[], skipPh: boolean): void {
+  walk(part: Part, tree: XEl | undefined, xf: Xform, out: SlideEl[], skipPh: boolean, top?: number): void {
     if (!tree) return
     for (const c of tree.c) {
       if (skipPh && (c.n === 'sp' || c.n === 'pic') && phOf(c)) continue
+      const idAttr = kid(c.c[0], 'cNvPr')?.a.id
+      const myTop = top ?? (part === this.slide && idAttr ? Number(idAttr) : undefined)
+      const start = out.length
       try {
         switch (c.n) {
           case 'sp':
@@ -597,7 +798,7 @@ class SlideRenderer {
             this.pic(c, part, xf, out)
             break
           case 'grpSp':
-            this.group(c, part, xf, out, skipPh)
+            this.group(c, part, xf, out, skipPh, myTop)
             break
           case 'graphicFrame':
             this.frame(c, part, xf, out)
@@ -606,6 +807,7 @@ class SlideRenderer {
       } catch {
         // a single malformed shape must not break the slide
       }
+      if (myTop !== undefined) for (let k = start; k < out.length; k++) out[k].top = myTop
     }
   }
 
@@ -654,9 +856,11 @@ class SlideRenderer {
       }
     }
     if (el.n === 'cxnSp' && geom === 'rect') geom = 'line'
-    const text = el.n === 'sp' ? this.textBody(kid(el, 'txBody'), chain, ph, kid(style, 'fontRef'), part) : undefined
+    const idAttr = path(el, 'nvSpPr', 'cNvPr')?.a.id
+    const sid = part === this.slide && el.n === 'sp' && idAttr ? Number(idAttr) : undefined
+    const text = el.n === 'sp' ? this.textBody(kid(el, 'txBody'), chain, ph, kid(style, 'fontRef'), part, sid) : undefined
     if ((!fill || fill.t === 'none') && !stroke && !text) return
-    out.push({ t: 'shape', box, geom, adj, fill, stroke, text, path: pathD })
+    out.push({ t: 'shape', box, geom, adj, fill, stroke, text, path: pathD, sid })
   }
 
   private pic(el: XEl, part: Part, xf: Xform, out: SlideEl[]) {
@@ -682,13 +886,13 @@ class SlideRenderer {
     })
   }
 
-  private group(el: XEl, part: Part, xf: Xform, out: SlideEl[], skipPh: boolean) {
+  private group(el: XEl, part: Part, xf: Xform, out: SlideEl[], skipPh: boolean, top?: number) {
     const x = path(el, 'grpSpPr', 'xfrm')
     const off = kid(x, 'off')
     const ext = kid(x, 'ext')
     const chOff = kid(x, 'chOff')
     const chExt = kid(x, 'chExt')
-    if (!off || !ext) return this.walk(part, el, xf, out, skipPh)
+    if (!off || !ext) return this.walk(part, el, xf, out, skipPh, top)
     const ox = emuToPx(num(off.a.x, 0))
     const oy = emuToPx(num(off.a.y, 0))
     const cx = emuToPx(num(chOff?.a.x, 0))
@@ -696,7 +900,7 @@ class SlideRenderer {
     const sx = chExt && num(chExt.a.cx) ? num(ext.a.cx, 0)! / num(chExt.a.cx, 1)! : 1
     const sy = chExt && num(chExt.a.cy) ? num(ext.a.cy, 0)! / num(chExt.a.cy, 1)! : 1
     const local: Xform = (b) => xf({ ...b, x: ox + (b.x - cx) * sx, y: oy + (b.y - cy) * sy, w: b.w * sx, h: b.h * sy })
-    this.walk(part, el, local, out, skipPh)
+    this.walk(part, el, local, out, skipPh, top)
   }
 
   private frame(el: XEl, part: Part, xf: Xform, out: SlideEl[]) {

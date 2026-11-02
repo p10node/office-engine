@@ -1,5 +1,5 @@
 {
-  "name": "@eldora/docs-engine",
+  "name": "@p10node/office-engine",
   "version": "0.1.0",
   "description": "Browser engine to view DOCX, XLSX, PPTX progressively (worker-based, range-loading, virtualized React views)",
   "type": "module",
@@ -23,8 +23,12 @@
       "types": "./dist/types/embed.d.ts",
       "import": "./dist/embed.js"
     },
-    "./worker": "./dist/docs-engine.worker.js",
-    "./embed.js": "./dist/docs-engine.embed.js"
+    "./worker": "./dist/office-engine.worker.js",
+    "./embed.js": "./dist/office-engine.embed.js",
+    "./collab": {
+      "types": "./dist/types/collab/index.d.ts",
+      "import": "./dist/collab.js"
+    }
   },
   "sideEffects": [
     "./src/core/default-worker.ts",
@@ -32,12 +36,12 @@
     "./dist/index.js",
     "./dist/core.js",
     "./dist/embed.js",
-    "./dist/docs-engine.embed.js",
+    "./dist/office-engine.embed.js",
     "**/*.css"
   ],
   "scripts": {
     "dev": "vite --config vite.playground.config.ts",
-    "build": "bun run build:lib && bun run build:embed && bun run build:worker && bun run build:types",
+    "build": "bun run clean && bun run build:lib && bun run build:embed && bun run build:worker && bun run build:types",
     "build:lib": "vite build",
     "build:embed": "vite build --config vite.embed.config.ts",
     "build:types": "tsc -p tsconfig.build.json",
@@ -45,7 +49,11 @@
     "typecheck": "tsc --noEmit",
     "test": "bun test",
     "fixtures": "bun scripts/gen-fixtures.ts",
-    "build:worker": "vite build --config vite.worker.config.ts"
+    "build:worker": "vite build --config vite.worker.config.ts",
+    "collab": "bun scripts/collab-server.ts",
+    "clean": "rm -rf dist",
+    "screenshots": "bun scripts/screenshots.ts",
+    "build:site": "bun scripts/build-site.ts"
   },
   "peerDependencies": {
     "react": ">=18",
@@ -62,5 +70,13 @@
     "react-dom": "^19.3.1",
     "typescript": "^7.0.2",
     "vite": "^8.3.5"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "homepage": "https://p10node.github.io/office-engine/",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/p10node/office-engine.git"
   }
 }

@@ -38,7 +38,14 @@ export class SaxParser {
   private skipDepth = -1
   private relPrefixes = new Set<string>(['r'])
 
-  constructor(private h: SaxHandler) {}
+  /**
+   * @param raw optional tap receiving every consumed source segment verbatim (tags, text, comments…),
+   *   called right before the matching handler event. Used for byte-preserving rewrites.
+   */
+  constructor(
+    private h: SaxHandler,
+    private raw?: (segment: string) => void,
+  ) {}
 
   write(chunk: string): void {
     this.buf = this.buf.length ? this.buf + chunk : chunk
@@ -58,18 +65,25 @@ export class SaxParser {
       const lt = s.indexOf('<', i)
       if (lt < 0) {
         if (final) {
-          this.onText(s.substring(i))
+          const seg = s.substring(i)
+          this.raw?.(seg)
+          this.onText(seg)
           i = n
         }
         break
       }
-      if (lt > i) this.onText(s.substring(i, lt))
+      if (lt > i) {
+        const seg = s.substring(i, lt)
+        this.raw?.(seg)
+        this.onText(seg)
+      }
       i = lt
       if (lt + 1 >= n) break
       const c = s.charCodeAt(lt + 1)
       if (c === 47) {
         const gt = s.indexOf('>', lt + 2)
         if (gt < 0) break
+        this.raw?.(s.substring(lt, gt + 1))
         this.onClose(s.substring(lt + 2, gt))
         i = gt + 1
         continue
@@ -77,6 +91,7 @@ export class SaxParser {
       if (c === 63) {
         const e = s.indexOf('?>', lt + 2)
         if (e < 0) break
+        this.raw?.(s.substring(lt, e + 2))
         i = e + 2
         continue
       }
@@ -85,18 +100,21 @@ export class SaxParser {
         if (s.startsWith('<!--', lt)) {
           const e = s.indexOf('-->', lt + 4)
           if (e < 0) break
+          this.raw?.(s.substring(lt, e + 3))
           i = e + 3
           continue
         }
         if (s.startsWith('<![CDATA[', lt)) {
           const e = s.indexOf(']]>', lt + 9)
           if (e < 0) break
+          this.raw?.(s.substring(lt, e + 3))
           if (this.skipDepth < 0) this.h.text(s.substring(lt + 9, e))
           i = e + 3
           continue
         }
         const e = s.indexOf('>', lt + 2)
         if (e < 0) break
+        this.raw?.(s.substring(lt, e + 1))
         i = e + 1
         continue
       }
@@ -113,6 +131,7 @@ export class SaxParser {
         }
       }
       if (gt < 0) break
+      this.raw?.(s.substring(lt, gt + 1))
       this.onOpen(s, lt + 1, gt)
       i = gt + 1
     }
@@ -199,6 +218,8 @@ export class AbortedError extends Error {
 
 export interface StreamParseOptions {
   signal?: AbortSignal
+  /** verbatim source tap, see SaxParser */
+  raw?: (segment: string) => void
   /** Called after each chunk (decompressed byte count); may return a promise to yield. */
   onChunk?: (bytes: number) => void | Promise<void>
 }
@@ -206,7 +227,7 @@ export interface StreamParseOptions {
 export async function parseXmlStream(stream: ReadableStream<Uint8Array>, h: SaxHandler, opts: StreamParseOptions = {}): Promise<void> {
   const reader = stream.getReader()
   const dec = new TextDecoder()
-  const p = new SaxParser(h)
+  const p = new SaxParser(h, opts.raw)
   try {
     for (;;) {
       if (opts.signal?.aborted) throw new AbortedError()

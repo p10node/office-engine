@@ -6,6 +6,6 @@ export default defineConfig({
     outDir: 'dist',
     emptyOutDir: false,
     target: 'es2022',
-    lib: { entry: 'src/core/worker/worker.ts', formats: ['es'], fileName: () => 'docs-engine.worker.js' },
+    lib: { entry: 'src/core/worker/worker.ts', formats: ['es'], fileName: () => 'office-engine.worker.js' },
   },
 })

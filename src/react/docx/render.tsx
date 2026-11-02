@@ -9,6 +9,7 @@ export interface RenderCtx {
   page: number
   pages: number
   measuring: boolean
+  editable: boolean
 }
 
 const pt = (v: number | undefined) => (v ? `${+v.toFixed(2)}pt` : undefined)
@@ -18,14 +19,17 @@ const UNDERLINE_STYLE: Record<string, CSSProperties['textDecorationStyle']> = {
   wave: 'wavy', wavyHeavy: 'wavy', wavyDouble: 'wavy',
 }
 
-export function runCss(s: RunStyle): CSSProperties {
+export function runCss(s: RunStyle | undefined): CSSProperties {
   const css: CSSProperties = {}
+  if (!s) return css
   if (s.b) css.fontWeight = 700
   else if (s.b === false) css.fontWeight = 400
   if (s.i) css.fontStyle = 'italic'
+  else if (s.i === false) css.fontStyle = 'normal'
   const u = s.u && s.u !== 'none'
   const deco = [u ? 'underline' : '', s.strike || s.dstrike ? 'line-through' : ''].filter(Boolean).join(' ')
   if (deco) css.textDecoration = deco
+  else if (s.u === 'none' || s.strike === false) css.textDecoration = 'none'
   if (u && UNDERLINE_STYLE[s.u!]) css.textDecorationStyle = UNDERLINE_STYLE[s.u!]
   if (s.dstrike) css.textDecorationStyle = 'double'
   if (s.color) css.color = s.color
@@ -46,10 +50,20 @@ function lineHeight(ps: ParaStyle): string | number | undefined {
   return +(ps.line * 1.17).toFixed(3)
 }
 
-function paraCss(ps: ParaStyle): CSSProperties {
+/** contextual spacing flags: 'b' drop space before, 'a' drop space after */
+export type Spacing = '' | 'b' | 'a' | 'ba'
+
+export function contextual(p: Block | undefined, prev: Block | undefined, next: Block | undefined): Spacing {
+  if (!p || p.t !== 'p' || !p.ps.contextual) return ''
+  const b = prev?.t === 'p' && prev.sid === p.sid ? 'b' : ''
+  const a = next?.t === 'p' && next.sid === p.sid ? 'a' : ''
+  return (b + a) as Spacing
+}
+
+function paraCss(ps: ParaStyle, sp: Spacing): CSSProperties {
   const css: CSSProperties = {
-    paddingTop: pt(ps.before),
-    paddingBottom: pt(ps.after),
+    paddingTop: sp.includes('b') ? undefined : pt(ps.before),
+    paddingBottom: sp.includes('a') ? undefined : pt(ps.after),
     paddingLeft: pt(ps.indL),
     paddingRight: pt(ps.indR),
     textIndent: pt(ps.indFirst),
@@ -79,11 +93,16 @@ function Img({ ctx, target, w, h, alt }: { ctx: RenderCtx; target: string; w: nu
   return <img src={url} alt={alt ?? ''} style={{ ...size, verticalAlign: 'bottom', display: 'inline-block' }} draggable={false} />
 }
 
-function InlineView({ x, ctx }: { x: Inline; ctx: RenderCtx }): ReactNode {
+function InlineView({ x, ctx, o }: { x: Inline; ctx: RenderCtx; o: number }): ReactNode {
+  const obj = { 'data-o': o, 'data-obj': '', contentEditable: ctx.editable ? false : undefined } as const
   switch (x.t) {
     case 'text': {
-      const span = <span style={runCss(x.s)}>{x.text}</span>
-      return x.href && !ctx.measuring ? (
+      const span = (
+        <span data-o={o} style={runCss(x.s)}>
+          {x.text}
+        </span>
+      )
+      return x.href && !ctx.measuring && !ctx.editable ? (
         <a href={x.href} target={x.href.startsWith('#') ? undefined : '_blank'} rel="noreferrer noopener">
           {span}
         </a>
@@ -91,27 +110,38 @@ function InlineView({ x, ctx }: { x: Inline; ctx: RenderCtx }): ReactNode {
         span
       )
     }
-    case 'tab':
-      return <span style={runCss(x.s)}>{'\t'}</span>
-    case 'br':
-      return <br />
     case 'field': {
       const v = x.kind === 'PAGE' ? (ctx.page >= 0 ? ctx.page + 1 : 1) : ctx.pages || 1
-      return <span style={runCss(x.s)}>{v}</span>
+      return (
+        <span {...obj} style={runCss(x.s)}>
+          {v}
+        </span>
+      )
     }
+    case 'ref':
+      return (
+        <span {...obj} style={runCss(x.s)}>
+          {x.text}
+        </span>
+      )
     case 'img': {
       const img = <Img ctx={ctx} target={x.target} w={x.w} h={x.h} alt={x.alt} />
-      return x.href && !ctx.measuring ? (
-        <a href={x.href} target="_blank" rel="noreferrer noopener">
-          {img}
-        </a>
-      ) : (
-        img
+      return (
+        <span {...obj}>
+          {x.href && !ctx.measuring && !ctx.editable ? (
+            <a href={x.href} target="_blank" rel="noreferrer noopener">
+              {img}
+            </a>
+          ) : (
+            img
+          )}
+        </span>
       )
     }
     case 'box':
       return (
         <span
+          {...obj}
           className="de-tbox"
           style={{ width: x.w ? `${x.w}pt` : undefined, minHeight: x.h ? `${x.h}pt` : undefined, background: x.fill, border: x.border }}
         >
@@ -122,38 +152,52 @@ function InlineView({ x, ctx }: { x: Inline; ctx: RenderCtx }): ReactNode {
       )
     case 'shape':
       return x.label ? (
-        <span className="de-ph" style={{ width: `${x.w}pt`, height: `${x.h}pt` }}>
+        <span {...obj} className="de-ph" style={{ width: `${x.w}pt`, height: `${x.h}pt` }}>
           {x.label}
         </span>
-      ) : null
+      ) : (
+        <span {...obj} />
+      )
   }
 }
 
-function ParaView({ p, ctx }: { p: Paragraph; ctx: RenderCtx }) {
+function ParaView({ p, ctx, pa, sp }: { p: Paragraph; ctx: RenderCtx; pa?: string; sp: Spacing }) {
   const hang = p.ps.indFirst && p.ps.indFirst < 0 ? -p.ps.indFirst : 0
   const visible = p.runs.length > 0
-  const style = paraCss(p.ps)
+  const style = paraCss(p.ps, sp)
   if (!visible) {
     style.fontSize = pt(p.markSz)
     if (p.markFont) style.fontFamily = p.markFont
   }
+  const editable = ctx.editable && pa !== undefined
+  let o = 0
+  const runs = p.runs.map((x, i) => {
+    const node = <InlineView key={i} x={x} ctx={ctx} o={o} />
+    o += x.t === 'text' ? x.text.length : 1
+    return node
+  })
   return (
-    <div className="de-p" style={style}>
+    <div className="de-p" style={style} data-pa={pa} contentEditable={ctx.editable && !editable ? false : undefined}>
       {p.marker && (
-        <span className="de-marker" style={{ ...runCss(p.marker.s), minWidth: p.marker.tab && hang ? `${hang}pt` : undefined }}>
+        <span className="de-marker" contentEditable={ctx.editable ? false : undefined} style={{ ...runCss(p.marker.s), minWidth: p.marker.tab && hang ? `${hang}pt` : undefined }}>
           {p.marker.text}
           {p.marker.tab && !hang ? '\t' : ''}
         </span>
       )}
-      {p.runs.map((x, i) => (
-        <InlineView key={i} x={x} ctx={ctx} />
-      ))}
-      {!visible && '\u200B'}
+      {runs}
+      {!visible &&
+        (editable ? (
+          <span data-o={0} data-empty="">
+            {'\u200B'}
+          </span>
+        ) : (
+          '\u200B'
+        ))}
     </div>
   )
 }
 
-function TableView({ t, ctx }: { t: Table; ctx: RenderCtx }) {
+function TableView({ t, ctx, pa }: { t: Table; ctx: RenderCtx; pa?: string }) {
   const total = t.cols.reduce((a, b) => a + b, 0)
   const style: CSSProperties = { width: total ? `${total}pt` : '100%' }
   if (t.align === 'center') style.margin = '0 auto'
@@ -187,7 +231,14 @@ function TableView({ t, ctx }: { t: Table; ctx: RenderCtx }) {
                 }}
               >
                 {c.blocks.map((b, i) => (
-                  <BlockView key={i} block={b} ctx={ctx} />
+                  <BlockView
+                    key={b.t === 'p' ? `${i}:${b.ver ?? 0}` : i}
+                    block={b}
+                    ctx={ctx}
+                    pa={pa !== undefined && b.t === 'p' && b.pid !== undefined && !b.ro ? `${pa}.${ri}.${ci}.${i}` : undefined}
+                    sp={contextual(b, c.blocks[i - 1], c.blocks[i + 1])}
+                    nested
+                  />
                 ))}
               </td>
             ))}
@@ -198,14 +249,23 @@ function TableView({ t, ctx }: { t: Table; ctx: RenderCtx }) {
   )
 }
 
-export const BlockView = memo(function BlockView({ block, ctx }: { block: Block; ctx: RenderCtx }) {
+export interface BlockViewProps {
+  block: Block
+  ctx: RenderCtx
+  /** editable address (top-level: block index; table: block index used as prefix) */
+  pa?: string
+  sp?: Spacing
+  nested?: boolean
+}
+
+export const BlockView = memo(function BlockView({ block, ctx, pa, sp = '', nested }: BlockViewProps) {
   switch (block.t) {
     case 'p':
-      return <ParaView p={block} ctx={ctx} />
+      return <ParaView p={block} ctx={ctx} pa={pa} sp={sp} />
     case 'tbl':
       return (
-        <div style={{ overflow: 'visible' }}>
-          <TableView t={block} ctx={ctx} />
+        <div style={{ overflow: 'visible' }} contentEditable={ctx.editable && (nested || pa === undefined) ? false : undefined}>
+          <TableView t={block} ctx={ctx} pa={nested ? undefined : pa} />
         </div>
       )
     default:

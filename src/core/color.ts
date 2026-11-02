@@ -80,7 +80,7 @@ export function drawingColor(el: XEl, ctx: ColorCtx): string | undefined {
   let hex: string | undefined
   switch (el.n) {
     case 'srgbClr':
-      hex = '#' + (el.a.val ?? '000000')
+      hex = '#' + (el.a.val ?? '000000').toLowerCase()
       break
     case 'sysClr':
       hex = '#' + (el.a.lastClr ?? (el.a.val === 'window' ? 'ffffff' : '000000'))

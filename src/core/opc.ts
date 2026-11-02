@@ -1,4 +1,6 @@
-import { ZipArchive } from './zip'
+import { el, getAttr, isNode, kidsOf, parseRaw, rootEl, serialize } from './raw'
+import { normalize, ZipArchive } from './zip'
+import { rebuildZip, type PartData } from './zipwrite'
 import { kids, parseXml, type XEl } from './xml'
 
 export type DocKind = 'docx' | 'xlsx' | 'pptx'
@@ -59,6 +61,15 @@ export function resolvePath(baseDir: string, target: string): string {
   return out.join('/')
 }
 
+/** Inverse of resolvePath: target of `abs` relative to directory `fromDir`. */
+export function relativeTarget(fromDir: string, abs: string): string {
+  const a = fromDir ? fromDir.split('/') : []
+  const b = abs.split('/')
+  let i = 0
+  while (i < a.length && i < b.length - 1 && a[i] === b[i]) i++
+  return [...a.slice(i).map(() => '..'), ...b.slice(i)].join('/')
+}
+
 export function relsPathFor(part: string): string {
   const d = dirOf(part)
   const f = part.slice(d.length ? d.length + 1 : 0)
@@ -69,16 +80,121 @@ export class OpcPackage {
   private relsCache = new Map<string, Promise<Rels>>()
   private xmlCache = new Map<string, Promise<XEl | undefined>>()
   private contentTypes?: Promise<Map<string, string>>
+  /** edited parts: normalized path → { path, data } (data null = deleted) */
+  private changes = new Map<string, { path: string; data: PartData | null }>()
 
   constructor(readonly zip: ZipArchive) {}
 
   has(path: string) {
+    const ch = this.changes.get(normalize(path))
+    if (ch) return ch.data !== null
     return this.zip.has(path)
+  }
+
+  get dirty(): boolean {
+    return this.changes.size > 0
+  }
+
+  /** Current text of a part (edited version if any). */
+  async text(path: string): Promise<string> {
+    const ch = this.changes.get(normalize(path))
+    if (ch) {
+      if (ch.data === null) throw new Error(`Missing part: ${path}`)
+      if (typeof ch.data === 'string') return ch.data
+      if (ch.data instanceof Uint8Array) return new TextDecoder().decode(ch.data)
+      throw new Error(`Part ${path} is a stream`)
+    }
+    return this.zip.text(path)
+  }
+
+  /** Decompressed stream of the current version of a part (edited parts included). */
+  async stream(path: string, onRaw?: (consumed: number, total: number) => void): Promise<ReadableStream<Uint8Array>> {
+    const ch = this.changes.get(normalize(path))
+    if (!ch) return this.zip.stream(path, onRaw)
+    if (ch.data === null) throw new Error(`Missing part: ${path}`)
+    if (typeof ch.data === 'function') return ch.data()
+    const bytes = typeof ch.data === 'string' ? new TextEncoder().encode(ch.data) : ch.data
+    return new ReadableStream({
+      start(c) {
+        c.enqueue(bytes)
+        c.close()
+      },
+    })
+  }
+
+  setPart(path: string, data: PartData | null): void {
+    path = path.replace(/^\/+/, '')
+    this.changes.set(normalize(path), { path, data })
+    this.xmlCache.delete(path)
+    this.relsCache.clear()
+    if (/\[content_types\]\.xml$/i.test(path)) this.contentTypes = undefined
+  }
+
+  /** Builds the edited package; unchanged entries are copied without recompression. */
+  async save(type: string): Promise<Blob> {
+    const m = new Map<string, PartData | null>()
+    for (const { path, data } of this.changes.values()) m.set(path, data)
+    return rebuildZip(this.zip, m, type)
+  }
+
+  /** Adds a relationship from `part` to `target` (absolute part path); returns its id. */
+  async addRel(part: string, type: string, target: string, external = false): Promise<string> {
+    const rp = relsPathFor(part)
+    const nodes = this.has(rp)
+      ? parseRaw(await this.text(rp))
+      : parseRaw('<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"></Relationships>')
+    const root = rootEl(nodes)!
+    const ids = new Set(kidsOf(root, 'Relationship').map((r) => getAttr(r, 'Id')))
+    let n = ids.size + 1
+    while (ids.has(`rId${n}`)) n++
+    const id = `rId${n}`
+    root.c.push(el('Relationship', external ? { Id: id, Type: type, Target: target, TargetMode: 'External' } : { Id: id, Type: type, Target: relativeTarget(dirOf(part), target) }))
+    root.self = false
+    this.setPart(rp, serialize(nodes))
+    return id
+  }
+
+  async removeRelsTo(part: string, target: string): Promise<void> {
+    const rp = relsPathFor(part)
+    if (!this.has(rp)) return
+    const nodes = parseRaw(await this.text(rp))
+    const root = rootEl(nodes)!
+    const base = dirOf(part)
+    root.c = root.c.filter((c) => !(isNode(c) && resolvePath(base, getAttr(c, 'Target') ?? '').toLowerCase() === target.toLowerCase()))
+    this.setPart(rp, serialize(nodes))
+  }
+
+  /** Ensures a <Default Extension=…> entry exists (for new media types). */
+  async ensureDefaultType(ext: string, contentType: string): Promise<void> {
+    const ct = '[Content_Types].xml'
+    const nodes = parseRaw(await this.text(ct))
+    const root = rootEl(nodes)!
+    if (kidsOf(root, 'Default').some((d) => getAttr(d, 'Extension')?.toLowerCase() === ext.toLowerCase())) return
+    root.c.unshift(el('Default', { Extension: ext, ContentType: contentType }))
+    this.setPart(ct, serialize(nodes))
+  }
+
+  /** Free part name like `word/media/image7.png`. */
+  freeName(dir: string, base: string, ext: string): string {
+    for (let i = 1; ; i++) {
+      const p = `${dir}/${base}${i}.${ext}`
+      if (!this.has(p)) return p
+    }
+  }
+
+  async setContentType(partName: string, contentType: string | null): Promise<void> {
+    const ct = '[Content_Types].xml'
+    const nodes = parseRaw(await this.text(ct))
+    const root = rootEl(nodes)!
+    const pn = '/' + partName.replace(/^\/+/, '')
+    root.c = root.c.filter((c) => !(isNode(c) && getAttr(c, 'PartName')?.toLowerCase() === pn.toLowerCase()))
+    if (contentType) root.c.push(el('Override', { PartName: pn, ContentType: contentType }))
+    this.setPart(ct, serialize(nodes))
   }
 
   /** Parsed XML part (cached). Missing parts resolve to undefined. */
   xml(path: string, cache = true): Promise<XEl | undefined> {
-    const load = async () => (this.zip.has(path) ? parseXml(await this.zip.text(path), SKIP_EXT) : undefined)
+    const load = async () => (this.has(path) ? parseXml(await this.text(path), SKIP_EXT) : undefined)
     if (!cache) return load()
     let p = this.xmlCache.get(path)
     if (!p) this.xmlCache.set(path, (p = load()))
@@ -91,8 +207,8 @@ export class OpcPackage {
       p = (async () => {
         const map: Rels = new Map()
         const rp = relsPathFor(part)
-        if (!this.zip.has(rp)) return map
-        const root = parseXml(await this.zip.text(rp))
+        if (!this.has(rp)) return map
+        const root = parseXml(await this.text(rp))
         const base = dirOf(part)
         for (const r of kids(root, 'Relationship')) {
           const external = r.a.TargetMode === 'External'
@@ -115,8 +231,8 @@ export class OpcPackage {
     if (!this.contentTypes) {
       this.contentTypes = (async () => {
         const m = new Map<string, string>()
-        if (!this.zip.has('[Content_Types].xml')) return m
-        const root = parseXml(await this.zip.text('[Content_Types].xml'))
+        if (!this.has('[Content_Types].xml')) return m
+        const root = parseXml(await this.text('[Content_Types].xml'))
         for (const d of kids(root, 'Default')) m.set('ext:' + (d.a.Extension ?? '').toLowerCase(), d.a.ContentType)
         for (const o of kids(root, 'Override')) m.set((o.a.PartName ?? '').replace(/^\//, '').toLowerCase(), o.a.ContentType)
         return m
@@ -128,7 +244,8 @@ export class OpcPackage {
   }
 
   async blob(path: string): Promise<Blob> {
-    const bytes = await this.zip.bytes(path)
+    const ch = this.changes.get(normalize(path))
+    const bytes = ch && ch.data !== null && typeof ch.data !== 'function' ? (typeof ch.data === 'string' ? new TextEncoder().encode(ch.data) : ch.data) : await this.zip.bytes(path)
     return new Blob([bytes as BlobPart], { type: mimeOf(path) })
   }
 
