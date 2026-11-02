@@ -2,6 +2,7 @@
 
 Usage:  python3 -m venv .venv && .venv/bin/pip install python-docx openpyxl python-pptx Pillow
         .venv/bin/python scripts/fixtures.py [--large]
+        .venv/bin/python scripts/fixtures.py --large-deck   # only large-deck.pptx (the browser tests need it)
 """
 import datetime
 import io
@@ -334,11 +335,15 @@ def make_pptx(path, extra=0):
 
 
 if __name__ == '__main__':
-    make_docx(os.path.join(OUT, 'sample.docx'))
-    make_xlsx(os.path.join(OUT, 'sample.xlsx'))
-    make_pptx(os.path.join(OUT, 'sample.pptx'))
-    if '--large' in sys.argv:
+    large = '--large' in sys.argv
+    deck_only = '--large-deck' in sys.argv
+    if not deck_only:
+        make_docx(os.path.join(OUT, 'sample.docx'))
+        make_xlsx(os.path.join(OUT, 'sample.xlsx'))
+        make_pptx(os.path.join(OUT, 'sample.pptx'))
+    if large:
         make_docx(os.path.join(OUT, 'large-doc.docx'), paragraphs=20000)
         make_large_xlsx(os.path.join(OUT, 'large-sheet.xlsx'))
+    if large or deck_only:
         make_pptx(os.path.join(OUT, 'large-deck.pptx'), extra=300)
     print('ok')

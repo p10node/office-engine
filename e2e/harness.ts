@@ -3,7 +3,7 @@
  * Needs a Chromium for playwright-core: `bunx playwright install chromium`.
  */
 import { afterAll, afterEach, beforeAll, expect, setDefaultTimeout } from 'bun:test'
-import { readFileSync, writeFileSync } from 'node:fs'
+import { existsSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { chromium, type Browser, type BrowserContext, type Download, type Locator, type Page } from 'playwright-core'
@@ -62,6 +62,9 @@ export async function viewer(params: Params, opts: { wait?: boolean; page?: stri
   open.add(ctx)
   const page = await ctx.newPage()
   const v = new Viewer(page, ctx)
+  // a missing sample is served as the fixture's index.html and fails later as "not a ZIP": say so (tests of a bad file pass wait: false)
+  const sample = typeof params.src === 'string' && params.src.startsWith('samples/') ? params.src.slice('samples/'.length) : ''
+  if (opts.wait !== false && sample && !existsSync(`${SAMPLES}/${sample}`)) throw new Error(`${params.src} is missing: large-* samples are generated (python3 scripts/fixtures.py --large-deck)`)
   const q = new URLSearchParams(Object.entries(params).map(([k, x]) => [k, String(x === true ? 1 : x === false ? 0 : x)]))
   try {
     await page.goto(`${shared.base}${opts.page ?? ''}?${q}`)

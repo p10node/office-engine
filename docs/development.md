@@ -5,10 +5,10 @@ bun install
 bun run dev          # playground http://localhost:5173 (drag & drop, URL, samples)
 bun run collab       # collaboration hub for the playground's "Share live" (port 8787)
 bun test             # core tests on fixtures
-bun run test:e2e     # browser tests (headless Chromium: bunx playwright install chromium)
+bun run test:e2e     # browser tests (headless Chromium: bunx playwright install chromium; needs large-deck.pptx, see fixtures.py)
 bun run build        # dist/: ESM lib + office-engine.embed.js + .d.ts
 python3 -m venv .venv && .venv/bin/pip install python-docx openpyxl python-pptx Pillow
-.venv/bin/python scripts/fixtures.py --large   # generate samples + heavy files
+.venv/bin/python scripts/fixtures.py --large   # generate samples + heavy files (--large-deck: only the deck the browser tests need)
 bun run screenshots  # README screenshots -> docs/screenshots/ (headless Chromium)
 ```
 

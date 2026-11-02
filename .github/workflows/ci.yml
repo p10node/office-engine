@@ -50,4 +50,14 @@ jobs:
       - run: bun install --frozen-lockfile
       # same version as the playwright-core devDependency
       - run: bunx playwright@$(node -p "require('playwright-core/package.json').version") install --with-deps chromium
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.13'
+      # large-* samples are gitignored; the pptx tests load large-deck.pptx
+      - name: Generate the large deck
+        run: |
+          pip install python-pptx Pillow
+          python scripts/fixtures.py --large-deck
+
       - run: bun run test:e2e
