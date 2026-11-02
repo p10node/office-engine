@@ -1,9 +1,10 @@
 import react from '@vitejs/plugin-react'
 import { defineConfig } from 'vite'
+import { thirdPartyLicenses } from './scripts/third-party-licenses.ts'
 
 // Library build: ESM, React external, worker inlined (no extra asset to host).
 export default defineConfig({
-  plugins: [react()],
+  plugins: [react(), thirdPartyLicenses()],
   build: {
     outDir: 'dist',
     emptyOutDir: false,
@@ -17,5 +18,5 @@ export default defineConfig({
       external: ['react', 'react-dom', 'react-dom/client', 'react/jsx-runtime'],
     },
   },
-  worker: { format: 'es' },
+  worker: { format: 'es', plugins: () => [thirdPartyLicenses()] },
 })

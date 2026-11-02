@@ -60,3 +60,7 @@ Also online at [p10node.github.io/office-engine](https://p10node.github.io/offic
 - [API](docs/api.md): props, custom views, `mount()`, `<office-viewer>`, core API, CSP
 - [Real-time collaboration](docs/collaboration.md)
 - [Development](docs/development.md): playground, architecture, demo deploy, release
+
+## License
+
+[MIT](LICENSE) © p10node
