@@ -1,11 +1,14 @@
 // README screenshots of the playground -> docs/screenshots/*.png
-// Usage: bun run screenshots   (needs a Chromium for playwright-core: `bunx playwright install chromium`)
+// Each shot is the viewer only (`.de-root`: File menu row and below), the playground chrome is cropped out.
+// Usage: bun run screenshots   (needs a Chromium for playwright-core: `bunx playwright install chromium`,
+//        and the large samples: `python3 scripts/fixtures.py`)
 import { mkdir } from 'node:fs/promises'
 import { chromium } from 'playwright-core'
 import { createServer } from 'vite'
 
 const OUT = 'docs/screenshots'
 const SHOTS = [
+  { name: 'xlsx-300k', src: 'samples/large-sheet.xlsx', ready: '.de-grid' },
   { name: 'docx', src: 'samples/sample.docx', ready: '.de-page-inner' },
   { name: 'xlsx', src: 'samples/sample.xlsx', ready: '.de-grid' },
   { name: 'pptx', src: 'samples/sample.pptx', ready: '.de-slide-inner' },
@@ -21,10 +24,11 @@ try {
   await page.addInitScript(() => localStorage.setItem('de-user', 'Ann')) // stable collaborator name
   for (const s of SHOTS) {
     await page.goto(`${base}?src=${encodeURIComponent(s.src)}`)
-    await page.getByText(/opened in \d+ ms/).waitFor({ timeout: 30_000 })
+    await page.getByText(/opened in \d+ ms/).waitFor({ timeout: 90_000 })
     await page.locator(s.ready).first().waitFor()
+    await page.locator('.de-bar').getByText(/loading/).waitFor({ state: 'hidden', timeout: 90_000 }) // full row count in the status
     await page.waitForTimeout(1500) // images, fonts, progressive layout
-    await page.screenshot({ path: `${OUT}/${s.name}.png` })
+    await page.locator('.de-root').screenshot({ path: `${OUT}/${s.name}.png` })
     console.log(`${OUT}/${s.name}.png`)
   }
 } finally {

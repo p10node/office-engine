@@ -11,9 +11,13 @@ View + edit **DOCX / XLSX / PPTX** directly in the browser. Loads progressively 
 
 The demo has samples, heavy files (300k-row sheet, 305-slide deck), drag & drop your own file, edit and download.
 
-| DOCX                                      | XLSX                                      | PPTX                                      |
-|-------------------------------------------|-------------------------------------------|-------------------------------------------|
-| ![DOCX editor](docs/screenshots/docx.png) | ![XLSX editor](docs/screenshots/xlsx.png) | ![PPTX editor](docs/screenshots/pptx.png) |
+![300k-row XLSX open in the browser](docs/screenshots/xlsx-300k.png)
+
+![DOCX editor](docs/screenshots/docx.png)
+
+![XLSX editor](docs/screenshots/xlsx.png)
+
+![PPTX editor](docs/screenshots/pptx.png)
 
 ## Install
 
