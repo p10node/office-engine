@@ -9,6 +9,7 @@ export { SlideView } from './react/pptx/Slide'
 export { useDocument, type DocumentState } from './react/useDocument'
 export { injectStyles, stylesText } from './react/injectStyles'
 export type { Zoom } from './react/common/ZoomControl'
+export type { Theme } from './react/common/hooks'
 
 export { DocumentClient, setDefaultWorker, type OpenOptions } from './core/worker/client'
 export type { DocSource } from './core/source'

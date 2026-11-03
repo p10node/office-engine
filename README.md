@@ -65,6 +65,7 @@ Also online at [p10node.github.io/office-engine](https://p10node.github.io/offic
 - **Fast save**: only edited parts are regenerated, everything else keeps its original bytes
 - **File menu**: new, open (also CSV / text / Markdown / HTML), import CSV, rename, download as PDF / HTML / text / CSV, document details, print
 - **Real-time collaboration**: live edits, avatars, collaborators' cursors, offline edits sync on reconnect
+- **Dark mode**: `theme="dark"` or `"auto"` (follows the OS); documents keep their own colors
 - **Embed anywhere**: React component, hook, vanilla `mount()`, `<office-viewer>` web component, single `<script>` file
 
 Full list, format coverage and limitations: [Features](docs/features.md).

@@ -20,6 +20,8 @@ describe('embedding without React', () => {
     await wc.locator('.de-bar').waitFor({ state: 'detached' })
     await v.page.evaluate(() => document.getElementById('wc')!.setAttribute('src', 'samples/sample.pptx'))
     await wc.locator('.de-slide-inner').first().waitFor()
+    await v.page.evaluate(() => document.getElementById('wc')!.setAttribute('theme', 'dark'))
+    await wc.locator('.de-root.de-dark').waitFor()
     expect(v.errors).toEqual([])
   })
 

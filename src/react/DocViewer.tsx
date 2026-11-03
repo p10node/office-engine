@@ -13,7 +13,7 @@ import { importFile, type Imported } from './file/importFile'
 import { blankPptx, parasToDocx, rowsToXlsx } from '../core/convert'
 import type { DocKind } from '../core/opc'
 import { injectStyles } from './injectStyles'
-import { isTextEntry } from './common/hooks'
+import { isTextEntry, useDarkTheme, type Theme } from './common/hooks'
 import { PptxView } from './pptx/PptxView'
 import { useDocument } from './useDocument'
 import { XlsxView } from './xlsx/XlsxView'
@@ -41,6 +41,11 @@ export interface DocViewerProps {
   worker?: OpenOptions['worker']
   /** Where to inject the stylesheet (document or a shadow root). */
   styleTarget?: Document | ShadowRoot
+  /**
+   * Color scheme of the viewer chrome (bars, menus, dialogs): 'light', 'dark' or 'auto' (follows the OS / browser setting).
+   * The document itself keeps its own colors. Default 'light'.
+   */
+  theme?: Theme
   onLoad?: (client: DocumentClient) => void
   onError?: (error: Error) => void
   /** Start in edit mode. Default false (view). */
@@ -90,7 +95,8 @@ function fmtBytes(n: number) {
 }
 
 export function DocViewer(props: DocViewerProps) {
-  const { src, name, className, style, toolbar = true, toolbarExtra, zoom, thumbnails, headers, credentials, worker, styleTarget, onLoad, onError } = props
+  const { src, name, className, style, toolbar = true, toolbarExtra, zoom, thumbnails, headers, credentials, worker, styleTarget, theme, onLoad, onError } = props
+  const dark = useDarkTheme(theme)
   const { allowEdit = true, allowSave = true, allowDownload = true, fileMenu = true, allowOpen = true, captureSelectAll = true, onSave, onDirtyChange } = props
   const [editing, setEditing] = useState(!!props.editable)
   useEffect(() => {
@@ -271,7 +277,7 @@ export function DocViewer(props: DocViewerProps) {
   else body = <PptxView client={client} initialZoom={zoom} thumbnails={thumbnails} />
 
   return (
-    <div ref={rootRef} className={className ? `de-root ${className}` : 'de-root'} style={style} onKeyDown={onKeyDown}>
+    <div ref={rootRef} className={'de-root' + (dark ? ' de-dark' : '') + (className ? ` ${className}` : '')} style={style} onKeyDown={onKeyDown}>
       {toolbar && (
         <div className="de-bar">
           {client && <span className={`de-badge de-badge-${client.kind}`}>{client.kind}</span>}

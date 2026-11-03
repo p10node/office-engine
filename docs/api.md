@@ -11,6 +11,7 @@ import { DocViewer } from '@p10node/office-engine'
 <DocViewer src={file} editable onSave={(blob, name) => upload(blob, name)} />  // editing
 <DocViewer src={file} allowSave={false} allowDownload={false} />  // no Save/Download, no image download
 <DocViewer src={file} fileMenu={false} />                         // no File menu
+<DocViewer src={file} theme="dark" />                             // dark chrome; "auto" follows the OS setting
 ```
 
 ### File menu
@@ -47,33 +48,34 @@ PDF goes through the browser print dialog ("Save as PDF"), so text stays selecta
 
 CSS is auto-injected, no import needed. Container must have a height.
 
-| Prop               | Type                                           | Default  | Notes                                                                                  |
-|--------------------|------------------------------------------------|----------|----------------------------------------------------------------------------------------|
-| `src`              | `File \| Blob \| ArrayBuffer \| string \| URL` | –        | Document source                                                                        |
-| `name`             | `string`                                       | auto     | Display name                                                                           |
-| `toolbar`          | `boolean`                                      | `true`   | Top bar (name, status, progress)                                                       |
-| `toolbarExtra`     | `ReactNode`                                    | –        | Extra buttons on the right of the toolbar                                              |
-| `zoom`             | `number \| 'fit'`                              | `'fit'`  | Initial zoom (docx/pptx)                                                               |
-| `thumbnails`       | `boolean`                                      | `true`   | Thumbnail column for pptx                                                              |
-| `headers`          | `Record<string,string>`                        | –        | Headers for URL requests                                                               |
-| `credentials`      | `RequestCredentials`                           | –        | Cross-origin cookies                                                                   |
-| `worker`           | `() => Worker \| false`                        | inline   | Custom worker (CSP), `false` = main thread                                             |
-| `styleTarget`      | `Document \| ShadowRoot`                       | document | Where CSS is injected                                                                  |
-| `editable`         | `boolean`                                      | `false`  | Open in edit mode                                                                      |
-| `allowEdit`        | `boolean`                                      | `true`   | Show Edit/View button                                                                  |
-| `allowSave`        | `boolean`                                      | `true`   | Show Save/Download button, enable Ctrl+S                                               |
-| `allowDownload`    | `boolean`                                      | `true`   | Allow downloads to device (save without `onSave`, images)                              |
-| `fileMenu`         | `boolean`                                      | `true`   | File menu: open, download as PDF / HTML / text, print                                  |
-| `allowOpen`        | `boolean`                                      | `true`   | File → New / Open (off during collaboration)                                           |
-| `captureSelectAll` | `boolean`                                      | `true`   | Ctrl/⌘+A from anywhere on the page selects the document; `false`: from the viewer only |
-| `fileMenuItems`    | `FileMenuItem[]`                               | –        | Extra File menu entries (`label`, `onClick`, `icon`, `hint`)                           |
-| `onRename`         | `(name) => void`                               | –        | File → Rename result (extension included)                                              |
-| `onClose`          | `() => void`                                   | –        | Adds File → Close                                                                      |
-| `onSave`           | `(blob, name) => void`                         | download | Receives saved file (downloads by default)                                             |
-| `onDirtyChange`    | `(dirty) => void`                              | –        | Whether there are unsaved changes                                                      |
-| `collab`           | `CollabOptions`                                | –        | Real-time collaboration, see [collaboration](collaboration.md)                         |
-| `onLoad`           | `(client) => void`                             | –        |                                                                                        |
-| `onError`          | `(error) => void`                              | –        |                                                                                        |
+| Prop               | Type                                           | Default   | Notes                                                                                                |
+|--------------------|------------------------------------------------|-----------|------------------------------------------------------------------------------------------------------|
+| `src`              | `File \| Blob \| ArrayBuffer \| string \| URL` | –         | Document source                                                                                      |
+| `name`             | `string`                                       | auto      | Display name                                                                                         |
+| `toolbar`          | `boolean`                                      | `true`    | Top bar (name, status, progress)                                                                     |
+| `toolbarExtra`     | `ReactNode`                                    | –         | Extra buttons on the right of the toolbar                                                            |
+| `zoom`             | `number \| 'fit'`                              | `'fit'`   | Initial zoom (docx/pptx)                                                                             |
+| `thumbnails`       | `boolean`                                      | `true`    | Thumbnail column for pptx                                                                            |
+| `headers`          | `Record<string,string>`                        | –         | Headers for URL requests                                                                             |
+| `credentials`      | `RequestCredentials`                           | –         | Cross-origin cookies                                                                                 |
+| `worker`           | `() => Worker \| false`                        | inline    | Custom worker (CSP), `false` = main thread                                                           |
+| `styleTarget`      | `Document \| ShadowRoot`                       | document  | Where CSS is injected                                                                                |
+| `theme`            | `'light' \| 'dark' \| 'auto'`                  | `'light'` | Color scheme of the chrome; `'auto'` follows `prefers-color-scheme`. Documents keep their own colors |
+| `editable`         | `boolean`                                      | `false`   | Open in edit mode                                                                                    |
+| `allowEdit`        | `boolean`                                      | `true`    | Show Edit/View button                                                                                |
+| `allowSave`        | `boolean`                                      | `true`    | Show Save/Download button, enable Ctrl+S                                                             |
+| `allowDownload`    | `boolean`                                      | `true`    | Allow downloads to device (save without `onSave`, images)                                            |
+| `fileMenu`         | `boolean`                                      | `true`    | File menu: open, download as PDF / HTML / text, print                                                |
+| `allowOpen`        | `boolean`                                      | `true`    | File → New / Open (off during collaboration)                                                         |
+| `captureSelectAll` | `boolean`                                      | `true`    | Ctrl/⌘+A from anywhere on the page selects the document; `false`: from the viewer only               |
+| `fileMenuItems`    | `FileMenuItem[]`                               | –         | Extra File menu entries (`label`, `onClick`, `icon`, `hint`)                                         |
+| `onRename`         | `(name) => void`                               | –         | File → Rename result (extension included)                                                            |
+| `onClose`          | `() => void`                                   | –         | Adds File → Close                                                                                    |
+| `onSave`           | `(blob, name) => void`                         | download  | Receives saved file (downloads by default)                                                           |
+| `onDirtyChange`    | `(dirty) => void`                              | –         | Whether there are unsaved changes                                                                    |
+| `collab`           | `CollabOptions`                                | –         | Real-time collaboration, see [collaboration](collaboration.md)                                       |
+| `onLoad`           | `(client) => void`                             | –         |                                                                                                      |
+| `onError`          | `(error) => void`                              | –         |                                                                                                      |
 
 Use individual views / build your own UI:
 
@@ -83,6 +85,8 @@ import { useDocument, DocxView, XlsxView, PptxView } from '@p10node/office-engin
 const { client, error, progress } = useDocument(src)
 if (client?.kind === 'xlsx') return <div className="de-root"><XlsxView client={client} /></div>
 ```
+
+The views style themselves from CSS variables on `.de-root` (`--de-bg`, `--de-chrome`, `--de-accent`…): override them to match your app. Add `de-dark` to the root element for the dark theme.
 
 ## Without a React build
 
@@ -99,7 +103,7 @@ if (client?.kind === 'xlsx') return <div className="de-root"><XlsxView client={c
 </script>
 ```
 
-`<office-viewer>`: attributes `src`, `name`, `editable`, `toolbar="false"`, `thumbnails="false"`, `save="false"`, `download="false"`, `file-menu="false"`, `open="false"`, `capture-select-all="false"`, `collab` / `room` / `user` / `base` (real-time collaboration); property `.file = File`; events `load`, `error`.
+`<office-viewer>`: attributes `src`, `name`, `editable`, `toolbar="false"`, `thumbnails="false"`, `save="false"`, `download="false"`, `file-menu="false"`, `open="false"`, `capture-select-all="false"`, `theme="dark"` (or `"auto"`), `collab` / `room` / `user` / `base` (real-time collaboration); property `.file = File`; events `load`, `error`.
 
 ## Core API (no React)
 

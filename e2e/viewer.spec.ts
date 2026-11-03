@@ -95,6 +95,33 @@ describe('viewing', () => {
     expect(err.message).toBeTruthy()
   })
 
+  test('theme: dark chrome, white pages; auto follows prefers-color-scheme', async () => {
+    const v = await viewer({ src: 'samples/sample.docx', theme: 'dark' })
+    const { page } = v
+    const isDark = () => page.evaluate(() => document.querySelector('.de-root')!.classList.contains('de-dark'))
+    const bg = (sel: string) => page.locator(sel).first().evaluate((el) => getComputedStyle(el).backgroundColor)
+    expect(await isDark()).toBe(true)
+    expect(await bg('.de-bar')).toBe('rgb(35, 38, 42)')
+    expect(await bg('.de-page')).toBe('rgb(255, 255, 255)')
+    // menus pick up the theme too
+    await v.menu()
+    expect(await bg('.de-dd-pop')).toBe('rgb(46, 49, 54)')
+    await page.keyboard.press('Escape')
+
+    // default: light, whatever the OS prefers
+    await page.emulateMedia({ colorScheme: 'dark' })
+    await page.evaluate(() => window.__setProps({ theme: undefined }))
+    await page.waitForFunction(() => !document.querySelector('.de-root')!.classList.contains('de-dark'))
+    expect(await bg('.de-bar')).toBe('rgb(255, 255, 255)')
+
+    // auto: follows prefers-color-scheme, live
+    await page.evaluate(() => window.__setProps({ theme: 'auto' }))
+    await page.waitForFunction(() => document.querySelector('.de-root')!.classList.contains('de-dark'))
+    await page.emulateMedia({ colorScheme: 'light' })
+    await page.waitForFunction(() => !document.querySelector('.de-root')!.classList.contains('de-dark'))
+    expect(v.errors).toEqual([])
+  })
+
   test('new src from the host replaces the document', async () => {
     const v = await viewer({ src: 'samples/sample.docx' })
     await v.page.evaluate(() => window.__setProps({ src: 'samples/sample.xlsx' }))

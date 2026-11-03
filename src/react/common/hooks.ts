@@ -4,6 +4,26 @@ import { isWebImage } from '../../core/opc'
 
 export const useIsoLayoutEffect = typeof window === 'undefined' ? useEffect : useLayoutEffect
 
+/** Color scheme of the viewer chrome: 'auto' follows the browser / OS setting (prefers-color-scheme). */
+export type Theme = 'light' | 'dark' | 'auto'
+
+const DARK_MQ = '(prefers-color-scheme: dark)'
+const prefersDark = () => typeof matchMedia === 'function' && matchMedia(DARK_MQ).matches
+
+/** Whether the dark theme applies for `theme`; 'auto' tracks prefers-color-scheme live. */
+export function useDarkTheme(theme: Theme = 'light'): boolean {
+  const [dark, setDark] = useState(() => theme === 'auto' && prefersDark())
+  useEffect(() => {
+    if (theme !== 'auto' || typeof matchMedia !== 'function') return
+    const mq = matchMedia(DARK_MQ)
+    const on = () => setDark(mq.matches)
+    on()
+    mq.addEventListener('change', on)
+    return () => mq.removeEventListener('change', on)
+  }, [theme])
+  return theme === 'dark' || (theme === 'auto' && dark)
+}
+
 export function useForceUpdate(): [number, () => void] {
   const [n, bump] = useReducer((x: number) => x + 1, 0)
   return [n, bump as () => void]

@@ -1,6 +1,6 @@
 import { StrictMode, useCallback, useEffect, useMemo, useState } from 'react'
 import { createRoot } from 'react-dom/client'
-import { DocViewer, type DocSource } from '../src'
+import { DocViewer, type DocSource, type Theme } from '../src'
 import type { CollabOptions } from '../src/collab'
 
 const SAMPLES = [
@@ -12,12 +12,30 @@ const SAMPLES = [
   { label: 'large-deck.pptx (305 slides)', url: 'samples/large-deck.pptx' },
 ]
 
-const bar: React.CSSProperties = {
-  display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center', padding: '10px 16px',
-  borderBottom: '1px solid #dadde1', background: '#fff',
+// the playground's own bar follows the viewer theme
+const CHROME = {
+  light: { bar: '#fff', border: '#dadde1', btnBorder: '#d0d4d9', muted: '#69707a', accent: '#1a73e8', danger: '#c5221f' },
+  dark: { bar: '#23262a', border: '#3b3f45', btnBorder: '#4a4f57', muted: '#9aa0a6', accent: '#8ab4f8', danger: '#f2b8b5' },
 }
-const btn: React.CSSProperties = {
-  border: '1px solid #d0d4d9', background: '#fff', borderRadius: 6, padding: '5px 10px', cursor: 'pointer', font: 'inherit',
+const styles = (c: (typeof CHROME)['light']) => ({
+  bar: {
+    display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center', padding: '10px 16px',
+    borderBottom: `1px solid ${c.border}`, background: c.bar,
+  } as React.CSSProperties,
+  btn: {
+    border: `1px solid ${c.btnBorder}`, background: c.bar, color: 'inherit', borderRadius: 6, padding: '5px 10px', cursor: 'pointer', font: 'inherit',
+  } as React.CSSProperties,
+})
+
+/** saved theme, else the OS setting */
+function initialTheme(): Theme {
+  try {
+    const saved = localStorage.getItem('de-theme')
+    if (saved === 'light' || saved === 'dark') return saved
+  } catch {
+    /* private mode */
+  }
+  return matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'
 }
 
 // on GitHub Pages the demo lives at <site>/demo/, docs at <site>/
@@ -61,6 +79,18 @@ function App() {
   const [drag, setDrag] = useState(false)
   const [loadMs, setLoadMs] = useState<number | null>(null)
   const [t0, setT0] = useState(() => performance.now())
+  const [theme, setTheme] = useState<Theme>(initialTheme)
+  const dark = theme === 'dark'
+  const c = CHROME[dark ? 'dark' : 'light']
+  const { bar, btn } = useMemo(() => styles(c), [c])
+  useEffect(() => {
+    document.body.classList.toggle('dark', dark)
+    try {
+      localStorage.setItem('de-theme', theme)
+    } catch {
+      /* private mode */
+    }
+  }, [theme, dark])
 
   const open = (s: DocSource, inRoom: string | null = null, at = 0) => {
     setT0(performance.now())
@@ -121,7 +151,7 @@ function App() {
     >
       <div style={bar}>
         <strong>office-engine</strong>
-        <a href={DOCS_URL} style={{ marginRight: 8, color: '#1a73e8', textDecoration: 'none' }}>Docs</a>
+        <a href={DOCS_URL} style={{ marginRight: 8, color: c.accent, textDecoration: 'none' }}>Docs</a>
         {SAMPLES.map((s) => (
           <button key={s.url} style={btn} onClick={() => open(s.url)}>{s.label}</button>
         ))}
@@ -133,8 +163,11 @@ function App() {
           <input value={url} onChange={(e) => setUrl(e.target.value)} placeholder="https://…/file.xlsx (Range requests)" style={{ ...btn, flex: 1, cursor: 'text' }} />
           <button style={btn}>Open URL</button>
         </form>
-        {loadMs !== null && <span style={{ color: '#69707a' }}>opened in {loadMs} ms</span>}
+        {loadMs !== null && <span style={{ color: c.muted }}>opened in {loadMs} ms</span>}
         <span style={{ flex: '1 0 0' }} />
+        <button style={btn} onClick={() => setTheme(dark ? 'light' : 'dark')} title={dark ? 'Switch to the light theme' : 'Switch to the dark theme'} aria-label="Toggle theme">
+          {dark ? '☀ Light' : '☾ Dark'}
+        </button>
         <input
           value={user}
           onChange={(e) => setUser(e.target.value)}
@@ -156,16 +189,16 @@ function App() {
             <button style={btn} onClick={() => open(src!, null)}>Stop sharing</button>
           </>
         ) : (
-          <button style={{ ...btn, borderColor: '#1a73e8', color: '#1a73e8' }} disabled={!src} onClick={() => void share()} title="Edit together in real time">
+          <button style={{ ...btn, borderColor: c.accent, color: c.accent }} disabled={!src} onClick={() => void share()} title="Edit together in real time">
             Share live
           </button>
         )}
-        {sharing && <span style={{ color: /failed/.test(sharing) ? '#c5221f' : '#69707a' }}>{sharing}</span>}
+        {sharing && <span style={{ color: /failed/.test(sharing) ? c.danger : c.muted }}>{sharing}</span>}
       </div>
       <div style={{ flex: 1, minHeight: 0, position: 'relative' }}>
-        <DocViewer src={src} onLoad={onLoad} editable collab={collab} />
+        <DocViewer src={src} onLoad={onLoad} editable collab={collab} theme={theme} />
         {drag && (
-          <div style={{ position: 'absolute', inset: 12, border: '2px dashed #1a73e8', borderRadius: 12, background: 'rgba(26,115,232,.06)', display: 'grid', placeItems: 'center', fontSize: 16, color: '#1a73e8', pointerEvents: 'none' }}>
+          <div style={{ position: 'absolute', inset: 12, border: `2px dashed ${c.accent}`, borderRadius: 12, background: 'rgba(26,115,232,.06)', display: 'grid', placeItems: 'center', fontSize: 16, color: c.accent, pointerEvents: 'none' }}>
             Drop a .docx, .xlsx or .pptx file
           </div>
         )}
