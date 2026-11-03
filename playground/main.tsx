@@ -51,7 +51,8 @@ async function sourceBytes(s: DocSource): Promise<Blob> {
 
 function App() {
   const initialRoom = params.get('room')
-  const [src, setSrc] = useState<DocSource | null>(initialRoom ? null : params.get('src'))
+  // opens sample.docx by default: ?src= or ?room= override it
+  const [src, setSrc] = useState<DocSource | null>(initialRoom ? null : (params.get('src') ?? SAMPLES[0].url))
   const [room, setRoom] = useState<string | null>(null)
   const [base, setBase] = useState(0)
   const [user, setUser] = useState(userName)
