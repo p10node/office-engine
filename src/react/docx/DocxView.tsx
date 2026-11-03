@@ -3,8 +3,8 @@ import type { Block, DocxMeta, PageSetup, Paragraph } from '../../core/docx/type
 import { DEFAULT_PAGE } from '../../core/docx/types'
 import { registerHost } from '../../collab/hosts'
 import type { DocumentClient } from '../../core/worker/client'
-import { lowerIndex, useForceUpdate, useIsoLayoutEffect, useScroll, useSize } from '../common/hooks'
-import { useFileOps, useViewer } from '../common/Slots'
+import { claimFocus, lowerIndex, useForceUpdate, useIsoLayoutEffect, useScroll, useSize } from '../common/hooks'
+import { useFileOps, useSelectAll, useViewer } from '../common/Slots'
 import { Status } from '../common/Status'
 import { ZoomControl, type Zoom } from '../common/ZoomControl'
 import { ContextMenu, MOD, type MenuItem } from '../common/ContextMenu'
@@ -259,6 +259,25 @@ export function DocxView({ client, onStatus, initialZoom = 'fit' }: DocxViewProp
     editor.onDirty = () => viewer.setDirty(true)
     return () => editor.input.detach()
   }, [isEditing, editor, viewer])
+
+  // Ctrl/⌘+A: every paragraph when editing, the rendered pages' text when viewing (not the viewer around them)
+  useSelectAll(() => {
+    if (isEditing) editor.selectAll()
+    else if (pagesRef.current) getSel(pagesRef.current)?.selectAllChildren(pagesRef.current)
+  })
+
+  // keyboard first: shortcuts and typing work without a click (a focused host page control keeps the focus)
+  const rendered = pages.some((p) => p.end > p.start)
+  useEffect(() => {
+    if (!isEditing) {
+      claimFocus(scrollRef.current)
+      return
+    }
+    // typing needs a caret: at the start of the document once its first page has content
+    if (!rendered || !claimFocus(pagesRef.current) || editor.input.readSel()) return
+    const all = editor.all()
+    if (all && !editor.input.restore({ a: all.a, f: all.a })) editor.pendingSel = { a: all.a, f: all.a }
+  }, [isEditing, rendered]) // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     editor.shortcut = (e: KeyboardEvent) => {
@@ -649,15 +668,9 @@ export function DocxView({ client, onStatus, initialZoom = 'fit' }: DocxViewProp
         className="de-scroll"
         tabIndex={-1}
         onKeyDown={(e) => {
-          const mod = (e.metaKey || e.ctrlKey) && !e.altKey
-          const k = e.key.toLowerCase()
-          if (mod && k === 'f') {
+          if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'f') {
             e.preventDefault()
             setFind((f) => ({ ...f, open: true }))
-          } else if (mod && k === 'a' && !e.shiftKey && !isEditing && pagesRef.current) {
-            // the document, not the viewer around it (editing: the editor selects every paragraph)
-            e.preventDefault()
-            getSel(pagesRef.current)?.selectAllChildren(pagesRef.current)
           }
         }}
       >

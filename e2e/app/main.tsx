@@ -43,6 +43,7 @@ const initial: DocViewerProps = {
   fileMenu: flag('fileMenu'),
   allowOpen: flag('allowOpen'),
   thumbnails: flag('thumbnails'),
+  captureSelectAll: flag('captureSelectAll'),
   onSave: q.has('onSave') ? async (blob, name) => void log({ type: 'save', name, b64: await b64(blob) }) : undefined,
   onDirtyChange: (dirty) => log({ type: 'dirty', dirty }),
   onRename: (name) => log({ type: 'rename', name }),

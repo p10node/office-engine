@@ -1,8 +1,8 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import type { Box, PresentationMeta, ShapeKind, ShapeOp, SlideModel, SlideOp } from '../../core/pptx/types'
 import type { DocumentClient } from '../../core/worker/client'
-import { useForceUpdate, useIsoLayoutEffect, useScroll, useSize } from '../common/hooks'
-import { useFileOps, useViewer } from '../common/Slots'
+import { claimFocus, useForceUpdate, useIsoLayoutEffect, useScroll, useSize } from '../common/hooks'
+import { useFileOps, useViewer, useSelectAll } from '../common/Slots'
 import { slidesToText } from '../file/text'
 import { Status } from '../common/Status'
 import { ZoomControl, type Zoom } from '../common/ZoomControl'
@@ -207,6 +207,7 @@ export function PptxView({ client, onStatus, initialZoom = 'fit', thumbnails = t
   const editor = useMemo(() => new PptxEditor(client), [client])
   const caretAt = useRef<{ x: number; y: number } | null>(null)
   const textRoot = useRef<HTMLDivElement | null>(null)
+  const slidesRef = useRef<HTMLDivElement>(null)
   const [selected, setSelected] = useState<{ slide: number; top: number } | null>(null)
   const [drag, setDrag] = useState<{ slide: number; top: number; mode: DragMode; sx: number; sy: number; box: Box; cur: Box; moved: boolean; sid?: number; px: number; py: number } | null>(null)
   const [slidesVer, setSlidesVer] = useState(0)
@@ -266,6 +267,15 @@ export function PptxView({ client, onStatus, initialZoom = 'fit', thumbnails = t
     return () => editor.end()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [viewer.editable])
+
+  // keyboard first: slide navigation and shortcuts work without a click (a focused host page control keeps the focus)
+  useEffect(() => void claimFocus(scrollRef.current), []) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Ctrl/⌘+A: the text being edited, otherwise the rendered slides' text (not the viewer around them)
+  useSelectAll(() => {
+    const root = editor.active ? textRoot.current : slidesRef.current
+    if (root) getSel(root)?.selectAllChildren(root)
+  })
 
   const stopEditing = () => {
     if (!editor.active) return
@@ -689,7 +699,7 @@ export function PptxView({ client, onStatus, initialZoom = 'fit', thumbnails = t
       )}
       <div style={{ position: 'relative', flex: 1, minWidth: 0, display: 'flex' }}>
         <div ref={scrollRef} className="de-scroll" tabIndex={0} onKeyDown={onKeyDown} style={{ outline: 'none' }} onMouseDown={(e) => e.target === e.currentTarget && stopEditing()}>
-          <div style={{ position: 'relative', height: totalH, width: totalW }} onMouseDown={(e) => e.target === e.currentTarget && stopEditing()}>
+          <div ref={slidesRef} style={{ position: 'relative', height: totalH, width: totalW }} onMouseDown={(e) => e.target === e.currentTarget && stopEditing()}>
             {slots}
           </div>
         </div>

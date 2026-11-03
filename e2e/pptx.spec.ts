@@ -190,3 +190,15 @@ describe('pptx thumbnails', () => {
     expect(v.errors).toEqual([])
   })
 })
+
+describe('pptx keyboard focus', () => {
+  test('the slides have the focus on load; Ctrl/⌘+A selects the slides, not the viewer', async () => {
+    const v = await viewer({ src: 'samples/sample.pptx' })
+    expect(await v.page.evaluate(() => document.activeElement?.className)).toBe('de-scroll')
+    await v.page.keyboard.press('ControlOrMeta+a')
+    const text = await v.page.evaluate(() => getSelection()!.toString())
+    expect(text).toContain('office-engine')
+    expect(text).not.toContain('Slide 1 of')
+    expect(v.errors).toEqual([])
+  })
+})

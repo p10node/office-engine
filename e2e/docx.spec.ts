@@ -241,3 +241,48 @@ describe('docx select all', () => {
     expect(v.errors).toEqual([])
   })
 })
+
+describe('docx keyboard focus', () => {
+  test('viewing: the document has the focus on load; Ctrl/⌘+A from the toolbar or the page selects it', async () => {
+    const v = await viewer({ src: 'samples/sample.docx' })
+    expect(await v.page.evaluate(() => document.activeElement?.className)).toBe('de-scroll')
+    await v.page.locator('button[aria-label="Zoom in"]').focus()
+    await v.page.keyboard.press('ControlOrMeta+a')
+    let text = await v.page.evaluate(() => getSelection()!.toString())
+    expect(text).toContain(INTRO)
+    expect(text).not.toContain('Page 1 of')
+    // from outside the viewer (captureSelectAll, the default)
+    await v.page.evaluate(() => {
+      getSelection()!.removeAllRanges()
+      ;(document.activeElement as HTMLElement).blur()
+    })
+    await v.page.keyboard.press('ControlOrMeta+a')
+    text = await v.page.evaluate(() => getSelection()!.toString())
+    expect(text).toContain(INTRO)
+    expect(text).not.toContain('Page 1 of')
+    expect(v.errors).toEqual([])
+  })
+
+  test('captureSelectAll={false}: outside the viewer the page keeps Ctrl/⌘+A, the viewer chrome still selects the document', async () => {
+    const v = await viewer({ src: 'samples/sample.docx', captureSelectAll: false })
+    await v.page.evaluate(() => (document.activeElement as HTMLElement).blur())
+    await v.page.keyboard.press('ControlOrMeta+a')
+    expect(await v.page.evaluate(() => getSelection()!.toString())).toContain('Page 1 of')
+    await v.page.locator('button[aria-label="Zoom in"]').focus()
+    await v.page.keyboard.press('ControlOrMeta+a')
+    const text = await v.page.evaluate(() => getSelection()!.toString())
+    expect(text).toContain(INTRO)
+    expect(text).not.toContain('Page 1 of')
+    expect(v.errors).toEqual([])
+  })
+
+  test('editing: the caret starts in the document, typing needs no click', async () => {
+    const v = await open()
+    await v.page.waitForFunction(() => document.activeElement?.classList.contains('de-pages'))
+    await v.page.keyboard.type('Hi ')
+    await v.page.waitForTimeout(200)
+    expect(await v.pagesText()).toContain('Hi ')
+    expect((await v.events('dirty')).at(-1)?.dirty).toBe(true)
+    expect(v.errors).toEqual([])
+  })
+})

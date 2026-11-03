@@ -29,6 +29,8 @@ export interface ViewerApi {
   client: DocumentClient | null
   /** set by the mounted view (see useFileOps) */
   fileOps: { current: FileOps | null }
+  /** set by the mounted view (see useSelectAll): Ctrl/⌘+A */
+  selectAll: { current: (() => void) | null }
 }
 
 export const ViewerContext = createContext<ViewerApi>({
@@ -39,6 +41,7 @@ export const ViewerContext = createContext<ViewerApi>({
   canDownload: true,
   client: null,
   fileOps: { current: null },
+  selectAll: { current: null },
 })
 
 export const useViewer = () => useContext(ViewerContext)
@@ -48,6 +51,20 @@ export function useFileOps(ops: FileOps) {
   const slot = useViewer().fileOps
   useEffect(() => {
     slot.current = ops
+  })
+  useEffect(
+    () => () => {
+      slot.current = null
+    },
+    [slot],
+  )
+}
+
+/** Publishes the view's select-all: Ctrl/⌘+A from the viewer chrome or, with `captureSelectAll`, from anywhere on the page. */
+export function useSelectAll(fn: () => void) {
+  const slot = useViewer().selectAll
+  useEffect(() => {
+    slot.current = fn
   })
   useEffect(
     () => () => {

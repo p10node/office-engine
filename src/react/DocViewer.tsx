@@ -13,6 +13,7 @@ import { importFile, type Imported } from './file/importFile'
 import { blankPptx, parasToDocx, rowsToXlsx } from '../core/convert'
 import type { DocKind } from '../core/opc'
 import { injectStyles } from './injectStyles'
+import { isTextEntry } from './common/hooks'
 import { PptxView } from './pptx/PptxView'
 import { useDocument } from './useDocument'
 import { XlsxView } from './xlsx/XlsxView'
@@ -72,6 +73,11 @@ export interface DocViewerProps {
    * edits it together through the hub at `transport` (see src/collab).
    */
   collab?: CollabOptions
+  /**
+   * Ctrl/⌘+A anywhere on the page selects the document (text fields outside the viewer keep their own).
+   * Default true. With false the shortcut works from the viewer only (its content or toolbar).
+   */
+  captureSelectAll?: boolean
 }
 
 const EXT: Record<string, string> = { docx: '.docx', xlsx: '.xlsx', pptx: '.pptx' }
@@ -85,7 +91,7 @@ function fmtBytes(n: number) {
 
 export function DocViewer(props: DocViewerProps) {
   const { src, name, className, style, toolbar = true, toolbarExtra, zoom, thumbnails, headers, credentials, worker, styleTarget, onLoad, onError } = props
-  const { allowEdit = true, allowSave = true, allowDownload = true, fileMenu = true, allowOpen = true, onSave, onDirtyChange } = props
+  const { allowEdit = true, allowSave = true, allowDownload = true, fileMenu = true, allowOpen = true, captureSelectAll = true, onSave, onDirtyChange } = props
   const [editing, setEditing] = useState(!!props.editable)
   useEffect(() => {
     if (props.editable !== undefined) setEditing(!!props.editable)
@@ -151,10 +157,27 @@ export function DocViewer(props: DocViewerProps) {
     }
   }, [client, saving, canSave, onSave, fileName, setDirty, onError])
   const fileOps = useRef<FileOps | null>(null)
+  const selectAll = useRef<(() => void) | null>(null)
   const api = useMemo<ViewerApi>(
-    () => ({ bar: barEl, editable: editing && canEdit, setDirty, save, canDownload: allowDownload, client, fileOps }),
+    () => ({ bar: barEl, editable: editing && canEdit, setDirty, save, canDownload: allowDownload, client, fileOps, selectAll }),
     [barEl, editing, canEdit, setDirty, save, allowDownload, client],
   )
+  const rootRef = useRef<HTMLDivElement>(null)
+  // captureSelectAll: Ctrl/⌘+A from the rest of the page too (the viewer's own keys are handled in onKeyDown below)
+  useEffect(() => {
+    const root = rootRef.current
+    if (!captureSelectAll || !root) return
+    const on = (e: KeyboardEvent) => {
+      if (e.defaultPrevented || !(e.metaKey || e.ctrlKey) || e.altKey || e.shiftKey || e.key.toLowerCase() !== 'a') return
+      const target = (e.composedPath()[0] ?? e.target) as Node | null
+      if ((target && root.contains(target)) || isTextEntry(target) || !selectAll.current) return
+      e.preventDefault()
+      selectAll.current()
+    }
+    const doc = root.ownerDocument
+    doc.addEventListener('keydown', on)
+    return () => doc.removeEventListener('keydown', on)
+  }, [captureSelectAll])
 
   // ---- File menu ----
   const [toast, setToast] = useState<string | null>(null)
@@ -202,9 +225,15 @@ export function DocViewer(props: DocViewerProps) {
     notify: setToast,
   })
   const onKeyDown = (e: React.KeyboardEvent) => {
-    if (!fileMenu || e.defaultPrevented || !(e.metaKey || e.ctrlKey) || e.altKey || e.shiftKey) return
+    if (e.defaultPrevented || !(e.metaKey || e.ctrlKey) || e.altKey || e.shiftKey) return
     const k = e.key.toLowerCase()
-    if (k === 'p') {
+    if (k === 'a') {
+      // from the viewer's own chrome: the document, not the whole page (text fields keep their own select-all)
+      if (isTextEntry(e.target) || !selectAll.current) return
+      e.preventDefault()
+      selectAll.current()
+    } else if (!fileMenu) return
+    else if (k === 'p') {
       // with downloads disabled, the browser must not print (save) the page either
       e.preventDefault()
       if (allowDownload) fileActions.run('print')
@@ -242,7 +271,7 @@ export function DocViewer(props: DocViewerProps) {
   else body = <PptxView client={client} initialZoom={zoom} thumbnails={thumbnails} />
 
   return (
-    <div className={className ? `de-root ${className}` : 'de-root'} style={style} onKeyDown={onKeyDown}>
+    <div ref={rootRef} className={className ? `de-root ${className}` : 'de-root'} style={style} onKeyDown={onKeyDown}>
       {toolbar && (
         <div className="de-bar">
           {client && <span className={`de-badge de-badge-${client.kind}`}>{client.kind}</span>}

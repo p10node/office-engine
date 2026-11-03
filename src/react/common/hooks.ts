@@ -104,3 +104,29 @@ export function useStableCallback<A extends unknown[], R>(fn: (...a: A) => R) {
   const r = useLatest(fn)
   return useCallback((...a: A) => r.current(...a), [r])
 }
+
+/** A control that takes typed text: Ctrl/⌘+A selects its own content. */
+export function isTextEntry(target: EventTarget | null): boolean {
+  const el = target as HTMLElement | null
+  if (!el || el.nodeType !== 1) return false
+  const tag = el.tagName
+  if (tag === 'TEXTAREA' || tag === 'SELECT') return true
+  if (tag === 'INPUT') return !/^(button|checkbox|radio|submit|reset|range|color|file|image)$/i.test((el as HTMLInputElement).type)
+  return !!el.isContentEditable
+}
+
+/**
+ * Focuses `el` so keyboard shortcuts work without a click. The focus stays where it is when a control
+ * outside the viewer has it (a host page form); the viewer's own chrome (or the page body) yields.
+ */
+export function claimFocus(el: HTMLElement | null): boolean {
+  if (!el) return false
+  const doc = el.ownerDocument
+  const active = doc.activeElement
+  const rn = el.getRootNode()
+  const host = typeof ShadowRoot !== 'undefined' && rn instanceof ShadowRoot ? rn.host : null
+  const within = el.closest('.de-root') ?? el
+  if (active && active !== doc.body && active !== host && !within.contains(active)) return false
+  el.focus({ preventScroll: true })
+  return true
+}

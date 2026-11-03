@@ -6,8 +6,8 @@ import { argSlot, functionInfo, suggestFunctions, type FnInfo } from '../../core
 import { MAX_COL, MAX_ROW } from '../../core/xlsx/formula/types'
 import type { DocumentClient } from '../../core/worker/client'
 import { getPeers, publishLocal, subscribePeers } from '../../collab/hosts'
-import { useForceUpdate, useScroll, useSize } from '../common/hooks'
-import { useFileOps, useViewer } from '../common/Slots'
+import { claimFocus, useForceUpdate, useScroll, useSize } from '../common/hooks'
+import { useFileOps, useViewer, useSelectAll } from '../common/Slots'
 import { Status } from '../common/Status'
 import { ContextMenu, MOD, type MenuItem } from '../common/ContextMenu'
 import { Toast } from '../common/Dialog'
@@ -540,7 +540,7 @@ function SheetGrid({ store, sheet, meta, client, edit, setEdit, hold, onSheet }:
     if (store.focusGrid) {
       store.focusGrid = false
       el?.focus({ preventScroll: true })
-    }
+    } else claimFocus(el ?? null) // keyboard first: a focused host page control keeps the focus
     return () => {
       if (el?.isConnected) s.scrollPos = { x: el.scrollLeft, y: el.scrollTop }
     }
@@ -785,6 +785,13 @@ function SheetGrid({ store, sheet, meta, client, edit, setEdit, hold, onSheet }:
   // ---------------------------------------------------------------- editing
 
   const focusGrid = () => scrollRef.current?.focus({ preventScroll: true })
+  const selectSheet = () => setSel({ ar: 0, ac: 0, fr: Math.max(0, s.rows - 1), fc: Math.max(0, s.cols - 1) })
+  // Ctrl/⌘+A from the viewer chrome / the page; a cell being edited keeps its own select-all
+  useSelectAll(() => {
+    if (edit) return
+    focusGrid()
+    selectSheet()
+  })
   const styleOf = (r: number, c: number) => store.row(sheet, r)?.find((x) => x[0] === c)?.[2] ?? 0
 
   const run = async (p: Promise<XlsxEditResult | null>) => {
@@ -1019,7 +1026,7 @@ function SheetGrid({ store, sheet, meta, client, edit, setEdit, hold, onSheet }:
     }
     if (mod && k === 'a' && !e.altKey && !e.shiftKey) {
       e.preventDefault()
-      setSel({ ar: 0, ac: 0, fr: Math.max(0, s.rows - 1), fc: Math.max(0, s.cols - 1) })
+      selectSheet()
       return
     }
     if (editable && mod && !e.altKey) {

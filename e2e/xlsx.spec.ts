@@ -258,3 +258,21 @@ describe('xlsx select all', () => {
     expect(v.errors).toEqual([])
   })
 })
+
+describe('xlsx keyboard focus', () => {
+  test('the grid has the focus on load; Ctrl/⌘+A from the toolbar selects the sheet, in a cell being edited its text', async () => {
+    const v = await open()
+    expect(await v.page.evaluate(() => document.activeElement?.classList.contains('de-grid'))).toBe(true)
+    await v.barButton('View').focus()
+    await v.page.keyboard.press('ControlOrMeta+a')
+    await v.page.waitForFunction(() => document.querySelector('.de-fx-ref')?.textContent === 'A1:H62')
+    await v.clickCell('B2')
+    await v.page.keyboard.type('abc')
+    await v.page.keyboard.press('ControlOrMeta+a')
+    await v.page.keyboard.type('x')
+    await v.page.keyboard.press('Enter')
+    await v.page.waitForTimeout(150)
+    expect(await v.shown('B2')).toBe('x')
+    expect(v.errors).toEqual([])
+  })
+})
