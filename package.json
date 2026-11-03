@@ -54,6 +54,7 @@
     "collab": "bun scripts/collab-server.ts",
     "clean": "rm -rf dist",
     "screenshots": "bun scripts/screenshots.ts",
+    "gifs": "bun scripts/gifs.ts",
     "build:site": "bun scripts/build-site.ts"
   },
   "peerDependencies": {

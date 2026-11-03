@@ -1,14 +1,12 @@
 // README screenshots of the playground -> docs/screenshots/*.png
 // Each shot is the viewer only (`.de-root`: File menu row and below), the playground chrome is cropped out.
-// Usage: bun run screenshots   (needs a Chromium for playwright-core: `bunx playwright install chromium`,
-//        and the large samples: `python3 scripts/fixtures.py`)
+// Usage: bun run screenshots   (needs a Chromium for playwright-core: `bunx playwright install chromium`)
 import { mkdir } from 'node:fs/promises'
 import { chromium } from 'playwright-core'
 import { createServer } from 'vite'
 
 const OUT = 'docs/screenshots'
 const SHOTS = [
-  { name: 'xlsx-300k', src: 'samples/large-sheet.xlsx', ready: '.de-grid' },
   { name: 'docx', src: 'samples/sample.docx', ready: '.de-page-inner' },
   { name: 'xlsx', src: 'samples/sample.xlsx', ready: '.de-grid' },
   { name: 'pptx', src: 'samples/sample.pptx', ready: '.de-slide-inner' },
