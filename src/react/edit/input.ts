@@ -46,6 +46,10 @@ export interface RichHost<P extends RichPara = RichPara> {
   pendingStyle?(): Partial<RRun> | undefined
   clearPending?(): void
   onSelection?(sel: Sel | null): void
+  /** the whole document (select all); null when there is nothing to select */
+  all?(): Sel | null
+  /** deletes a range that spans other blocks (tables): applies the change and returns the caret, or null when unsupported */
+  deleteAcross?(s: Pos, e: Pos): Pos | null
 }
 
 export function ordered(host: RichHost, s: Sel): [Pos, Pos] {
@@ -55,6 +59,7 @@ export function ordered(host: RichHost, s: Sel): [Pos, Pos] {
 }
 
 const caret = (p: Pos): Sel => ({ a: p, f: p })
+const sameSel = (a: Sel, b: Sel) => a.a.pa === b.a.pa && a.a.o === b.a.o && a.f.pa === b.f.pa && a.f.o === b.f.o
 
 // ---------------------------------------------------------------- model operations
 
@@ -62,6 +67,8 @@ interface Plan<P extends RichPara> {
   pas: string[]
   paras: P[]
   at: Pos
+  /** the deletion is already applied (block-level, see RichHost.deleteAcross) */
+  applied?: boolean
 }
 
 /** Removes the selected content (in memory); null when the selection spans containers. */
@@ -73,7 +80,11 @@ function planDelete<P extends RichPara>(host: RichHost<P>, sel: Sel): Plan<P> | 
     return { pas: [s.pa], paras: [host.withRuns(p, deleteRange(p.runs, s.o, e.o))], at: s }
   }
   const list = host.span(s.pa, e.pa)
-  if (!list) return null
+  if (!list) {
+    const at = host.deleteAcross?.(s, e)
+    const p = at && host.para(at.pa)
+    return at && p ? { pas: [at.pa], paras: [p], at, applied: true } : null
+  }
   const first = host.para(list[0])!
   const last = host.para(list[list.length - 1])!
   const runs = normalize([...splitRuns(first.runs, s.o)[0], ...splitRuns(last.runs, e.o)[1]])
@@ -82,7 +93,7 @@ function planDelete<P extends RichPara>(host: RichHost<P>, sel: Sel): Plan<P> | 
 
 export function opDelete(host: RichHost, sel: Sel, opts?: ReplaceOpts) {
   const plan = planDelete(host, sel)
-  if (!plan) return
+  if (!plan || plan.applied) return
   host.replace(plan.pas, plan.paras, caret(plan.at), opts)
 }
 
@@ -323,6 +334,8 @@ export class RichInput {
   private justComposed = ''
   private raf = 0
   lastSel: Sel | null = null
+  /** select all: the model selection covers every paragraph, the DOM one only what is rendered */
+  private override: { model: Sel; dom: Sel } | null = null
 
   constructor(private host: RichHost) {}
 
@@ -347,6 +360,7 @@ export class RichInput {
     document.removeEventListener('selectionchange', this.onSelChange)
     cancelAnimationFrame(this.raf)
     this.root = null
+    this.override = null
   }
 
   get isComposing() {
@@ -365,13 +379,36 @@ export class RichInput {
 
   /** current selection, falling back to the last known one (e.g. after focusing a toolbar control) */
   sel(): Sel | null {
-    return this.readSel() ?? this.lastSel
+    return this.override?.model ?? this.readSel() ?? this.lastSel
+  }
+
+  /**
+   * Selects the whole document. The browser's own select-all is useless here: the editing host holds
+   * non-editable parts (headers, read-only paragraphs) and Chromium empties a selection that crosses them;
+   * pages are also virtualized, so the DOM only ever holds a part of the document.
+   */
+  selectAll(): boolean {
+    const root = this.root
+    const all = this.host.all?.()
+    if (!root || !all) return false
+    const paras = Array.from(root.querySelectorAll<HTMLElement>('[data-pa]')).filter((el) => {
+      const ro = el.closest('[contenteditable="false"]')
+      return this.host.para(el.dataset.pa!) && !(ro && root.contains(ro))
+    })
+    const first = paras[0]
+    const last = paras[paras.length - 1]
+    const dom: Sel = first && last ? { a: { pa: first.dataset.pa!, o: 0 }, f: { pa: last.dataset.pa!, o: plen(this.host.para(last.dataset.pa!)!.runs) } } : all
+    this.restore(dom)
+    this.override = { model: all, dom: this.readSel() ?? dom }
+    this.host.onSelection?.(all)
+    return true
   }
 
   /** Applies a model selection to the DOM; false when its paragraph isn't rendered. */
   restore(sel: Sel | null, focus = true): boolean {
     const root = this.root
     if (!root || !sel) return false
+    this.override = null
     const a = domFromPos(root, sel.a)
     const f = domFromPos(root, sel.f)
     if (!a || !f) {
@@ -411,7 +448,7 @@ export class RichInput {
     }
     e.preventDefault()
     const target = this.rangeSel(e.getTargetRanges?.()[0])
-    const sel = this.readSel() ?? this.lastSel
+    const sel = this.sel()
     if (!sel) return
     const h = this.host
     switch (t) {
@@ -477,7 +514,7 @@ export class RichInput {
   }
 
   private onCompStart = () => {
-    this.composing = this.readSel() ?? this.lastSel
+    this.composing = this.sel()
   }
 
   private onCompEnd = (e: CompositionEvent) => {
@@ -511,6 +548,10 @@ export class RichInput {
         this.host.redo()
         return
       }
+      if (k === 'a' && !e.shiftKey) {
+        if (this.selectAll()) e.preventDefault()
+        return
+      }
       if (k === 'b' || k === 'i' || k === 'u') {
         e.preventDefault()
         this.host.toggle?.(k)
@@ -530,6 +571,13 @@ export class RichInput {
     this.raf = requestAnimationFrame(() => {
       this.raf = 0
       const s = this.readSel()
+      const ov = this.override
+      // select all stays until the selection moves somewhere else (losing it to a re-render keeps it, like lastSel)
+      if (ov && s && !sameSel(s, ov.dom)) this.override = null
+      else if (ov) {
+        this.host.onSelection?.(ov.model)
+        return
+      }
       if (s) this.lastSel = s
       this.host.onSelection?.(s)
     })

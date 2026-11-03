@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'bun:test'
 import { readFileSync } from 'node:fs'
+import type { Paragraph } from '../src/core/docx/types'
 import { docxBlocks, docxParas, paraText, PNG, runsOf, SAMPLES, useBrowser, viewer } from './harness'
 
 useBrowser()
@@ -195,5 +196,48 @@ describe('docx editing', () => {
     await v.pick('Paragraph style', 'Heading 1')
     await v.page.waitForTimeout(800)
     expect(await v.page.locator('.de-outline-item').count()).toBe(before + 1)
+  })
+})
+
+describe('docx select all', () => {
+  test('editing: the whole document, replaced by typing across the table, undone in two steps', async () => {
+    const v = await open()
+    await v.selectText(INTRO, 'end')
+    await v.page.keyboard.press('ControlOrMeta+a')
+    await v.page.waitForTimeout(150)
+    // the rendered pages are highlighted, the viewer around them is not
+    const shown = await v.page.evaluate(() => getSelection()!.toString())
+    expect(shown).toContain(INTRO)
+    expect(shown).not.toContain('Page 1 of')
+    await v.page.keyboard.type('Only this')
+    await v.page.waitForTimeout(300)
+    const text = await v.pagesText()
+    expect(text).toContain('Only this')
+    expect(text).not.toContain(INTRO)
+    const saved = await v.save()
+    const blocks = await docxBlocks(saved.bytes)
+    expect(blocks.some((b) => b.t === 'tbl')).toBe(false)
+    expect((await docxParas(saved.bytes)).map(paraText).filter(Boolean)).toEqual(['Only this'])
+
+    await v.selectText('Only this', 'end')
+    await v.page.keyboard.press('Control+z')
+    await v.page.keyboard.press('Control+z')
+    await v.page.waitForTimeout(300)
+    expect(await v.pagesText()).toContain(INTRO)
+    expect(await v.page.locator('.de-pages table').count()).toBeGreaterThan(0)
+    const undone = await docxBlocks((await v.save()).bytes)
+    expect(undone.some((b) => b.t === 'tbl')).toBe(true)
+    expect(undone.filter((b): b is Paragraph => b.t === 'p').map(paraText).join('\n')).toContain(INTRO)
+    expect(v.errors).toEqual([])
+  })
+
+  test('viewing: the document, not the viewer around it', async () => {
+    const v = await viewer({ src: 'samples/sample.docx' })
+    await v.page.locator('.de-page-inner').first().click({ position: { x: 200, y: 200 } })
+    await v.page.keyboard.press('ControlOrMeta+a')
+    const text = await v.page.evaluate(() => getSelection()!.toString())
+    expect(text).toContain(INTRO)
+    expect(text).not.toContain('Page 1 of')
+    expect(v.errors).toEqual([])
   })
 })

@@ -614,7 +614,7 @@ export function DocxView({ client, onStatus, initialZoom = 'fit' }: DocxViewProp
     }
     items.push(
       { label: 'Clear formatting', icon: 'clear', hint: `${MOD}\\`, sep: true, run: () => editor.clearFormat(), disabled: !s },
-      { label: 'Select all', icon: 'selectAll', hint: `${MOD}A`, run: () => document.execCommand('selectAll') },
+      { label: 'Select all', icon: 'selectAll', hint: `${MOD}A`, run: () => editor.selectAll() },
     )
     return items
   }
@@ -649,9 +649,15 @@ export function DocxView({ client, onStatus, initialZoom = 'fit' }: DocxViewProp
         className="de-scroll"
         tabIndex={-1}
         onKeyDown={(e) => {
-          if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'f') {
+          const mod = (e.metaKey || e.ctrlKey) && !e.altKey
+          const k = e.key.toLowerCase()
+          if (mod && k === 'f') {
             e.preventDefault()
             setFind((f) => ({ ...f, open: true }))
+          } else if (mod && k === 'a' && !e.shiftKey && !isEditing && pagesRef.current) {
+            // the document, not the viewer around it (editing: the editor selects every paragraph)
+            e.preventDefault()
+            getSel(pagesRef.current)?.selectAllChildren(pagesRef.current)
           }
         }}
       >

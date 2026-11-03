@@ -30,11 +30,11 @@
 - **Paragraphs**: alignment, line spacing, bullet/number list, indent, page break
 - **Images**: insert (file picker/paste/drag & drop), click to select with 8 resize handles, original size, fit width, replace, alt text, download
 - **Tables**: insert, add/delete rows & columns, delete table, Tab between cells
-- **Other**: link (dialog), special characters, right-click context menu (clipboard, link, table, image, insert), find & replace, word count, undo/redo
+- **Other**: select all (Ctrl/⌘+A), link (dialog), special characters, right-click context menu (clipboard, link, table, image, insert), find & replace, word count, undo/redo
 
 ### XLSX
 
-- **Cells**: edit, range selection, copy/cut/paste, fill down/right, sort, find & replace (match case, entire cell, in formulas)
+- **Cells**: edit, range selection, select all (Ctrl/⌘+A), copy/cut/paste, fill down/right, sort, find & replace (match case, entire cell, in formulas)
 - **Formulas**: auto-calculated (134 functions), function name & argument hints while typing, click/drag cells (incl. other sheets, arrow keys) to insert references, colored references, auto-close parentheses, functions menu (SUM/AVERAGE/COUNT/MAX/MIN)
 - **Formatting**: paint format, currency/percent/decimal buttons + 20 number formats, font, size, B/I/U/S, text/fill color, borders (8 kinds, color, line style), merge all/horizontally/vertically, horizontal & vertical alignment, wrap, text rotation, clear formatting
 - **Rows & columns**: insert/delete/hide/unhide, drag to resize column width/row height, freeze, gridlines

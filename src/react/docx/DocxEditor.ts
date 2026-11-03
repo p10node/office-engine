@@ -9,7 +9,7 @@ import type { DocumentClient } from '../../core/worker/client'
 import { opInsert, opInsertRuns, ordered, RichInput, type ReplaceOpts, type RichHost } from '../edit/input'
 import { htmlToParas } from './html'
 import { deleteCol, deleteRow, gridOf, insertCol, insertRow, newTable } from './tables'
-import { collapsed, formatRange, plen, runAt, shiftPa, splitRuns, type RRun, type Sel } from '../edit/rich'
+import { collapsed, formatRange, normalize, plen, runAt, shiftPa, splitRuns, type Pos, type RRun, type Sel } from '../edit/rich'
 
 export interface DocState {
   blocks: Block[]
@@ -145,6 +145,40 @@ export class DocxEditor implements RichHost<Paragraph> {
     const y = path(b)
     for (let i = 0; i < Math.min(x.length, y.length); i++) if (x[i] !== y[i]) return x[i] - y[i]
     return x.length - y.length
+  }
+
+  /** the whole document: from the first to the last editable top-level paragraph */
+  all(): Sel | null {
+    let a = -1
+    let f = -1
+    this.st.blocks.forEach((_, i) => {
+      if (!this.para(String(i))) return
+      if (a < 0) a = i
+      f = i
+    })
+    if (a < 0) return null
+    return { a: { pa: String(a), o: 0 }, f: { pa: String(f), o: plen(this.para(String(f))!.runs as RRun[]) } }
+  }
+
+  selectAll() {
+    this.input.selectAll()
+  }
+
+  /** Deletes a top-level range that spans tables: the end paragraphs are joined, everything between goes (section breaks stay). */
+  deleteAcross(s: Pos, e: Pos): Pos | null {
+    const a = path(s.pa)
+    const b = path(e.pa)
+    if (a.length !== 1 || b.length !== 1 || a[0] >= b[0]) return null
+    const first = this.para(s.pa)
+    const last = this.para(e.pa)
+    if (!first || !last) return null
+    // parts of a paragraph split around a page break share its pid: the worker regenerates whole paragraphs only
+    const part = (i: number, p: Paragraph) => this.st.blocks[i]?.t === 'p' && (this.st.blocks[i] as Paragraph).pid === p.pid
+    if (part(a[0] - 1, first) || part(b[0] + 1, last)) return null
+    const runs = normalize([...splitRuns(first.runs as RRun[], s.o)[0], ...splitRuns(last.runs as RRun[], e.o)[1]])
+    const keep = this.st.blocks.slice(a[0] + 1, b[0]).filter((x) => x.t === 'sect')
+    this.replaceBlocks(a[0], b[0] - a[0] + 1, [this.join(first, last, runs), ...keep], { a: s, f: s })
+    return s
   }
 
   // ---------------------------------------------------------------- paragraph factories
@@ -624,7 +658,12 @@ export class DocxEditor implements RichHost<Paragraph> {
       this.send('docx.edit', { anchor: anchorP.pid, list: list.map((p) => paraSpec([p])), remove: removed.map((p) => p.pid) } as EditOp)
     }
     for (const b of before) if (b.t === 'tbl' && !nextKeys.has(key(b)) && (b.tid !== undefined || b.item !== undefined)) this.send('docx.table', { tid: b.tid ?? -1, item: b.item, spec: null })
-    next.forEach((b, i) => b.t === 'tbl' && b.tid !== undefined && this.commitTable(bi + i))
+    next.forEach((b, i) => {
+      if (b.t !== 'tbl') return
+      // an original table coming back (undo of its deletion) is regenerated from the model like a new one
+      if (b.tid === undefined && !beforeKeys.has(key(b))) this.st.blocks[bi + i] = { ...b, tid: this.nextPid++ }
+      this.commitTable(bi + i)
+    })
     this.onCommit?.({ kind: 'blocks', bi, before, next })
     if (history) {
       const s = sel ?? this.input.lastSel ?? { a: { pa: String(bi), o: 0 }, f: { pa: String(bi), o: 0 } }

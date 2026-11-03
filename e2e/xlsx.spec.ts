@@ -246,3 +246,15 @@ describe('xlsx editing', () => {
     expect(await v.shown('J10')).toBe('third')
   })
 })
+
+describe('xlsx select all', () => {
+  test('selects the whole sheet', async () => {
+    const v = await open()
+    await v.clickCell('B2')
+    await v.page.keyboard.press('ControlOrMeta+a')
+    await v.page.waitForFunction(() => document.querySelector('.de-fx-ref')?.textContent === 'A1:H62')
+    expect(await v.page.locator('.de-head-on').count()).toBeGreaterThan(8)
+    expect(await v.page.evaluate(() => getSelection()!.toString())).not.toContain('sample.xlsx')
+    expect(v.errors).toEqual([])
+  })
+})

@@ -1017,6 +1017,11 @@ function SheetGrid({ store, sheet, meta, client, edit, setEdit, hold, onSheet }:
       void viewer.save()
       return
     }
+    if (mod && k === 'a' && !e.altKey && !e.shiftKey) {
+      e.preventDefault()
+      setSel({ ar: 0, ac: 0, fr: Math.max(0, s.rows - 1), fc: Math.max(0, s.cols - 1) })
+      return
+    }
     if (editable && mod && !e.altKey) {
       if (k === 'z') {
         e.preventDefault()
