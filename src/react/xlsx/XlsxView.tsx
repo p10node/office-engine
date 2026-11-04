@@ -827,12 +827,13 @@ function SheetGrid({ store, sheet, meta, client, edit, setEdit, hold, onSheet }:
     begin(current, current, 'edit')
   }
 
-  // Enter and the editor's blur can both commit before React re-renders: write once
-  const committed = useRef<EditState | null>(null)
+  // Enter / Escape and the editor's blur all run before React re-renders: the first
+  // one closes the edit, the blur that follows must neither write nor write twice
+  const closed = useRef<EditState | null>(null)
   const commit = (move?: [number, number]) => {
     const e = edit
-    if (!e || committed.current === e) return
-    committed.current = e
+    if (!e || closed.current === e) return
+    closed.current = e
     setEdit(null)
     const value = closeFormula(e.value)
     if (value !== e.initial) void run(client.call('xlsx.set', e.sheet, [{ r: e.r, c: e.c, input: value }]))
@@ -843,8 +844,10 @@ function SheetGrid({ store, sheet, meta, client, edit, setEdit, hold, onSheet }:
 
   const cancel = () => {
     const e = edit
+    if (!e || closed.current === e) return
+    closed.current = e
     setEdit(null)
-    if (e && e.sheet !== sheet) return backTo(e)
+    if (e.sheet !== sheet) return backTo(e)
     focusGrid()
   }
 

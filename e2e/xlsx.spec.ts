@@ -54,6 +54,39 @@ describe('xlsx editing', () => {
     expect(v.errors).toEqual([])
   })
 
+  test('Escape discards the edit: a new value, a changed value, and a formula', async () => {
+    const v = await open()
+    await v.typeCell('J10', 'keep')
+    // typing into an empty cell, then Escape: stays empty
+    await v.clickCell('J11')
+    await v.page.keyboard.type('dropped')
+    await v.page.keyboard.press('Escape')
+    await v.page.waitForTimeout(150)
+    expect(await v.shown('J11')).toBe('')
+    // editing an existing value (F2), then Escape: the old value stays
+    await v.clickCell('J10')
+    await v.page.keyboard.press('F2')
+    await v.page.keyboard.type(' changed')
+    await v.page.keyboard.press('Escape')
+    await v.page.waitForTimeout(150)
+    expect(await v.shown('J10')).toBe('keep')
+    // a formula with autocomplete open: the first Escape closes the list, the second discards
+    await v.clickCell('J12')
+    await v.page.keyboard.type('=SU')
+    await v.page.locator('.de-fassist-at').waitFor()
+    await v.page.keyboard.press('Escape')
+    await v.page.keyboard.press('Escape')
+    await v.page.waitForTimeout(150)
+    expect(await v.shown('J12')).toBe('')
+    expect(await v.page.evaluate(() => document.activeElement?.classList.contains('de-grid'))).toBe(true)
+    expect((await v.events('dirty')).at(-1)?.dirty).toBe(true)
+    const s = await saved(v)
+    expect(s.cell('J10')).toBe('keep')
+    expect(s.cell('J11')).toBe('')
+    expect(s.cell('J12')).toBe('')
+    expect(v.errors).toEqual([])
+  })
+
   test('merge all: one cell, no inner gridlines, other values cleared', async () => {
     const v = await open()
     await v.typeCell('J10', 'merged')
