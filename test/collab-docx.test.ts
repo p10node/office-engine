@@ -8,6 +8,9 @@ import { MemoryTransport } from '../src/collab/transport'
 import { DocxEditor, type DocState } from '../src/react/docx/DocxEditor'
 import { opBackspace, opDelete, opEnter, opInsert } from '../src/react/edit/input'
 import { plen, runsText, type RRun } from '../src/react/edit/rich'
+import { BlobSource } from '../src/core/source'
+import { ZipArchive } from '../src/core/zip'
+import { rebuildZip } from '../src/core/zipwrite'
 
 const S = (n: string) => `${import.meta.dir}/../playground/public/samples/${n}`
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
@@ -22,8 +25,8 @@ async function load(src: Blob) {
   return { client, st }
 }
 
-async function open(hub: CollabHub, name: string, latency: () => number) {
-  const { client, st } = await load(Bun.file(S('sample.docx')) as unknown as Blob)
+async function open(hub: CollabHub, name: string, latency: () => number, src: Blob = Bun.file(S('sample.docx')) as unknown as Blob) {
+  const { client, st } = await load(src)
   const editor = new DocxEditor(client, st, () => {})
   registerHost(client, 'docx', { editor, st })
   const collab = startCollab(client, { transport: new MemoryTransport(hub, latency), room: 'd', user: { name } })
@@ -117,4 +120,35 @@ describe('collab docx', () => {
       for (const x of [a, b, c]) x.collab.close()
     }, 30_000)
   }
+
+  test('a built-in style the document lacks is created for every editor, late joiners included', async () => {
+    const zip = await ZipArchive.open(new BlobSource(new Blob([await Bun.file(S('sample.docx')).arrayBuffer()])))
+    const styles = (await zip.text('word/styles.xml')).replace(/<w:style [^>]*w:styleId="(Heading\d|Title|Subtitle)"[^>]*>[\s\S]*?<\/w:style>/g, '')
+    const src = await rebuildZip(zip, new Map([['word/styles.xml', styles]]))
+    const hub = new CollabHub()
+    const a = await open(hub, 'Ann', () => 1, src)
+    const b = await open(hub, 'Bob', () => 1, src)
+    await settle([a.collab, b.collab])
+    expect(a.editor.styles.some((s) => s.canon === 'h1')).toBe(false)
+    const [p, bi] = editable(a.st).find(([x]) => runsText(x.runs as RRun[]).startsWith('This document shows'))!
+    const at = { a: { pa: String(bi), o: 0 }, f: { pa: String(bi), o: 0 } }
+    a.editor.input.lastSel = at
+    // the style is added by a shared operation (every copy of the file gets it), then the paragraph takes it
+    await a.editor.applyCanon('h1')
+    opInsert(a.editor, at, 'A ')
+    await settle([a.collab, b.collab])
+    const c = await open(hub, 'Cid', () => 0, src)
+    await settle([a.collab, b.collab, c.collab])
+    for (const x of [a, b, c]) {
+      const q = x.st.blocks.find((y) => y.t === 'p' && y.pid === p.pid) as Paragraph
+      expect(runsText(q.runs as RRun[])).toStartWith('A This document shows')
+      const saved = await load(await x.client.call('save'))
+      const r = saved.st.blocks.find((y) => y.t === 'p' && runsText(y.runs as RRun[]).startsWith('A This document shows')) as Paragraph
+      expect(r.sid).toBe('Heading1')
+      expect(r.ps.outline).toBe(0)
+      saved.client.destroy()
+    }
+    for (const x of [a, b, c]) x.client.destroy()
+    for (const x of [a, b, c]) x.collab.close()
+  })
 })

@@ -320,8 +320,9 @@ export class DocxCollab implements Adapter<DocxOp> {
       this.res.set(op.key, lk)
       this.resKey.set(lk, op.key)
     } else if (op.t === 'call' && !this.results.has(op)) {
-      const call = this.client.direct as (m: string, ...a: unknown[]) => Promise<unknown>
-      this.results.set(op, await call(op.method, ...op.args))
+      // bound: `direct` reads the client's state
+      const direct = this.client.direct.bind(this.client) as (m: string, ...a: unknown[]) => Promise<unknown>
+      this.results.set(op, await direct(op.method, ...op.args))
     }
   }
 
