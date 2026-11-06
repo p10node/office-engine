@@ -1,6 +1,6 @@
 {
   "name": "@p10node/office-engine",
-  "version": "0.1.0",
+  "version": "0.4.2",
   "description": "Browser engine to view DOCX, XLSX, PPTX progressively (worker-based, range-loading, virtualized React views)",
   "type": "module",
   "license": "MIT",
