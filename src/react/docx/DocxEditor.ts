@@ -78,6 +78,8 @@ export class DocxEditor implements RichHost<Paragraph> {
   /** next id for new paragraphs / tables (a collaboration session gives each client its own range) */
   nextPid = 1_000_000_000
   private inflight = 0
+  /** paragraphs whose look on screen may be behind their style / list: a conversion was asked, none was applied yet */
+  private stale = new Set<number>()
   onState?: (s: FormatState | null) => void
   /** image selection changed (overlay with resize handles) */
   onImage?: (img: FormatState['img'] | null) => void
@@ -327,8 +329,11 @@ export class DocxEditor implements RichHost<Paragraph> {
     }
     const anchor = before[0].pid!
     const structural = want || next.some((p) => p.pd !== before.find((b) => b.pid === p.pid)?.pd)
+    // also while an earlier conversion is still due: its answer comes back after this edit and can't be applied (see applyResult)
+    const convert = structural || specs.some((x) => this.stale.has(x.pid))
+    if (convert) for (const x of specs) this.stale.add(x.pid)
     const sent = new Set<Paragraph>(next)
-    const op: EditOp = { anchor, list: specs, remove, want: structural }
+    const op: EditOp = { anchor, list: specs, remove, want: convert }
     this.inflight++
     this.client
       .call('docx.edit', op)
@@ -371,15 +376,25 @@ export class DocxEditor implements RichHost<Paragraph> {
   private applyResult(res: EditResult, sent: Set<Paragraph>) {
     if (this.input.isComposing) return
     let touched = false
+    // the caret inside a rebuilt paragraph is put back after the render (same offsets: the text is the same)
+    const sel = this.input.readSel()
+    const rebuilt = new Set<string>()
     // re-converted paragraphs (style / list changes): only if not edited again meanwhile
     for (const [k, blocks] of Object.entries(res.blocks)) {
-      const locs = this.locate(Number(k))
+      const pid = Number(k)
+      const locs = this.locate(pid)
+      const cur = locs.map((l) => l.list[l.index] as Paragraph)
       const paras = blocks.filter((b): b is Paragraph => b.t === 'p')
-      if (!locs.length || paras.length !== locs.length) continue
-      if (!locs.every((l) => sent.has(l.list[l.index] as Paragraph))) continue
+      // edited again: the paragraph stays `stale`, so that edit asked for the conversion too and its answer is the one applied
+      let again = false
+      for (const x of sent) again ||= x.pid === pid && cur.length > 0 && !cur.includes(x)
+      if (again) continue
+      this.stale.delete(pid)
+      if (!locs.length || paras.length !== locs.length || !cur.every((x) => sent.has(x))) continue
       locs.forEach((l, i) => {
-        const cur = l.list[l.index] as Paragraph
-        this.put(l.pa, { ...paras[i], from: cur.from, orig: cur.orig, pd: cur.pd, edited: cur.edited, keepSect: cur.keepSect, ver: cur.ver, pb: cur.pb })
+        const was = cur[i]
+        this.put(l.pa, { ...paras[i], from: was.from, orig: was.orig, pd: was.pd, edited: was.edited, keepSect: was.keepSect, ver: was.ver, pb: was.pb })
+        rebuilt.add(l.pa)
       })
       touched = true
     }
@@ -392,7 +407,9 @@ export class DocxEditor implements RichHost<Paragraph> {
         touched = true
       }
     }
-    if (touched) this.changed()
+    if (!touched) return
+    if (sel && !this.pendingSel && (rebuilt.has(sel.a.pa) || rebuilt.has(sel.f.pa))) this.pendingSel = sel
+    this.changed()
   }
 
   // ---------------------------------------------------------------- history

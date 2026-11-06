@@ -188,6 +188,30 @@ describe('docx editing', () => {
     await v.page.keyboard.press('Escape')
   })
 
+  test('typing right after a style change: the caret stays, old and new text get the look of the style', async () => {
+    const v = await open()
+    const look = (text: string) =>
+      v.page.evaluate((x) => {
+        const el = [...document.querySelectorAll('.de-pages *')].find((e) => e.childElementCount === 0 && (e.textContent ?? '').includes(x))
+        return el ? `${getComputedStyle(el).color} ${getComputedStyle(el).fontWeight}` : 'not found'
+      }, text)
+    const before = await look(INTRO)
+    await v.selectText(INTRO, 'start')
+    await v.pick('Paragraph style', 'Heading 2')
+    // no pause: this edit reaches the worker before its answer to the style change is back
+    await v.page.keyboard.type('XY')
+    await v.page.waitForTimeout(600)
+    await v.page.keyboard.type('Z ')
+    await v.page.waitForTimeout(300)
+    expect(await v.pagesText()).toContain(`XYZ ${INTRO}`)
+    const heading = await look(INTRO)
+    expect(heading).not.toBe(before)
+    expect(await look('XYZ')).toBe(heading)
+    const p = (await docxParas((await v.save()).bytes)).find((x) => paraText(x).startsWith('XYZ This document'))!
+    expect(p.ps.outline).toBe(1)
+    expect(v.errors).toEqual([])
+  })
+
   test('outline panel follows new headings', async () => {
     const v = await open()
     await v.btn('Document outline').click()

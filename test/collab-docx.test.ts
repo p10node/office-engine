@@ -15,8 +15,13 @@ import { rebuildZip } from '../src/core/zipwrite'
 const S = (n: string) => `${import.meta.dir}/../playground/public/samples/${n}`
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
 
-async function load(src: Blob) {
+/** `lag`: ms the engine takes to answer an edit, as a worker does (an edit made meanwhile is sent before the answer is back) */
+async function load(src: Blob, lag = 0) {
   const client = await DocumentClient.open(src, { worker: false })
+  if (lag) {
+    const direct = client.direct.bind(client) as (m: string, ...a: unknown[]) => Promise<unknown>
+    client.direct = ((m: string, ...a: unknown[]) => direct(m, ...a).then(async (r) => (m === 'docx.edit' ? (await sleep(lag), r) : r))) as typeof client.direct
+  }
   const st: DocState = { blocks: [], heights: new WeakMap(), dirty: new Set(), frontier: 0 }
   client.on('docx:blocks', (b) => st.blocks.push(...b))
   const done = new Promise<void>((r) => client.on('docx:done', () => r()))
@@ -25,8 +30,8 @@ async function load(src: Blob) {
   return { client, st }
 }
 
-async function open(hub: CollabHub, name: string, latency: () => number, src: Blob = Bun.file(S('sample.docx')) as unknown as Blob) {
-  const { client, st } = await load(src)
+async function open(hub: CollabHub, name: string, latency: () => number, src: Blob = Bun.file(S('sample.docx')) as unknown as Blob, lag = 0) {
+  const { client, st } = await load(src, lag)
   const editor = new DocxEditor(client, st, () => {})
   registerHost(client, 'docx', { editor, st })
   const collab = startCollab(client, { transport: new MemoryTransport(hub, latency), room: 'd', user: { name } })
@@ -150,5 +155,34 @@ describe('collab docx', () => {
     }
     for (const x of [a, b, c]) x.client.destroy()
     for (const x of [a, b, c]) x.collab.close()
+  })
+
+  test('a paragraph edited again right after it was restyled shows the look of its style, also where the log is replayed', async () => {
+    const sample = Bun.file(S('sample.docx')) as unknown as Blob
+    const hub = new CollabHub()
+    const a = await open(hub, 'Ann', () => 1, sample, 5)
+    await settle([a.collab])
+    const [p, bi] = editable(a.st).find(([x]) => runsText(x.runs as RRun[]).startsWith('This document shows'))!
+    const at = { a: { pa: String(bi), o: 0 }, f: { pa: String(bi), o: 0 } }
+    // typing before the engine answered the style change
+    a.editor.setPara({ style: 'Heading2' }, {}, at)
+    opInsert(a.editor, at, 'XY ')
+    await settle([a.collab])
+    // a newcomer replays both edits back to back
+    const b = await open(hub, 'Bob', () => 0, sample, 5)
+    await settle([a.collab, b.collab])
+    await sleep(100)
+    /** the look of every character of a paragraph (however its runs are cut) */
+    const look = (q: Paragraph[]) => q.flatMap((x) => x.runs.flatMap((r) => (r.t === 'text' ? [...r.text].map((ch) => ch + JSON.stringify(Object.entries(r.s ?? {}).sort())) : [r.t])))
+    const shown = (st: DocState) => look(st.blocks.filter((x): x is Paragraph => x.t === 'p' && x.pid === p.pid))
+    // what the file says
+    const saved = await load(await a.client.call('save'))
+    const want = look(saved.st.blocks.filter((x): x is Paragraph => x.t === 'p' && runsText(x.runs as RRun[]).startsWith('XY This document shows')))
+    expect(want.length).toBeGreaterThan(20)
+    expect(want[0]).not.toBe(look([p])[0])
+    expect(shown(a.st)).toEqual(want)
+    expect(shown(b.st)).toEqual(want)
+    for (const x of [a, b, saved]) x.client.destroy()
+    for (const x of [a, b]) x.collab.close()
   })
 })
