@@ -322,15 +322,18 @@ export class CollabSession<Op = unknown> {
     }
   }
 
-  private async replay(it: Item<Op>, kind: ApplyKind) {
+  /** `answers`: where the answer to the caller of a pessimistic op goes, for `ack` to give it at the right time */
+  private async replay(it: Item<Op>, kind: ApplyKind, answers?: (() => void)[]) {
     if (!it.op) return
     try {
       const res = await this.adapter.apply(it.op, kind)
       it.undo = res.undo
       it.applied = true
       if (it.done) {
-        it.done(res.result)
+        const done = it.done
         it.done = undefined
+        if (answers) answers.push(() => done(res.result))
+        else done(res.result)
       }
     } catch (e) {
       // keep the op in the batch: other clients run it too and fail the same way
@@ -389,16 +392,20 @@ export class CollabSession<Op = unknown> {
     const items = this.inflight!.items
     this.inflight = null
     const hole = items.findIndex((it) => it.op && !it.applied)
+    const answers: (() => void)[] = []
     if (hole >= 0) {
-      // pessimistic ops run now, in order: later local ops are replayed after them
-      const tail = [...items.slice(hole), ...this.buffer]
       await this.prepare(items.slice(hole).filter((it) => it.op && !it.applied).map((it) => it.op as Op))
+      // pessimistic ops run now, in order: later local ops are replayed after them (those made while `prepare` waited too)
+      const tail = [...items.slice(hole), ...this.buffer]
       await this.revertAll(tail)
       for (const it of tail) {
         const waiting = !items.includes(it) && it.op && this.adapter.pessimistic?.(it.op) && it.done
-        if (!waiting) await this.replay(it, it.done ? 'local' : 'replay')
+        if (!waiting) await this.replay(it, it.done ? 'local' : 'replay', answers)
       }
     }
+    // their callers go on only now, with the local ops made meanwhile back in place: what a caller does next (apply
+    // the style the op added…) is ordered after those ops, so it must not be built on the document without them
+    for (const answer of answers) answer()
     for (const it of items) if (it.done) it.done(null)
     this.log.push({ seq: b.seq, site: b.site, ops: items.map((i) => i.op).filter(notNull) })
   }

@@ -161,6 +161,69 @@ describe('collab', () => {
     }
   })
 
+  test('the caller of a pessimistic op goes on with the local ops made meanwhile back in place', async () => {
+    const hub = new CollabHub()
+    const open = (name: string) => {
+      const adapter = new TextAdapter()
+      return { adapter, session: new CollabSession<TOp>(new MemoryTransport(hub, () => 5), adapter, { room: 'w', user: { name } }) }
+    }
+    const a = open('Ann')
+    const b = open('Bob')
+    await settle([a.session, b.session])
+    await a.session.submit({ t: 'ins', at: 0, s: 'abc' })
+    await settle([a.session, b.session])
+    // `clear` waits for the hub; like an editor adding a style, then applying it once the style is there
+    const cleared = a.session.submit({ t: 'clear' }).then(() => {
+      // a local op built on the document as it is now (applied by the caller, as editors do)
+      const op: TOp = { t: 'ins', at: a.adapter.text.length, s: '!' }
+      a.session.push(op, a.adapter.apply(op).undo)
+    })
+    await a.session.idle()
+    // typed while `clear` is on its way
+    await a.session.submit({ t: 'ins', at: 0, s: 'X' })
+    expect(a.adapter.text).toBe('Xabc')
+    await cleared
+    await settle([a.session, b.session])
+    expect(a.adapter.text).toBe('X!')
+    expect(b.adapter.text).toBe('X!')
+    a.session.close()
+    b.session.close()
+  })
+
+  test('local ops made while a pessimistic op was being prepared are replayed after it', async () => {
+    /** getting ready takes a while (a resource to fetch…): the user goes on typing */
+    class Slow extends TextAdapter {
+      meanwhile?: () => void
+      async prepare() {
+        await sleep(2)
+        this.meanwhile?.()
+        this.meanwhile = undefined
+        await sleep(2)
+      }
+    }
+    const hub = new CollabHub()
+    const open = (name: string) => {
+      const adapter = new Slow()
+      return { adapter, session: new CollabSession<TOp>(new MemoryTransport(hub, () => 2), adapter, { room: 's', user: { name } }) }
+    }
+    const a = open('Ann')
+    const b = open('Bob')
+    await settle([a.session, b.session])
+    await a.session.submit({ t: 'ins', at: 0, s: 'abc' })
+    await settle([a.session, b.session])
+    a.adapter.meanwhile = () => {
+      const op: TOp = { t: 'ins', at: 0, s: 'X' }
+      a.session.push(op, a.adapter.apply(op).undo)
+    }
+    await a.session.submit({ t: 'clear' })
+    await settle([a.session, b.session])
+    expect(a.adapter.meanwhile).toBeUndefined()
+    expect(a.adapter.text).toBe('X')
+    expect(b.adapter.text).toBe('X')
+    a.session.close()
+    b.session.close()
+  })
+
   test('presence and peers', async () => {
     const hub = new CollabHub()
     const a = new CollabSession<TOp>(new MemoryTransport(hub), new TextAdapter(), { room: 'p', user: { name: 'Ann' } })

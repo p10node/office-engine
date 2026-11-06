@@ -903,6 +903,7 @@ export class DocxEditor implements RichHost<Paragraph> {
     const sel = this.input.sel()
     if (!sel) return
     let id = this.styles.find((s) => s.canon === kind)?.id
+    let caret: Sel | null = null
     if (!id) {
       const r = await this.client.call('docx.style', kind)
       // a shared session answers nothing when the operation could not be applied
@@ -910,8 +911,13 @@ export class DocxEditor implements RichHost<Paragraph> {
       this.styles = r.styles
       this.onStyles?.(r.styles)
       id = r.id
+      // adding the style took a while: the user may have typed on
+      caret = this.input.readSel()
     }
-    if (id) this.setPara({ style: id }, {}, sel)
+    if (!id) return
+    this.setPara({ style: id }, {}, sel)
+    // the style goes to the paragraphs picked; the caret stays where the typing took it
+    if (caret) this.pendingSel = caret
   }
 
   // ---------------------------------------------------------------- images

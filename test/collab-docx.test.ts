@@ -285,4 +285,35 @@ describe('collab docx', () => {
     for (const x of [a, b, ra, rb]) x.client.destroy()
     for (const x of [a, b]) x.collab.close()
   })
+
+  test('text typed while the operation adding a missing style is on its way is kept for everyone', async () => {
+    const zip = await ZipArchive.open(new BlobSource(new Blob([await Bun.file(S('sample.docx')).arrayBuffer()])))
+    const styles = (await zip.text('word/styles.xml')).replace(/<w:style [^>]*w:styleId="(Heading\d|Title|Subtitle)"[^>]*>[\s\S]*?<\/w:style>/g, '')
+    const src = await rebuildZip(zip, new Map([['word/styles.xml', styles]]))
+    const hub = new CollabHub()
+    const a = await open(hub, 'Ann', () => 5, src)
+    const b = await open(hub, 'Bob', () => 5, src)
+    await settle([a.collab, b.collab])
+    const [p, bi] = editable(a.st).find(([x]) => runsText(x.runs as RRun[]).startsWith('This document shows'))!
+    const at = { a: { pa: String(bi), o: 0 }, f: { pa: String(bi), o: 0 } }
+    a.editor.input.lastSel = at
+    // the style is added by an operation the hub orders first; the paragraph takes the style once it is there
+    const styled = a.editor.applyCanon('h1')
+    await a.collab.session.idle()
+    opInsert(a.editor, at, 'typed meanwhile ')
+    await styled
+    await settle([a.collab, b.collab])
+    const c = await open(hub, 'Cid', () => 0, src)
+    await settle([a.collab, b.collab, c.collab])
+    for (const x of [a, b, c]) {
+      const q = x.st.blocks.find((y) => y.t === 'p' && y.pid === p.pid) as Paragraph
+      expect(runsText(q.runs as RRun[])).toStartWith('typed meanwhile This document shows')
+      expect(q.sid).toBe('Heading1')
+    }
+    const saved = await load(await b.client.call('save'))
+    const r = saved.st.blocks.find((y) => y.t === 'p' && runsText(y.runs as RRun[]).startsWith('typed meanwhile This document shows')) as Paragraph
+    expect(r.sid).toBe('Heading1')
+    for (const x of [a, b, c, saved]) x.client.destroy()
+    for (const x of [a, b, c]) x.collab.close()
+  })
 })
