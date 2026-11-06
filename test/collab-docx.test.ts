@@ -34,8 +34,9 @@ async function open(hub: CollabHub, name: string, latency: () => number, src: Bl
   const { client, st } = await load(src, lag)
   const editor = new DocxEditor(client, st, () => {})
   registerHost(client, 'docx', { editor, st })
-  const collab = startCollab(client, { transport: new MemoryTransport(hub, latency), room: 'd', user: { name } })
-  return { client, st, editor, collab }
+  const transport = new MemoryTransport(hub, latency)
+  const collab = startCollab(client, { transport, room: 'd', user: { name } })
+  return { client, st, editor, collab, transport }
 }
 
 async function settle(cs: Collab[]) {
@@ -183,6 +184,105 @@ describe('collab docx', () => {
     expect(shown(a.st)).toEqual(want)
     expect(shown(b.st)).toEqual(want)
     for (const x of [a, b, saved]) x.client.destroy()
+    for (const x of [a, b]) x.collab.close()
+  })
+
+  test('a rebase puts back a paragraph that stood between two tables, which a pending join had taken away', async () => {
+    const hub = new CollabHub()
+    const a = await open(hub, 'Ann', () => 0)
+    const b = await open(hub, 'Bob', () => 0)
+    await settle([a.collab, b.collab])
+    const [title, intro] = editable(a.st).map(([p]) => p.pid!)
+    const at = (st: DocState, pid: number, o: number) => {
+      const pa = String(st.blocks.findIndex((x) => x.t === 'p' && x.pid === pid))
+      return { a: { pa, o }, f: { pa, o } }
+    }
+    // a table follows the second paragraph
+    b.editor.input.lastSel = at(b.st, intro, 0)
+    b.editor.insertTable(1, 1)
+    await settle([a.collab, b.collab])
+    // offline, Ann joins the second paragraph to the first
+    a.transport.drop()
+    opBackspace(a.editor, at(a.st, intro, 0))
+    // meanwhile Bob puts a table between the two, then splits the second one: two batches
+    b.editor.input.lastSel = at(b.st, title, 0)
+    b.editor.insertTable(1, 1)
+    await settle([b.collab])
+    opEnter(b.editor, at(b.st, intro, 5))
+    await settle([b.collab])
+    // Ann's join is replayed after the first batch (the paragraph, now apart, goes away on its own), then reverted for the second
+    a.transport.connect()
+    await settle([a.collab, b.collab])
+    const strip = (xs: string[]) => xs.map((x) => x.split('|').slice(2).join('|'))
+    const ta = text(a.st.blocks).map((x) => x.replace(/\|[^|]*\|/, '||'))
+    expect(ta).toEqual(text(b.st.blocks).map((x) => x.replace(/\|[^|]*\|/, '||')))
+    // title + joined text, the first table's cell, what Bob split off, the second table's cell
+    expect(strip(ta).slice(0, 4)).toEqual(['Quarterly ReportThis document shows bold, italic, underlined red and large text. Visit example.com.', '', 'document shows bold, italic, underlined red and large text. Visit example.com.', ''])
+    // the files say the same, in the same order
+    const [ra, rb] = await Promise.all([a, b].map(async (x) => load(await x.client.call('save'))))
+    expect(strip(text(ra.st.blocks))).toEqual(strip(ta))
+    expect(strip(text(rb.st.blocks))).toEqual(strip(ta))
+    for (const x of [a, b, ra, rb]) x.client.destroy()
+    for (const x of [a, b]) x.collab.close()
+  })
+
+  test('undo after typing in two paragraphs that had the same address in turn only takes back the last one', async () => {
+    const hub = new CollabHub()
+    const a = await open(hub, 'Ann', () => 0)
+    const b = await open(hub, 'Bob', () => 0)
+    await settle([a.collab, b.collab])
+    const [title, intro] = editable(a.st).map(([p]) => p.pid!)
+    const at = (st: DocState, pid: number, o: number) => {
+      const pa = String(st.blocks.findIndex((x) => x.t === 'p' && x.pid === pid))
+      return { a: { pa, o }, f: { pa, o } }
+    }
+    opInsert(a.editor, at(a.st, intro, 0), 'x')
+    await settle([a.collab, b.collab])
+    // Bob splits the title: its second half now stands where the paragraph Ann typed in was
+    opEnter(b.editor, at(b.st, title, 9))
+    await settle([a.collab, b.collab])
+    const half = (a.st.blocks[1] as Paragraph).pid!
+    expect(half).not.toBe(intro)
+    opInsert(a.editor, at(a.st, half, 0), 'y')
+    a.editor.undo()
+    await settle([a.collab, b.collab])
+    const ta = text(a.st.blocks).map((x) => x.replace(/\|[^|]*\|/, '||'))
+    expect(ta.slice(0, 3)).toEqual([`${title}||Quarterly`, `${half}|| Report`, `${intro}||xThis document shows bold, italic, underlined red and large text. Visit example.com.`])
+    expect(text(b.st.blocks).map((x) => x.replace(/\|[^|]*\|/, '||'))).toEqual(ta)
+    for (const x of [a, b]) x.client.destroy()
+    for (const x of [a, b]) x.collab.close()
+  })
+
+  test('undoing a table insert does not bring back the paragraph before it, joined to another one meanwhile', async () => {
+    const hub = new CollabHub()
+    const a = await open(hub, 'Ann', () => 0)
+    const b = await open(hub, 'Bob', () => 0)
+    await settle([a.collab, b.collab])
+    const [, intro] = editable(a.st).map(([p]) => p.pid!)
+    const at = (st: DocState, pid: number, o: number) => {
+      const pa = String(st.blocks.findIndex((x) => x.t === 'p' && x.pid === pid))
+      return { a: { pa, o }, f: { pa, o } }
+    }
+    b.editor.input.lastSel = at(b.st, intro, 0)
+    b.editor.insertTable(1, 1)
+    await settle([a.collab, b.collab])
+    // offline, Bob takes his table back: an op that names the paragraph before the table
+    b.transport.drop()
+    b.editor.undo()
+    // Ann's join is sequenced first
+    opBackspace(a.editor, at(a.st, intro, 0))
+    await settle([a.collab])
+    b.transport.connect()
+    await settle([a.collab, b.collab])
+    const strip = (xs: string[]) => xs.map((x) => x.split('|').slice(2).join('|'))
+    const ta = text(a.st.blocks).map((x) => x.replace(/\|[^|]*\|/, '||'))
+    expect(ta).toEqual(text(b.st.blocks).map((x) => x.replace(/\|[^|]*\|/, '||')))
+    expect(strip(ta).slice(0, 2)).toEqual(['Quarterly ReportThis document shows bold, italic, underlined red and large text. Visit example.com.', '1. Highlights'])
+    // what is on screen is what the files hold
+    const [ra, rb] = await Promise.all([a, b].map(async (x) => load(await x.client.call('save'))))
+    expect(strip(text(ra.st.blocks))).toEqual(strip(ta))
+    expect(strip(text(rb.st.blocks))).toEqual(strip(ta))
+    for (const x of [a, b, ra, rb]) x.client.destroy()
     for (const x of [a, b]) x.collab.close()
   })
 })

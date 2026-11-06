@@ -279,7 +279,9 @@ export class DocxEditor implements RichHost<Paragraph> {
       const last = this.history[this.history.length - 1]
       const label = opts.label ?? 'edit'
       const selBefore = this.input.lastSel ?? sel
-      if (label === 'type' && last?.label === 'type' && pas.length === 1 && next.length === 1 && last.after.length === 1 && last.pas[0] === pas[0] && now - last.t < 1500) {
+      // same paragraph, not just same address: a collaborator's edit above can bring another paragraph to that address
+      const typing = label === 'type' && last?.label === 'type' && pas.length === 1 && next.length === 1 && last.after.length === 1
+      if (typing && last.pas[0] === pas[0] && last.after[0].pid === before[0].pid && now - last.t < 1500) {
         last.after = next
         last.selAfter = sel
         last.t = now
@@ -296,6 +298,27 @@ export class DocxEditor implements RichHost<Paragraph> {
     this.changed()
     // the caret may not move (formatting): refresh the toolbar from the new runs
     this.emitState(sel)
+  }
+
+  /**
+   * Puts `p`, a paragraph `replace` removed on its own, back at address `pa`, where no paragraph next to it can place
+   * it (tables on both sides, an emptied cell). Only to revert that removal (a collaboration rebase): no history
+   * entry, no commit event. The engine puts it back where it stood.
+   */
+  restore(pa: string, p: Paragraph) {
+    const c = this.container(pa)
+    if (!c || p.pid === undefined || c.at > c.list.length) return
+    const list = this.splice(pa, 0, [p])
+    if (!c.cell) {
+      if (!this.st.heights.has(p)) this.st.heights.set(p, 0)
+      this.st.dirty.add(p)
+      for (const k of [c.at - 1, c.at + 1]) if (list[k]) this.st.dirty.add(list[k])
+      if (c.at < this.st.frontier) this.st.frontier++
+    }
+    if (c.cell && (this.st.blocks[c.cell[0]] as Table).tid !== undefined) this.commitTable(c.cell[0])
+    else this.send('docx.edit', { anchor: p.pid, list: [paraSpec(this.partsOf(list, p.pid, c.at))] } as EditOp)
+    this.onDirty?.()
+    this.changed()
   }
 
   /** contiguous blocks sharing `pid` around index `near` */

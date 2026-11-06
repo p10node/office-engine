@@ -47,9 +47,20 @@ export interface DocxPresence {
   f: DPos
 }
 
-/** how to undo one model change; `paras` with an empty `next` re-inserts `before` next to a neighbour */
+/** where a paragraph removed on its own stood: its index in the body (tables around it), or in a cell of table `tbl` */
+interface Home {
+  index: number
+  cell?: { tbl: BKey; ri: number; ci: number }
+  prevT?: BKey
+  nextT?: BKey
+}
+
+/**
+ * How to undo one model change; `paras` with an empty `next` re-inserts `before` next to a paragraph it had as a
+ * neighbour, else at its `home`.
+ */
 type Step =
-  | { t: 'paras'; before: Paragraph[]; next: Paragraph[]; prev?: { pid: number; k: number }; after?: { pid: number; k: number } }
+  | { t: 'paras'; before: Paragraph[]; next: Paragraph[]; prev?: { pid: number; k: number }; after?: { pid: number; k: number }; home?: Home }
   | { t: 'blocks'; before: Block[]; next: Block[]; prev: BKey | null }
 /** the steps of an op, undone in reverse order */
 type Undo = Step[] | null
@@ -428,6 +439,32 @@ export class DocxCollab implements Adapter<DocxOp> {
     }
   }
 
+  /** where the paragraph at `loc` stands, for a revert that finds no paragraph next to it */
+  private home(loc: { list: Block[]; index: number; pa: string }): Home {
+    const tk = (i: number) => {
+      const b = loc.list[i]
+      return b?.t === 'tbl' ? bkey(b) ?? undefined : undefined
+    }
+    if (loc.list === this.st.blocks) return { index: loc.index, prevT: tk(loc.index - 1), nextT: tk(loc.index + 1) }
+    const [bi, ri, ci] = loc.pa.split('.').map(Number)
+    const tbl = bkey(this.st.blocks[bi])
+    return tbl ? { index: loc.index, cell: { tbl, ri, ci } } : { index: loc.index }
+  }
+
+  /** the address a paragraph that stood at `h` gets now */
+  private homePa(h: Home): string | undefined {
+    if (h.cell) {
+      const ti = this.topIndex(h.cell.tbl)
+      const t = this.st.blocks[ti]
+      const cell = t?.t === 'tbl' ? t.rows[h.cell.ri]?.cells[h.cell.ci] : undefined
+      return cell ? `${ti}.${h.cell.ri}.${h.cell.ci}.${Math.min(h.index, cell.blocks.length)}` : undefined
+    }
+    const prev = h.prevT ? this.topIndex(h.prevT) : -1
+    if (prev >= 0) return String(prev + 1)
+    const next = h.nextT ? this.topIndex(h.nextT) : -1
+    return String(next >= 0 ? next : Math.min(h.index, this.st.blocks.length))
+  }
+
   /** applies a model op through the editor; returns how to revert it */
   private run(op: DocxOp): Undo {
     const ed = this.ed
@@ -455,7 +492,7 @@ export class DocxCollab implements Adapter<DocxOp> {
             const b = loc.list[i]
             return b?.t === 'p' && b.pid !== undefined ? { pid: b.pid, k: this.locate(b.pid).findIndex((x) => x.list === loc.list && x.index === i) } : undefined
           }
-          const step: Step = { t: 'paras', before: [loc.p], next: [], prev: nb(loc.index - 1), after: nb(loc.index + 1) }
+          const step: Step = { t: 'paras', before: [loc.p], next: [], prev: nb(loc.index - 1), after: nb(loc.index + 1), home: this.home(loc) }
           ed.replace([loc.pa], [], this.sel(), { history: false, label: 'collab' })
           steps.push(step)
         }
@@ -486,9 +523,11 @@ export class DocxCollab implements Adapter<DocxOp> {
         if (op.prev && bi === 0) return null
       }
       const before = this.st.blocks.slice(bi, bi + count)
-      // paragraphs around a table keep their current text: the op is about the blocks, not their content
+      // paragraphs around a table keep their current text: the op is about the blocks, not their content. One that a
+      // concurrent edit took away stays away (its text went where that edit put it; the file wouldn't get it back)
       const cur = new Map(before.flatMap((b) => (b.t === 'p' && b.pid !== undefined ? [[b.pid, b] as const] : [])))
-      next = next.map((b) => (b.t === 'p' && b.pid !== undefined && cur.has(b.pid) ? cur.get(b.pid)! : b))
+      const had = new Set(op.before.flatMap((k) => ('p' in k ? [k.p] : [])))
+      next = next.flatMap((b) => (b.t === 'p' && b.pid !== undefined && had.has(b.pid) ? (cur.has(b.pid) ? [cur.get(b.pid)!] : []) : [b]))
       ed.replaceBlocks(bi, count, next, null, false)
       return [{ t: 'blocks', before, next, prev: bi > 0 ? bkey(this.st.blocks[bi - 1]) : null }]
     }
@@ -517,7 +556,10 @@ export class DocxCollab implements Adapter<DocxOp> {
         const prev = at(u.prev)
         if (prev && ed.para(prev.pa)) return ed.replace([prev.pa], [prev.p, ...u.before], this.sel(), { history: false, label: 'collab' })
         const after = at(u.after)
-        if (after && ed.para(after.pa)) ed.replace([after.pa], [...u.before, after.p], this.sel(), { history: false, label: 'collab' })
+        if (after && ed.para(after.pa)) return ed.replace([after.pa], [...u.before, after.p], this.sel(), { history: false, label: 'collab' })
+        // no paragraph to place it by (it stood between tables, or alone in a cell): back where it was
+        const pa = u.home && this.homePa(u.home)
+        if (pa !== undefined) for (const p of [...u.before].reverse()) ed.restore(pa, p)
         return
       }
       const first = this.locate(u.next[0].pid!)[0]

@@ -462,8 +462,18 @@ export async function applyEdit(doc: DocxDocument, op: EditOp): Promise<EditResu
   for (const pid of [...listPids, ...(op.remove ?? [])]) if (pid !== op.anchor) detach(doc, pid)
   const group = groupFor(doc, `${item}:${ord}`)
   const idx = group.indexOf(op.anchor)
-  if (idx < 0) throw new Error(`Paragraph ${op.anchor} is not in the document`)
-  group.splice(idx, 1, ...listPids)
+  if (idx >= 0) {
+    // nothing takes its place: remember where it stood
+    if (!listPids.length) doc.gone.set(op.anchor, group[idx - 1])
+    group.splice(idx, 1, ...listPids)
+  } else {
+    // removed on its own, it comes back the same way (collaboration reverting that removal: tables around it, no
+    // paragraph to place it by): to where it stood
+    if (!doc.gone.has(op.anchor) || !listPids.includes(op.anchor)) throw new Error(`Paragraph ${op.anchor} is not in the document`)
+    const after = doc.gone.get(op.anchor)
+    doc.gone.delete(op.anchor)
+    group.splice(after === undefined ? 0 : group.indexOf(after) + 1, 0, ...listPids)
+  }
   for (const pid of [op.anchor, ...(op.remove ?? [])]) if (!listPids.includes(pid)) doc.genXml.delete(pid)
 
   const blocks: Record<number, Block[]> = {}

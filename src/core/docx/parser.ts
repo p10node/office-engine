@@ -678,6 +678,8 @@ export class DocxDocument {
   itemParas = new Map<number, number[]>()
   /** (item:ord) → paragraph ids now standing in for that original paragraph */
   groups = new Map<string, number[]>()
+  /** paragraphs removed with nothing in their place → the member of their group they followed (undefined: none), see applyEdit */
+  gone = new Map<number, number | undefined>()
   genXml = new Map<number, string>()
   /** whole body items replaced by the editor (regenerated tables; '' = deleted) */
   itemXml = new Map<number, string>()
