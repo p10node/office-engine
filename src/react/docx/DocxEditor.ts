@@ -865,6 +865,8 @@ export class DocxEditor implements RichHost<Paragraph> {
     let id = this.styles.find((s) => s.canon === kind)?.id
     if (!id) {
       const r = await this.client.call('docx.style', kind)
+      // a shared session answers nothing when the operation could not be applied
+      if (!r) return
       this.styles = r.styles
       this.onStyles?.(r.styles)
       id = r.id

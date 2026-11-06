@@ -119,6 +119,48 @@ describe('collab', () => {
     })
   }
 
+  test('an operation that cannot be prepared is skipped: the room goes on, late joiners included', async () => {
+    /** `set bad` (once shared) and `clear` (pessimistic) can be neither prepared nor applied */
+    class Flaky extends TextAdapter {
+      private bad = (op: TOp) => (op.t === 'set' && op.k === 'bad') || op.t === 'clear'
+      prepare(ops: TOp[]) {
+        if (ops.some(this.bad)) throw new Error('cannot prepare')
+      }
+      override apply(op: TOp, kind = 'local') {
+        if (this.bad(op) && (kind !== 'local' || op.t === 'clear')) throw new Error('cannot apply')
+        return super.apply(op)
+      }
+    }
+    const error = console.error
+    console.error = () => {}
+    try {
+      const hub = new CollabHub()
+      const open = (name: string) => {
+        const adapter = new Flaky()
+        return { adapter, session: new CollabSession<TOp>(new MemoryTransport(hub, () => 1), adapter, { room: 'f', user: { name } }) }
+      }
+      const a = open('Ann')
+      const b = open('Bob')
+      await settle([a.session, b.session])
+      // fails where it arrives as a remote operation…
+      await a.session.submit({ t: 'set', k: 'bad', v: 1 })
+      await a.session.submit({ t: 'ins', at: 0, s: 'one' })
+      await settle([a.session, b.session])
+      // …and for its author, once the hub has ordered it
+      expect(await a.session.submit({ t: 'clear' })).toBeNull()
+      await settle([a.session, b.session])
+      await b.session.submit({ t: 'ins', at: 3, s: ' two' })
+      await settle([a.session, b.session])
+      const c = open('Cid')
+      await settle([a.session, b.session, c.session])
+      for (const x of [a, b, c]) expect(x.adapter.text).toBe('one two')
+      expect(a.session.rev).toBe(4)
+      for (const x of [a, b, c]) x.session.close()
+    } finally {
+      console.error = error
+    }
+  })
+
   test('presence and peers', async () => {
     const hub = new CollabHub()
     const a = new CollabSession<TOp>(new MemoryTransport(hub), new TextAdapter(), { room: 'p', user: { name: 'Ann' } })

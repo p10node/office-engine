@@ -338,8 +338,21 @@ export class CollabSession<Op = unknown> {
     }
   }
 
+  /**
+   * The adapter's async work before `ops` are applied. A failure doesn't stop the session (a batch that can't be
+   * processed would block the room for good: everyone replays it): `apply` then fails for the op concerned and only
+   * that op is lost.
+   */
+  private async prepare(ops: Op[]) {
+    try {
+      await this.adapter.prepare?.(ops)
+    } catch (e) {
+      console.error('[office-engine collab] prepare failed', e)
+    }
+  }
+
   private async remote(ops: Op[]) {
-    await this.adapter.prepare?.(ops)
+    await this.prepare(ops)
     const pending = [...(this.inflight?.items ?? []), ...this.buffer]
     if (!pending.length) {
       for (const op of ops) await this.applyRemote(op)
@@ -379,7 +392,7 @@ export class CollabSession<Op = unknown> {
     if (hole >= 0) {
       // pessimistic ops run now, in order: later local ops are replayed after them
       const tail = [...items.slice(hole), ...this.buffer]
-      await this.adapter.prepare?.(items.slice(hole).filter((it) => it.op && !it.applied).map((it) => it.op as Op))
+      await this.prepare(items.slice(hole).filter((it) => it.op && !it.applied).map((it) => it.op as Op))
       await this.revertAll(tail)
       for (const it of tail) {
         const waiting = !items.includes(it) && it.op && this.adapter.pessimistic?.(it.op) && it.done
