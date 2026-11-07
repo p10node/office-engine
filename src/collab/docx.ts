@@ -8,6 +8,7 @@
  *  - `blocks` top-level blocks replaced (tables)
  *  - `image` / `link`  package resources, shared by key (relationship ids differ per client)
  *  - `call`   other document-level worker calls (adding a built-in style, giving a style another look), run in hub order
+ *  - `comment` a comment set / deleted (its range is marked in the text, shared with the text)
  */
 import type { Block, Inline, Paragraph, StyleInfo } from '../core/docx/types'
 import type { DocumentClient } from '../core/worker/client'
@@ -17,6 +18,7 @@ import { domFromPos } from '../react/edit/input'
 import { plen, runsText, splitRuns, type Pos, type RRun, type Sel } from '../react/edit/rich'
 import { watchHost } from './hosts'
 import type { Adapter, ApplyResult } from './session'
+import { applyComment, revertComment, type CommentOp } from './comments'
 
 export interface DocxHost {
   editor: DocxEditor
@@ -33,6 +35,7 @@ export type DocxOp =
   | { t: 'image'; key: string; bytes: Uint8Array; ext: string }
   | { t: 'link'; key: string; url: string }
   | { t: 'call'; method: string; args: unknown[] }
+  | CommentOp
 
 /** a point in the document that survives structural edits: paragraph id, page-break part, offset */
 export interface DPos {
@@ -223,6 +226,7 @@ export class DocxCollab implements Adapter<DocxOp> {
   }
 
   captures(method: keyof Methods): boolean {
+    if (method === 'comments.set') return true
     // paragraph / table writes mirror model changes (captured by DocxEditor.onCommit)
     return !this.suppress && !READS.has(method) && method !== 'docx.edit' && method !== 'docx.table' && method.startsWith('docx.')
   }
@@ -231,6 +235,8 @@ export class DocxCollab implements Adapter<DocxOp> {
   intercept(method: keyof Methods, args: unknown[]): Promise<unknown> | undefined {
     if (!this.submit || !this.captures(method)) return undefined
     switch (method) {
+      case 'comments.set':
+        return this.submit({ t: 'comment', cid: args[0] as string, c: args[1] as CommentOp['c'] })
       case 'docx.image': {
         const bytes = new Uint8Array((args[0] as ArrayBuffer).slice(0))
         return this.submit({ t: 'image', key: this.key(), bytes, ext: args[1] as string })
@@ -384,6 +390,8 @@ export class DocxCollab implements Adapter<DocxOp> {
         return ['p' + op.pid]
       case 'paras':
         return [...op.before, ...op.next.map((p) => p.pid!)].map((p) => 'p' + p)
+      case 'comment':
+        return ['c' + op.cid]
       case 'blocks': {
         const keys = [...op.before, ...(op.prev ? [op.prev] : []), ...op.next.map(bkey).filter((k): k is BKey => !!k)]
         const out = keys.map((k) => ('p' in k ? 'p' + k.p : 't' + (k.item ?? 'n' + k.tid)))
@@ -413,6 +421,8 @@ export class DocxCollab implements Adapter<DocxOp> {
 
   async apply(op: DocxOp, kind: 'local' | 'replay' | 'remote'): Promise<ApplyResult> {
     switch (op.t) {
+      case 'comment':
+        return applyComment(this.client, op)
       case 'image':
       case 'link':
         await this.fetchRes(op)
@@ -532,6 +542,8 @@ export class DocxCollab implements Adapter<DocxOp> {
   }
 
   revert(undo: unknown) {
+    const cm = revertComment(this.client, undo)
+    if (cm) return cm
     const u = undo as Undo
     if (!u || !this.host) return
     this.capture()

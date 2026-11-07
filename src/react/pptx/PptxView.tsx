@@ -14,6 +14,9 @@ import { Presenter } from './Presenter'
 import { pickFiles } from '../edit/Toolbar'
 import { SlideView, type SlideEditing } from './Slide'
 import { publishLocal, registerHost } from '../../collab/hosts'
+import { initialsOf, type CommentThread } from '../../core/comments'
+import { useCommentsCtl, useCommentsState, type PendingComment, type PlacedThread } from '../comments/Comments'
+import { COMMENT_KEYS } from '../comments/CommentsPanel'
 
 interface SlideCache {
   models: Map<number, SlideModel>
@@ -538,7 +541,8 @@ export function PptxView({ client, onStatus, initialZoom = 'fit', thumbnails = t
   }
 
   const shapeMenu = (): MenuItem[] => [
-    { label: 'Duplicate', icon: 'copy', hint: `${MOD}D`, run: shapeCmd.duplicate },
+    ...(cm?.canComment ? [{ label: 'Comment', icon: 'commentAdd', hint: COMMENT_KEYS, run: () => cm.start() } as MenuItem] : []),
+    { label: 'Duplicate', icon: 'copy', hint: `${MOD}D`, run: shapeCmd.duplicate, sep: !!cm?.canComment },
     { label: 'Delete', icon: 'trash', hint: 'Del', run: shapeCmd.remove },
     { label: 'Bring to front', icon: 'front', hint: `${MOD}⇧↑`, sep: true, run: () => shapeCmd.arrange('front') },
     { label: 'Bring forward', hint: `${MOD}↑`, run: () => shapeCmd.arrange('forward') },
@@ -550,8 +554,9 @@ export function PptxView({ client, onStatus, initialZoom = 'fit', thumbnails = t
     { label: 'Flip vertically', icon: 'flipV', run: () => shapeCmd.rotate('flipV') },
     { label: 'Center on slide', icon: 'alignObj', sep: true, run: () => shapeCmd.align('both') },
   ]
-  const slideMenu = (i: number): MenuItem[] => [
-    { label: 'New slide', icon: 'slideAdd', hint: `${MOD}M`, run: () => slideCmd('add', i) },
+  const slideMenu = (i: number, at?: { x: number; y: number }): MenuItem[] => [
+    ...(cm?.canComment ? [{ label: 'Comment', icon: 'commentAdd', hint: COMMENT_KEYS, run: () => cm.start((at && commentAt(i, at.x, at.y)) || undefined) } as MenuItem] : []),
+    { label: 'New slide', icon: 'slideAdd', hint: `${MOD}M`, run: () => slideCmd('add', i), sep: !!cm?.canComment },
     { label: 'Duplicate slide', icon: 'copy', run: () => slideCmd('duplicate', i) },
     { label: 'Delete slide', icon: 'trash', run: () => slideCmd('delete', i), disabled: meta.count <= 1 },
     { label: modelOf(i)?.hidden ? 'Show slide' : 'Hide slide', icon: 'hide', run: () => slideCmd('hide', i) },
@@ -585,6 +590,62 @@ export function PptxView({ client, onStatus, initialZoom = 'fit', thumbnails = t
     if (el) el.scrollTop = PAD + Math.max(0, Math.min(meta.count - 1, i)) * pitch - Math.max(0, (size.h - slideH) / 2)
   }
 
+  // ---- comments: a thread points at a point of a slide ----
+  const cm = useCommentsCtl()
+  const cmState = useCommentsState(cm)
+  const commentAt = (i: number, x: number, y: number): PendingComment | null => {
+    const s = meta.slides[i]
+    if (!s) return null
+    return { quote: `Slide ${i + 1}`, at: { slide: s.path, x: Math.max(0, Math.min(meta.w - 1, x)), y: Math.max(0, Math.min(meta.h - 1, y)) } }
+  }
+  const cmLive = useRef({ selected, current, go })
+  cmLive.current = { selected, current, go }
+  useEffect(() => {
+    if (!cm) return
+    const slideOf = (t: CommentThread) => {
+      const a = t.root.at
+      const i = a && 'slide' in a ? meta.slides.findIndex((s) => s.path === a.slide) : -1
+      return i >= 0 ? { i, a: a as { slide: string; x: number; y: number } } : null
+    }
+    cm.setHost({
+      kind: 'pptx',
+      hint: 'Select a shape, or right-click the slide where the comment goes.',
+      pending: () => {
+        const { selected, current } = cmLive.current
+        // the selected shape's top right corner, else the slide's top left
+        const box = selected ? boxOf(modelOf(selected.slide), selected.top) : undefined
+        return box && selected ? commentAt(selected.slide, box.x + box.w, box.y + 28) : commentAt(current, 24, 40)
+      },
+      placed: (threads) => {
+        const out: (PlacedThread & { k: number[] })[] = []
+        for (const t of threads) {
+          const x = slideOf(t)
+          if (x) out.push({ ...t, quote: `Slide ${x.i + 1}`, k: [x.i, x.a.y, x.a.x] })
+        }
+        return out.sort((a, b) => a.k[0] - b.k[0] || a.k[1] - b.k[1] || a.k[2] - b.k[2])
+      },
+      reveal: (id) => {
+        const t = cm.threads().find((x) => x.root.id === id)
+        const x = t && slideOf(t)
+        if (x) cmLive.current.go(x.i)
+      },
+    })
+    return () => cm.setHost(null)
+  }, [cm, meta, slidesVer]) // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => cm?.touch(), [cm, slidesVer, meta.count])
+  const pins = useMemo(() => {
+    const out = new Map<string, { id: string; x: number; y: number; who: string; n: number }[]>()
+    if (!cm) return out
+    for (const t of cm.threads()) {
+      const a = t.root.at
+      if (!a || !('slide' in a) || (t.root.done && t.root.id !== cmState.active)) continue
+      let list = out.get(a.slide)
+      if (!list) out.set(a.slide, (list = []))
+      list.push({ id: t.root.id, x: a.x, y: a.y, who: t.root.author.initials ?? initialsOf(t.root.author.name), n: t.replies.length })
+    }
+    return out
+  }, [cm, cmState])
+
   const onKeyDown = (e: React.KeyboardEvent) => {
     // already handled by the text editor (e.g. Esc that just left text editing)
     if (editor.active || e.defaultPrevented) return
@@ -605,7 +666,7 @@ export function PptxView({ client, onStatus, initialZoom = 'fit', thumbnails = t
       void undoShapes(e.key.toLowerCase() === 'y' || e.shiftKey)
       return
     }
-    if (viewer.editable && mod && e.key.toLowerCase() === 'm') {
+    if (viewer.editable && mod && !e.altKey && e.key.toLowerCase() === 'm') {
       e.preventDefault()
       slideCmd('add')
       return
@@ -650,9 +711,30 @@ export function PptxView({ client, onStatus, initialZoom = 'fit', thumbnails = t
             selRef.current = sel
             setSelected(sel)
             setCtxMenu({ x: e.clientX, y: e.clientY, items: shapeMenu() })
-          } else setCtxMenu({ x: e.clientX, y: e.clientY, items: slideMenu(i) })
+          } else {
+            const r = e.currentTarget.getBoundingClientRect()
+            setCtxMenu({ x: e.clientX, y: e.clientY, items: slideMenu(i, { x: (e.clientX - r.left) / scale, y: (e.clientY - r.top) / scale }) })
+          }
         }}
       >
+        {(pins.get(meta.slides[i]?.path ?? '') ?? []).map((p) => (
+          <button
+            key={p.id}
+            type="button"
+            className={'de-cm-pin' + (cmState.active === p.id ? ' on' : '')}
+            style={{ left: p.x * scale, top: p.y * scale }}
+            title="Comment"
+            aria-label="Show comment"
+            data-thread={p.id}
+            onMouseDown={(e) => e.stopPropagation()}
+            onClick={(e) => {
+              e.stopPropagation()
+              cm?.select(p.id, false)
+            }}
+          >
+            {p.who}
+          </button>
+        ))}
         <SlideSlot
           client={client}
           index={i}

@@ -1,5 +1,6 @@
 /** XLSX collaboration operations (shared by the main-thread adapter and the worker) + their transforms. */
 import type { CellInput, FindOptions, FmtPatch, Range, SheetOp } from '../core/xlsx/types'
+import type { CommentOp } from './comments'
 
 /** sheets are addressed by part path: indexes move when sheets are added / reordered */
 export type PBookOp =
@@ -16,6 +17,8 @@ export type XOp =
   | { t: 'book'; id: string; op: PBookOp }
   /** sets the cells changed by op `target` back to their state before (`prev`) or after (`next`) it */
   | { t: 'revert'; id: string; target: string; which: 'prev' | 'next' }
+  /** a comment set / deleted; a thread's cell moves with inserted / deleted rows and columns */
+  | (CommentOp & { id: string })
 
 export const STRUCTURAL = new Set<SheetOp['op']>(['insertRows', 'deleteRows', 'insertCols', 'deleteCols'])
 
@@ -95,6 +98,7 @@ function shiftSheetOp(op: SheetOp, axis: 'row' | 'col', at: number, n: number): 
 
 /** `op` adjusted to apply after `prior` (deterministic) */
 export function transformX(op: XOp, prior: XOp): XOp | null {
+  if (op.t === 'comment') return transformComment(op, prior)
   if (prior.t === 'book') {
     if (prior.op.op === 'delete' && 'sheet' in op && op.sheet === prior.op.path) return null
     return op
@@ -127,6 +131,20 @@ export function transformX(op: XOp, prior: XOp): XOp | null {
     }
   }
   return op
+}
+
+/** a comment op after `prior`: its cell moved by inserted / deleted rows and columns; dropped with its cell or sheet */
+function transformComment(op: Extract<XOp, { t: 'comment' }>, prior: XOp): XOp | null {
+  const at = op.c?.at
+  if (!at || !('sheet' in at)) return op
+  if (prior.t === 'book') return prior.op.op === 'delete' && prior.op.path === at.sheet ? null : op
+  if (prior.t !== 'sheet' || !STRUCTURAL.has(prior.op.op) || prior.sheet !== at.sheet) return op
+  const p = prior.op as { op: string; at: number; n: number }
+  const row = p.op.endsWith('Rows')
+  const x = shiftIdx(row ? at.r : at.c, p.at, p.op.startsWith('insert') ? p.n : -p.n)
+  if (x === null) return null
+  if (x === (row ? at.r : at.c)) return op
+  return { ...op, c: { ...op.c!, at: row ? { ...at, r: x } : { ...at, c: x } } }
 }
 
 // ---------------------------------------------------------------- footprint (for conflict detection)
@@ -171,6 +189,9 @@ const overlap = (a: Range, b: Range) => a.r0 <= b.r1 && b.r0 <= a.r1 && a.c0 <= 
 /** whether remote ops interact with pending local ones (→ rebase) */
 export function conflictsX(pending: XOp[], remote: XOp[]): boolean {
   if (remote.some((o) => isStructural(o) || o.t === 'revert')) return true
+  // the same comment set on both sides: the one sequenced first is applied first everywhere
+  const cids = new Set(pending.flatMap((o) => (o.t === 'comment' ? [o.cid] : [])))
+  if (remote.some((o) => o.t === 'comment' && cids.has(o.cid))) return true
   if (pending.some((o) => o.t === 'revert' || isStructural(o))) return true
   // derived styles are appended to one table: keep its order identical everywhere
   const styles = (o: XOp) => o.t === 'fmt' && o.patch.xf === undefined && !o.patch.clear

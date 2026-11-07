@@ -12,6 +12,7 @@ import {
 import type { Theme } from '../theme'
 import { kid, parseXml, type XEl } from '../xml'
 import { Numbering } from './numbering'
+import { fixCommentMarks, markEnd, markStart, numbering as commentNumbering, writeDocxComments } from './comments'
 import type { DocxDocument, GenRun } from './parser'
 import { fontName, HIGHLIGHT, readPPr, readRPr } from './styles'
 import type {
@@ -489,6 +490,29 @@ export async function genParagraph(doc: DocxDocument, spec: ParaSpec): Promise<{
     return c
   }
 
+  // comment ranges: each thread's part of its range starts before the first run it covers here and ends after the last
+  const firstAt = new Map<string, SpecRun>()
+  const lastAt = new Map<string, SpecRun>()
+  for (const part of spec.parts)
+    for (const run of part as SpecRun[]) {
+      if (!run.cm || !('obj' in run || run.text)) continue
+      for (const id of run.cm) {
+        if (!firstAt.has(id)) firstAt.set(id, run)
+        lastAt.set(id, run)
+      }
+    }
+  const openMarks = (run: SpecRun) => {
+    for (const id of run.cm ?? []) if (firstAt.get(id) === run) body += markStart(W, id)
+  }
+  const closeMarks = (run: SpecRun) => {
+    for (const id of run.cm ?? []) {
+      if (lastAt.get(id) !== run) continue
+      closeLink()
+      body += markEnd(W, id)
+      map.push({})
+    }
+  }
+
   spec.parts.forEach((part, pi) => {
     if (pi > 0) {
       closeLink()
@@ -498,6 +522,7 @@ export async function genParagraph(doc: DocxDocument, spec: ParaSpec): Promise<{
     for (const run of part as SpecRun[]) {
       if ('obj' in run) {
         closeLink()
+        openMarks(run)
         if (run.obj === 'field') {
           let rPr = baseRPr(undefined)
           if (run.set) applyRunSet((rPr ??= el(W + 'rPr')), run.set, W)
@@ -505,7 +530,7 @@ export async function genParagraph(doc: DocxDocument, spec: ParaSpec): Promise<{
           map.push({ d: run.set })
         } else if (run.obj === 'image') {
           body += imageRunXml(W, run.rid, run.w, run.h, run.name, run.alt)
-          map.push({})
+          map.push({ cm: run.cm })
         } else {
           const src = origRun(doc, run.src)
           if (src) {
@@ -527,9 +552,10 @@ export async function genParagraph(doc: DocxDocument, spec: ParaSpec): Promise<{
               })
               body += serialize(r)
             } else body += serialize(src)
-            map.push({ src: run.src })
+            map.push({ src: run.src, cm: run.cm })
           }
         }
+        closeMarks(run)
         continue
       }
       if (run.lk !== openLink) {
@@ -543,13 +569,15 @@ export async function genParagraph(doc: DocxDocument, spec: ParaSpec): Promise<{
       let rPr = baseRPr(run.src)
       if (run.set && Object.keys(run.set).length) applyRunSet((rPr ??= el(W + 'rPr')), run.set, W)
       if (!run.text) continue
+      openMarks(run)
       body += runXml(rPr, textContentXml(run.text, W))
-      map.push({ src: run.src, d: run.set })
+      map.push({ src: run.src, d: run.set, cm: run.cm })
+      closeMarks(run)
     }
   })
   closeLink()
 
-  // bookmarks / comment ranges / comment references of the source paragraphs
+  // bookmarks (and other ranges) of the source paragraphs; comment ranges come from the runs' marks
   let starts = ''
   let ends = ''
   const orig = spec.orig ?? (spec.pid === spec.from ? [spec.from] : [])
@@ -558,21 +586,15 @@ export async function genParagraph(doc: DocxDocument, spec: ParaSpec): Promise<{
     if (!op) continue
     for (const c of kidsOf(op)) {
       const l = local(c.q)
+      if (l === 'commentRangeStart' || l === 'commentRangeEnd') continue
       if (START_MARKS.has(l)) starts += serialize(c)
       else if (END_MARKS.has(l)) ends += serialize(c)
-    }
-    for (const r of collectRunsRaw(op)) {
-      if (kidOf(r, 'commentReference')) {
-        ends += serialize(r)
-        map.push({})
-      }
     }
   }
 
   let attrs = tpl?.a ?? ''
   if (spec.pid !== spec.from) attrs = attrs.replace(/\s+w14:(paraId|textId)="[^"]*"/g, '')
   const ppr = pPr.c.length ? serialize(pPr) : ''
-  // comment references were appended after `body`; keep `map` order aligned with emission order
   return { xml: `<${pq}${attrs}>${ppr}${starts}${body}${ends}</${pq}>`, map }
 }
 
@@ -869,6 +891,8 @@ export async function applyTable(doc: DocxDocument, op: TableOp): Promise<void> 
 
 export async function saveDocx(doc: DocxDocument): Promise<Blob> {
   if (!doc.ready) throw new Error('Document is still loading')
+  const comments = doc.comments
+  let body: string | undefined
   if (doc.groups.size || doc.itemXml.size) {
     const touched = new Set<number>()
     for (const key of doc.groups.keys()) touched.add(Number(key.split(':')[0]))
@@ -895,7 +919,16 @@ export async function saveDocx(doc: DocxDocument): Promise<Blob> {
       out.push(serialize(nodes))
     }
     out.push(doc.suffix)
-    doc.pkg.setPart(doc.mainPath, out.join(''))
+    body = out.join('')
   }
+  // comments: one range per thread in the body, then the comment parts when they changed
+  if (body !== undefined || comments.dirty) {
+    const num = commentNumbering(comments)
+    const fixed = fixCommentMarks(body ?? (await doc.pkg.text(doc.mainPath)), comments, num)
+    body = fixed.xml
+    const lost = [...comments.inBody].some((id) => !fixed.found.has(id))
+    if (comments.dirty || lost) await writeDocxComments(doc.pkg, doc.mainPath, comments, num, fixed.found)
+  }
+  if (body !== undefined) doc.pkg.setPart(doc.mainPath, body)
   return doc.pkg.save(DOCX_MIME)
 }

@@ -8,7 +8,11 @@ export type PSlideOp =
   | { op: 'move'; path: string; to: number }
   | { op: 'hide'; path: string; hidden: boolean }
 
+import type { CommentOp } from './comments'
+
 export type POp =
+  /** a comment set / deleted */
+  | (CommentOp & { id: string })
   /** whole text of shape `sid` (last writer wins per shape) */
   | { t: 'text'; id: string; slide: string; sid: number; paras: PParaSpec[] }
   /** shape edits; an inserted picture refers to its image by `key` */
@@ -26,6 +30,9 @@ export function transformP(op: POp, prior: POp): POp | null {
 /** whether remote ops interact with pending local ones (→ rebase) */
 export function conflictsP(pending: POp[], remote: POp[]): boolean {
   if (remote.some((o) => o.t === 'slides' || o.t === 'revert') || pending.some((o) => o.t === 'revert')) return true
+  // the same comment set on both sides: the one sequenced first is applied first everywhere
+  const cids = new Set(pending.flatMap((o) => (o.t === 'comment' ? [o.cid] : [])))
+  if (remote.some((o) => o.t === 'comment' && cids.has(o.cid))) return true
   const mine = new Set(pending.flatMap((o) => ('slide' in o && o.t !== 'image' ? [o.slide] : [])))
   return remote.some((o) => 'slide' in o && o.t !== 'image' && mine.has(o.slide))
 }

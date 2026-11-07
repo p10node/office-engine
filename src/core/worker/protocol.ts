@@ -1,4 +1,5 @@
 import type { DocKind } from '../opc'
+import type { DocComment } from '../comments'
 import type { XOp } from '../../collab/xlsx-ops'
 import type { POp } from '../../collab/pptx-ops'
 import type { PptxCollabResult } from '../../collab/pptx-worker'
@@ -34,6 +35,10 @@ export interface Methods {
   'docx.styleSet'(id: string, look: StyleLook): StyleSetResult
   /** the blocks each paragraph converts to with the styles as they are now; `bare`: as it looks outside its table */
   'docx.convert'(specs: ParaSpec[], bare?: boolean): Block[][]
+  /** the document's comments (threads: roots and their replies) */
+  'comments.list'(): DocComment[]
+  /** sets comment `id` (null deletes it; a root's replies are left out of the file with it); returns what it was */
+  'comments.set'(id: string, c: DocComment | null): DocComment | null
   /** builds the edited file */
   save(): Blob
   dirty(): boolean
@@ -75,6 +80,8 @@ export interface Events {
   'collab:xlsx': XlsxEditResult
   /** collaboration: a slide (or the slide list) changed remotely */
   'collab:pptx': PptxCollabResult
+  /** a comment was set or deleted (by this client or a collaborator) */
+  comment: { id: string; c: DocComment | null }
 }
 
 export type Req = { id: number; method: keyof Methods; args: unknown[] }

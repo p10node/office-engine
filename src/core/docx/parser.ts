@@ -4,6 +4,7 @@ import { parseTheme, type Theme } from '../theme'
 import { emuToPt } from '../units'
 import { desc, descAll, kid, kids, num, parseXml, parseXmlStream, path, TreeBuilder, type SaxHandler, type XEl } from '../xml'
 import { Numbering } from './numbering'
+import { readDocxComments, type DocxComments } from './comments'
 import {
   borderCss, merge, readMargins, readPPr, readRPr, readTableBorders, shading, StyleSheet, type NumPr,
 } from './styles'
@@ -22,6 +23,8 @@ interface FieldState {
 interface Sink {
   push(x: Inline): void
   pageBreak(): void
+  /** the last character pushed joins comment `id` (a comment without a range of its own) */
+  markLast(id: string): void
 }
 
 export type Layer = { ps: ParaStyle; rs: RunStyle }
@@ -39,6 +42,8 @@ export interface ParaRecord {
 export interface GenRun {
   src?: SrcRef
   d?: RunSet
+  /** comment threads covering the run */
+  cm?: string[]
 }
 
 export interface ConvHooks {
@@ -47,7 +52,11 @@ export interface ConvHooks {
   forced?: { pid: number; root: XEl; map: GenRun[]; layer?: Layer; marker?: ListMarker; rec?: ParaRecord }
   /** body item currently being converted (tables remember it) */
   item?: () => number
+  /** comment ranges in the body: the thread root of a w:id (undefined: not a known comment) */
+  comment?(num: string | undefined): string | undefined
 }
+
+const sameMarks = (a: string[] | undefined, b: string[] | undefined) => (a?.length ?? 0) === (b?.length ?? 0) && (!a || a.every((x, i) => b![i] === x))
 
 function fieldKind(instr: string): 'PAGE' | 'NUMPAGES' | undefined {
   const m = /^\s*(PAGE|NUMPAGES|SECTIONPAGES)\b/i.exec(instr)
@@ -136,6 +145,10 @@ export class Converter {
   private boxDepth = 0
   private tableDepth = 0
   private cur?: { pid?: number; runs: Map<XEl, number>; forced?: ConvHooks['forced'] }
+  /** comment threads whose range is open at this point of the body, in the order they opened */
+  private open: string[] = []
+  /** threads whose range was seen */
+  readonly seen = new Set<string>()
 
   constructor(
     private styles: StyleSheet,
@@ -162,7 +175,27 @@ export class Converter {
       case 'sdtContent':
         for (const c of el.c) this.blocks(c, out)
         break
+      case 'commentRangeStart':
+      case 'commentRangeEnd':
+        this.rangeMark(el)
+        break
     }
+  }
+
+  /** a comment range opens or closes (generated paragraphs carry their marks in `forced.map` instead) */
+  private rangeMark(el: XEl) {
+    if (this.hooks.forced || !this.hooks.comment) return
+    const id = this.hooks.comment(el.a.id)
+    if (!id) return
+    if (el.n === 'commentRangeStart') {
+      if (!this.open.includes(id)) this.open.push(id)
+      this.seen.add(id)
+    } else this.open = this.open.filter((x) => x !== id)
+  }
+
+  /** comment threads covering what is converted now */
+  private marks(): string[] | undefined {
+    return this.open.length ? [...this.open] : undefined
   }
 
   paragraph(el: XEl, out: Block[]): void {
@@ -215,8 +248,18 @@ export class Converter {
       push: (x) => {
         const runs = cur.runs
         const last = runs[runs.length - 1]
-        if (x.t === 'text' && last?.t === 'text' && last.href === x.href && last.lk === x.lk && sameRecord(last.s, x.s) && sameRecord(last.d, x.d)) last.text += x.text
+        if (x.t === 'text' && !x.cm) delete x.cm
+        if (x.t === 'text' && last?.t === 'text' && last.href === x.href && last.lk === x.lk && sameRecord(last.s, x.s) && sameRecord(last.d, x.d) && sameMarks(last.cm, x.cm)) last.text += x.text
         else runs.push(x)
+      },
+      markLast: (id) => {
+        const runs = cur.runs
+        const i = runs.length - 1
+        const last = runs[i]
+        if (!last || (last.t !== 'text' && last.t !== 'img') || last.cm?.includes(id)) return
+        const cm = [...(last.cm ?? []), id]
+        if (last.t === 'img' || last.text.length <= 1) runs[i] = { ...last, cm }
+        else runs.splice(i, 1, { ...last, text: last.text.slice(0, -1) }, { ...last, text: last.text.slice(-1), cm })
       },
       pageBreak: () => {
         cur = { t: 'p', ps, runs: [], markSz: markRs.sz, markFont: markRs.font, pb: true, sid }
@@ -234,17 +277,17 @@ export class Converter {
     if (d.sectPr) out.push({ t: 'sect', page: pageSetup(d.sectPr), kind: kid(d.sectPr, 'type')?.a.val ?? 'nextPage' })
   }
 
-  /** source reference + user formatting of a run element */
-  private srcOf(r: XEl): { src?: SrcRef; d?: RunSet } {
+  /** source reference + user formatting (+ comment marks) of a run element */
+  private srcOf(r: XEl): { src?: SrcRef; d?: RunSet; cm?: string[] } {
     const cur = this.cur
-    if (!cur) return {}
+    if (!cur) return { cm: this.marks() }
     const k = cur.runs.get(r)
-    if (k === undefined) return {}
     if (cur.forced) {
-      const g = cur.forced.map[k]
-      return g ? { src: g.src, d: g.d } : {}
+      const g = k === undefined ? undefined : cur.forced.map[k]
+      return g ? { src: g.src, d: g.d, cm: g.cm } : {}
     }
-    return cur.pid !== undefined ? { src: [cur.pid, k] } : {}
+    if (k === undefined) return { cm: this.marks() }
+    return cur.pid !== undefined ? { src: [cur.pid, k], cm: this.marks() } : { cm: this.marks() }
   }
 
   private inlines(children: XEl[], base: RunStyle, href: string | undefined, lk: string | undefined, sink: Sink): void {
@@ -279,6 +322,10 @@ export class Converter {
         case 'sdt':
           this.inlines(kid(c, 'sdtContent')?.c ?? [], base, href, lk, sink)
           break
+        case 'commentRangeStart':
+        case 'commentRangeEnd':
+          this.rangeMark(c)
+          break
         case 'oMath':
         case 'oMathPara': {
           const text = descAll(c, 't').map((t) => t.t).join('')
@@ -293,8 +340,8 @@ export class Converter {
     const rPr = kid(r, 'rPr')
     const s = merge<RunStyle>(base, this.styles.char(kid(rPr, 'rStyle')?.a.val), readRPr(rPr, this.theme))
     if (s.vanish) return
-    const { src, d } = this.srcOf(r)
-    const text = (t: string, style = s, link = href) => sink.push({ t: 'text', text: t, s: style, href: link, lk: link === href ? lk : undefined, src, d })
+    const { src, d, cm } = this.srcOf(r)
+    const text = (t: string, style = s, link = href) => sink.push({ t: 'text', text: t, s: style, href: link, lk: link === href ? lk : undefined, src, d, cm })
     for (const c of r.c) {
       const f = this.fields[this.fields.length - 1]
       switch (c.n) {
@@ -346,8 +393,17 @@ export class Converter {
           break
         }
         case 'drawing':
-          this.drawing(c, href, sink, src)
+          this.drawing(c, href, sink, src, cm)
           break
+        case 'commentReference': {
+          // a comment without a range: it covers the character before it
+          const id = !this.hooks.forced && this.hooks.comment ? this.hooks.comment(c.a.id) : undefined
+          if (id && !this.seen.has(id)) {
+            this.seen.add(id)
+            sink.markLast(id)
+          }
+          break
+        }
         case 'pict':
         case 'object':
           this.vml(c, href, sink, src)
@@ -376,7 +432,7 @@ export class Converter {
     return blocks
   }
 
-  private drawing(d: XEl, href: string | undefined, sink: Sink, src?: SrcRef): void {
+  private drawing(d: XEl, href: string | undefined, sink: Sink, src?: SrcRef, cm?: string[]): void {
     const box = kid(d, 'inline') ?? kid(d, 'anchor')
     if (!box) return
     const ext = kid(box, 'extent')
@@ -397,7 +453,7 @@ export class Converter {
     const target = this.target(blip?.a['r:embed'])
     if (target) {
       const click = this.rels.get(kid(docPr, 'hlinkClick')?.a['r:id'] ?? '')?.target
-      sink.push({ t: 'img', target, w, h, alt: docPr?.a.descr || docPr?.a.title || undefined, href: click ?? href, src, rid: blip?.a['r:embed'] })
+      sink.push({ t: 'img', target, w, h, alt: docPr?.a.descr || docPr?.a.title || undefined, href: click ?? href, src, rid: blip?.a['r:embed'], ...(cm ? { cm } : {}) })
       return
     }
     if (desc(gd, 'chart')) sink.push({ t: 'shape', w, h, label: 'Chart', src })
@@ -697,6 +753,7 @@ export class DocxDocument {
     readonly styles: StyleSheet,
     public numbering: Numbering,
     readonly theme: Theme,
+    readonly comments: DocxComments,
   ) {}
 
   static async open(pkg: OpcPackage, mainPath: string): Promise<DocxDocument> {
@@ -707,11 +764,15 @@ export class DocxDocument {
     const numRel = relOfType(rels, 'numbering')
     const styles = new StyleSheet(stylesRel ? await pkg.xml(stylesRel.target) : undefined, theme)
     const numbering = new Numbering(numRel ? await pkg.xml(numRel.target) : undefined, theme)
-    return new DocxDocument(pkg, mainPath, rels, styles, numbering, theme)
+    const comments = await readDocxComments(pkg, mainPath, rels).catch((e: Error) => {
+      console.warn('[office-engine] comments not read:', e.message)
+      return readDocxComments(pkg, mainPath, new Map())
+    })
+    return new DocxDocument(pkg, mainPath, rels, styles, numbering, theme, comments)
   }
 
   get dirty() {
-    return this.edited || this.pkg.dirty
+    return this.edited || this.pkg.dirty || this.comments.dirty
   }
 
   markEdited() {
@@ -764,6 +825,7 @@ export class DocxDocument {
         list[ord] = pid
         return pid
       },
+      comment: (num) => this.comments.rootOfNum(num),
     }
     const conv = new Converter(this.styles, this.numbering, this.theme, this.rels, hooks)
     const baseMeta = {
@@ -825,6 +887,7 @@ export class DocxDocument {
       },
     })
     capture.finish()
+    for (const id of conv.seen) this.comments.inBody.add(id)
     this.items = capture.items
     this.prefix = capture.prefix
     this.suffix = capture.suffix

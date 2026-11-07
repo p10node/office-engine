@@ -69,11 +69,13 @@ export interface RunSet {
 /**
  * Inline content. Tabs and line breaks are carried as '\t' / '\n' inside text.
  * Everything that isn't 'text' counts as one character when editing.
+ * `cm`: the comment threads (root ids) whose range covers the run.
  */
 export type Inline =
-  | { t: 'text'; text: string; s: RunStyle; href?: string; lk?: string; src?: SrcRef; d?: RunSet }
+  | { t: 'text'; text: string; s: RunStyle; href?: string; lk?: string; src?: SrcRef; d?: RunSet; cm?: string[] }
   | {
       t: 'img'
+      cm?: string[]
       target: string
       w: number
       h: number
@@ -151,10 +153,10 @@ export interface ParaDirty {
 }
 
 export type SpecRun =
-  | { text: string; src?: SrcRef; set?: RunSet; lk?: string }
-  | { obj: 'copy'; src: SrcRef; size?: [number, number]; alt?: string; rid?: string }
-  | { obj: 'image'; rid: string; w: number; h: number; name?: string; alt?: string }
-  | { obj: 'field'; kind: 'PAGE' | 'NUMPAGES'; set?: RunSet }
+  | { text: string; src?: SrcRef; set?: RunSet; lk?: string; cm?: string[] }
+  | { obj: 'copy'; src: SrcRef; size?: [number, number]; alt?: string; rid?: string; cm?: string[] }
+  | { obj: 'image'; rid: string; w: number; h: number; name?: string; alt?: string; cm?: string[] }
+  | { obj: 'field'; kind: 'PAGE' | 'NUMPAGES'; set?: RunSet; cm?: string[] }
 
 export interface ParaSpec {
   pid: number

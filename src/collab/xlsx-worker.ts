@@ -86,6 +86,9 @@ export class XlsxCollabWorker {
   private async run(op: XOp): Promise<XlsxEditResult | null> {
     const ed = this.ed
     switch (op.t) {
+      // comments are set through the engine (main-thread adapter)
+      case 'comment':
+        return null
       case 'set':
         return ed.setCells(await this.sheet(op.sheet), op.cells)
       case 'fmt':

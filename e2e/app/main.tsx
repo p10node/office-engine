@@ -1,6 +1,7 @@
 /**
  * Fixture for the browser tests: DocViewer configured from the query string, callbacks recorded on window.
  *   ?src=samples/sample.docx&editable=1&allowSave=0&onSave=1&items=1&close=1&collab=ws://…&room=r
+ *   comments: &me=Ann&meId=u1 (author), &people=1 (mentions: Ann, Bob Stone, Cid), &comments=0 (hidden), &cmOpen=1
  */
 import { useState } from 'react'
 import { createRoot } from 'react-dom/client'
@@ -52,6 +53,15 @@ const initial: DocViewerProps = {
   fileMenuItems: q.has('items') ? items : undefined,
   onLoad: (client) => log({ type: 'load', kind: client.kind, name: client.name }),
   onError: (error) => log({ type: 'error', message: error.message }),
+  comments:
+    q.get('comments') === '0'
+      ? false
+      : {
+          user: q.get('me') ? { name: q.get('me')!, id: q.get('meId') ?? undefined } : undefined,
+          mentions: q.has('people') ? [{ name: 'Ann', id: 'u1' }, { name: 'Bob Stone', id: 'u2' }, { name: 'Cid', id: 'u3' }] : undefined,
+          open: flag('cmOpen'),
+          onEvent: (e) => log({ type: 'comment', action: e.type, id: e.comment.id, text: e.comment.text, thread: e.thread.id, quote: e.quote, mentioned: e.mentioned.map((m) => m.id ?? m.name), participants: e.participants.map((m) => m.id ?? m.name) }),
+        },
   collab: q.get('collab') ? { transport: q.get('collab')!, room: q.get('room') ?? 'e2e', base: Number(q.get('base')) || 0, user: { name: q.get('user') ?? 'Tester' } } : undefined,
 }
 

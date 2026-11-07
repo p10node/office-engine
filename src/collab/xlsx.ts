@@ -10,8 +10,9 @@ import type { BookOp, Range, SheetOp, WorkbookMeta } from '../core/xlsx/types'
 import { onLocal } from './hosts'
 import type { Adapter, ApplyResult } from './session'
 import { conflictsX, isStructural, transformX, type PBookOp, type XOp } from './xlsx-ops'
+import { applyComment, revertComment, type CommentOp } from './comments'
 
-const CAPTURED = new Set<keyof Methods>(['xlsx.set', 'xlsx.format', 'xlsx.sheetOp', 'xlsx.replace', 'xlsx.bookOp', 'xlsx.undo', 'xlsx.redo'])
+const CAPTURED = new Set<keyof Methods>(['comments.set', 'xlsx.set', 'xlsx.format', 'xlsx.sheetOp', 'xlsx.replace', 'xlsx.bookOp', 'xlsx.undo', 'xlsx.redo'])
 
 type UndoEntry = { kind: 'op'; id: string } | { kind: 'inverse'; sheet: string; undo: SheetOp; redo: SheetOp }
 
@@ -73,6 +74,8 @@ export class XlsxCollab implements Adapter<XOp> {
     if (!this.submit) return undefined
     const a = args as never[]
     switch (method) {
+      case 'comments.set':
+        return this.submit({ t: 'comment', id: this.id(), cid: a[0], c: a[1] as CommentOp['c'] })
       case 'xlsx.set':
         return this.local({ t: 'set', id: this.id(), sheet: this.path(a[0]), cells: a[1] })
       case 'xlsx.format':
@@ -137,6 +140,7 @@ export class XlsxCollab implements Adapter<XOp> {
   }
 
   async apply(op: XOp, kind: 'local' | 'replay' | 'remote'): Promise<ApplyResult> {
+    if (op.t === 'comment') return applyComment(this.client, op)
     const { res, rec } = await this.client.direct('collab.xlsx.apply', op)
     if (isStructural(op)) {
       // the worker dropped its records: older entries can't be reverted any more
@@ -149,6 +153,8 @@ export class XlsxCollab implements Adapter<XOp> {
   }
 
   async revert(undo: unknown) {
+    const cm = revertComment(this.client, undo)
+    if (cm) return cm
     if (typeof undo !== 'number') return
     const res = await this.client.direct('collab.xlsx.revert', undo)
     if (res) this.client.notify('collab:xlsx', res)

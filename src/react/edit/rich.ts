@@ -10,6 +10,8 @@ export interface RRun {
   src?: unknown
   href?: string
   lk?: string
+  /** comment threads covering the run (DOCX) */
+  cm?: string[]
 }
 
 export interface Pos {
@@ -41,7 +43,39 @@ function shallowEq(a: object | undefined, b: object | undefined): boolean {
   return true
 }
 
-const sameText = (a: RRun, b: RRun) => a.t === 'text' && b.t === 'text' && a.href === b.href && a.lk === b.lk && shallowEq(a.s, b.s) && shallowEq(a.d, b.d)
+export const sameMarks = (a: string[] | undefined, b: string[] | undefined) => (a?.length ?? 0) === (b?.length ?? 0) && (!a || a.every((x, i) => b![i] === x))
+
+const sameText = (a: RRun, b: RRun) => a.t === 'text' && b.t === 'text' && a.href === b.href && a.lk === b.lk && shallowEq(a.s, b.s) && shallowEq(a.d, b.d) && sameMarks(a.cm, b.cm)
+
+/**
+ * Comment threads text inserted at `o` joins: those covering both the character before and the one after (typing at
+ * the edge of a commented range does not extend it).
+ */
+export function marksAt(runs: RRun[], o: number): string[] | undefined {
+  let before: string[] | undefined
+  let after: string[] | undefined
+  let pos = 0
+  for (const r of runs) {
+    const n = rlen(r)
+    if (pos < o && o <= pos + n) before = r.cm
+    if (pos <= o && o < pos + n) {
+      after = r.cm
+      break
+    }
+    pos += n
+  }
+  const both = before?.filter((id) => after?.includes(id))
+  return both?.length ? both : undefined
+}
+
+/** `run` covered by exactly the comment threads `cm` */
+export function withMarks<R extends RRun>(run: R, cm: string[] | undefined): R {
+  if (sameMarks(run.cm, cm)) return run
+  const out = { ...run }
+  if (cm?.length) out.cm = cm
+  else delete out.cm
+  return out
+}
 
 /** Merges adjacent identical text runs and drops empty ones. */
 export function normalize<R extends RRun>(runs: R[]): R[] {
@@ -89,16 +123,30 @@ export function insertText<R extends RRun>(runs: R[], o: number, text: string, s
   if (!text) return runs
   const [l, r] = splitRuns(runs, o)
   const base = runAt(runs, o)
-  const run = { t: 'text', ...(base ?? fallback ?? {}), ...(style ?? {}), text } as R
+  let run = { t: 'text', ...(base ?? fallback ?? {}), ...(style ?? {}), text } as R
   if (style?.s && base?.s) run.s = { ...base.s, ...style.s }
   if (style?.d || base?.d) run.d = { ...(base?.d ?? {}), ...(style?.d ?? {}) }
   if (run.d && !Object.keys(run.d).length) delete run.d
+  run = withMarks(run, marksAt(runs, o))
   return normalize([...l, run, ...r])
 }
 
 export function deleteRange<R extends RRun>(runs: R[], a: number, b: number): R[] {
   if (b <= a) return runs
   return normalize([...splitRuns(runs, a)[0], ...splitRuns(runs, b)[1]])
+}
+
+/** runs [a, b) join (`on`) or leave comment thread `id` */
+export function markRange<R extends RRun>(runs: R[], a: number, b: number, id: string, on: boolean): R[] {
+  const [l, rest] = splitRuns(runs, a)
+  const [mid, r] = splitRuns(rest, b - a)
+  const marked = mid.map((x) => {
+    if (x.t !== 'text' && x.t !== 'img') return x
+    const has = !!x.cm?.includes(id)
+    if (has === on) return x
+    return withMarks(x, on ? [...(x.cm ?? []), id] : x.cm!.filter((c) => c !== id))
+  })
+  return normalize([...l, ...marked, ...r])
 }
 
 export function formatRange<R extends RRun>(runs: R[], a: number, b: number, s: object, d: object): R[] {

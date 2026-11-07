@@ -100,6 +100,8 @@ export class PptxCollabWorker {
       this.byOp.clear()
       return { res: { meta: { ...meta, slides: meta.slides.map((x) => ({ ...x })) } }, rec: null }
     }
+    // comments are set through the engine (main-thread adapter)
+    if (op.t === 'comment') return { res: {}, rec: null }
     let path: string
     let target: Rec | undefined
     if (op.t === 'revert') {

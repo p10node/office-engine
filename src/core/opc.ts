@@ -122,6 +122,11 @@ export class OpcPackage {
     })
   }
 
+  /** what a part was set to in this session (null: deleted); undefined when it is as read */
+  changed(path: string): PartData | null | undefined {
+    return this.changes.get(normalize(path))?.data
+  }
+
   setPart(path: string, data: PartData | null): void {
     path = path.replace(/^\/+/, '')
     this.changes.set(normalize(path), { path, data })

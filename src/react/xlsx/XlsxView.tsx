@@ -16,6 +16,9 @@ import { XlsxToolbar, type MergeMode } from './XlsxToolbar'
 import { Axis } from './axis'
 import { fitNumber, fontPx } from './fit'
 import { sheetPrintable, sheetText } from './print'
+import { useCommentsCtl, useCommentsState, type CommentsCtl, type PlacedThread } from '../comments/Comments'
+import { COMMENT_KEYS } from '../comments/CommentsPanel'
+import type { CommentThread } from '../../core/comments'
 
 const BLOCK = 128
 const HH = 22
@@ -43,6 +46,20 @@ class SheetState {
   /** view state kept while another sheet is shown */
   sel?: Selection
   scrollPos?: { x: number; y: number }
+  /** a cell to select and scroll to (a comment shown from the panel); `n` changes every time */
+  goto?: { r: number; c: number; n: number }
+}
+
+/** the threads on cells of sheet `path` (not resolved, or the current one), by cell key */
+function commentCells(cm: CommentsCtl | null, path: string | undefined, active: string | null): Map<number, string> {
+  const out = new Map<number, string>()
+  if (!cm || !path) return out
+  for (const t of cm.threads()) {
+    const a = t.root.at
+    if (!a || !('sheet' in a) || a.sheet !== path || (t.root.done && t.root.id !== active)) continue
+    if (!out.has(a.r * 16384 + a.c)) out.set(a.r * 16384 + a.c, t.root.id)
+  }
+  return out
 }
 
 class XlsxStore {
@@ -68,7 +85,7 @@ class XlsxStore {
     }
   }
 
-  private emit() {
+  emit() {
     for (const fn of this.listeners) fn()
   }
 
@@ -264,6 +281,61 @@ export function XlsxView({ client, onStatus, initialSheet }: XlsxViewProps) {
     }
   }
   const cur = Math.min(active, meta.sheets.length - 1)
+  const curRef = useRef(cur)
+  curRef.current = cur
+
+  // ---- comments: a thread points at a cell ----
+  const cm = useCommentsCtl()
+  useEffect(() => {
+    if (!cm) return
+    let n = 0
+    const sheetOf = (t: CommentThread) => {
+      const a = t.root.at
+      const i = a && 'sheet' in a ? meta.sheets.findIndex((s) => s.path === a.sheet) : -1
+      return i >= 0 ? { i, a: a as { sheet: string; r: number; c: number } } : null
+    }
+    cm.setHost({
+      kind: 'xlsx',
+      hint: 'Select a cell to comment on.',
+      pending: () => {
+        const i = curRef.current
+        const sh = meta.sheets[i]
+        if (!sh) return null
+        const sel = store.sheet(i).sel ?? { ar: 0, ac: 0 }
+        // one thread per cell: commenting on a cell that has one answers it
+        const had = cm.threads().find((t) => {
+          const x = sheetOf(t)
+          return x?.i === i && x.a.r === sel.ar && x.a.c === sel.ac
+        })
+        return { quote: `${sh.name}!${colName(sel.ac)}${sel.ar + 1}`, at: { sheet: sh.path, r: sel.ar, c: sel.ac }, existing: had?.root.id }
+      },
+      placed: (threads) => {
+        const out: (PlacedThread & { k: number[] })[] = []
+        for (const t of threads) {
+          const x = sheetOf(t)
+          if (x) out.push({ ...t, quote: `${meta.sheets[x.i].name}!${colName(x.a.c)}${x.a.r + 1}`, k: [x.i, x.a.r, x.a.c] })
+        }
+        return out.sort((a, b) => a.k[0] - b.k[0] || a.k[1] - b.k[1] || a.k[2] - b.k[2])
+      },
+      reveal: (id) => {
+        const t = cm.threads().find((x) => x.root.id === id)
+        const x = t && sheetOf(t)
+        if (!x) return
+        const s = store.sheet(x.i)
+        s.sel = { ar: x.a.r, ac: x.a.c, fr: x.a.r, fc: x.a.c }
+        s.goto = { r: x.a.r, c: x.a.c, n: ++n }
+        setActive(x.i)
+        store.emit()
+      },
+    })
+    // sheet names / order show in the panel
+    const off = store.subscribe(() => cm.touch())
+    return () => {
+      off()
+      cm.setHost(null)
+    }
+  }, [cm, store, meta])
+
   const [edit, setEdit] = useState<EditState | null>(null)
   /** set while switching sheets during a formula edit: blur must not commit */
   const hold = useRef(false)
@@ -458,6 +530,13 @@ function SheetGrid({ store, sheet, meta, client, edit, setEdit, hold, onSheet }:
   const [findOpts, setFindOpts] = useState<FindOptions>({})
   const [matches, setMatches] = useState<FindMatch[]>([])
   const [toast, setToast] = useState<string | null>(null)
+  const cm = useCommentsCtl()
+  const cmState = useCommentsState(cm)
+  const cmCells = useMemo(() => commentCells(cm, meta.sheets[sheet]?.path, cmState.active), [cm, cmState, meta.sheets, sheet])
+  const cmAt = (r: number, c: number) => {
+    const m = mergeAt(r, c)
+    return cmCells.get(m ? m.r0 * 16384 + m.c0 : r * 16384 + c)
+  }
   const [resizing, setResizing] = useState<{ axis: 'col' | 'row'; i: number; start: number; size: number } | null>(null)
 
   const { rowAxis, colAxis, frozen } = s
@@ -647,6 +726,15 @@ function SheetGrid({ store, sheet, meta, client, edit, setEdit, hold, onSheet }:
       const sh = m ? rowAxis.pos(m.r1 + 1) - rowAxis.pos(m.r0) : rowAxis.size(sel.ar)
       out.push(<div key="sel" className="de-sel" style={{ left: colAxis.pos(sel.ac) - ox - 1, top: rowAxis.pos(sel.ar) - oy - 1, width: sw + 1, height: sh + 1 }} />)
     }
+    // cells with comments: a mark in the top right corner
+    for (const [k, id] of cmCells) {
+      const r = Math.floor(k / 16384)
+      const c = k % 16384
+      if (r < rr0 || r > rr1 || c < cc0 || c > cc1) continue
+      const m = mergeAt(r, c)
+      const right = colAxis.pos((m ? m.c1 : c) + 1)
+      out.push(<div key={'cm' + id} className={'de-cm-mark' + (cmState.active === id ? ' on' : '')} style={{ left: right - ox - 8, top: rowAxis.pos(r) - oy }} />)
+    }
     // collaborators' selections
     for (const p of peerSels) {
       const b = p.range
@@ -772,6 +860,15 @@ function SheetGrid({ store, sheet, meta, client, edit, setEdit, hold, onSheet }:
       if (ty !== scrollY) el.scrollTop = (ty / maxLogicalY) * maxScrollY
     }
   }
+
+  // a comment shown from the panel: its cell selected and in view
+  const gotoN = s.goto?.n
+  useEffect(() => {
+    const g = s.goto
+    if (!g) return
+    setSel({ ar: g.r, ac: g.c, fr: g.r, fc: g.c })
+    scrollIntoView(g.r, g.c)
+  }, [gotoN]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const cellAt = (clientX: number, clientY: number, el: HTMLElement) => {
     const b = el.getBoundingClientRect()
@@ -1148,7 +1245,13 @@ function SheetGrid({ store, sheet, meta, client, edit, setEdit, hold, onSheet }:
     if (r < 0) setSel({ ar: 0, ac: c, fr: Math.max(0, s.rows - 1), fc: c })
     else if (c < 0) setSel({ ar: r, ac: 0, fr: r, fc: Math.max(0, s.cols - 1) })
     else if (e.shiftKey) setSelState({ ...sel, fr: r, fc: c })
-    else setSel({ ar: r, ac: c, fr: r, fc: c })
+    else {
+      setSel({ ar: r, ac: c, fr: r, fc: c })
+      // a cell with a comment shows its thread
+      const id = cmAt(r, c)
+      if (id) cm?.select(id, false)
+      else if (cmState.active) cm?.select(null)
+    }
     if (r >= 0 && c >= 0) dragging.current = true
   }
 
@@ -1267,8 +1370,15 @@ function SheetGrid({ store, sheet, meta, client, edit, setEdit, hold, onSheet }:
     const rows = nr === 1 ? `row ${rect.r0 + 1}` : `rows ${rect.r0 + 1}–${rect.r1 + 1}`
     const cols = nc === 1 ? `column ${colName(rect.c0)}` : `columns ${colName(rect.c0)}–${colName(rect.c1)}`
     const single = nr === 1 && nc === 1
+    const thread = cmAt(sel.ar, sel.ac)
+    const comment: MenuItem[] = thread
+      ? [{ label: 'Show comment', icon: 'comment', run: () => cm?.select(thread) }]
+      : cm?.canComment
+        ? [{ label: 'Comment', icon: 'commentAdd', hint: COMMENT_KEYS, run: () => cm.start() }]
+        : []
     return [
-      { label: 'Cut', icon: 'cut', hint: `${MOD}X`, run: () => document.execCommand('cut') },
+      ...comment,
+      { label: 'Cut', icon: 'cut', hint: `${MOD}X`, sep: comment.length > 0, run: () => document.execCommand('cut') },
       { label: 'Copy', icon: 'copy', hint: `${MOD}C`, run: () => document.execCommand('copy') },
       {
         label: 'Paste',

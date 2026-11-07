@@ -12,7 +12,9 @@ import { PromptDialog, Toast, type PromptSpec } from '../common/Dialog'
 import { domFromPos, getSel, opInsert, posFromDom } from '../edit/input'
 import { download, pickFiles } from '../edit/Toolbar'
 import { runsText, type RRun } from '../edit/rich'
-import { DocxEditor, type DocState, type FormatState } from './DocxEditor'
+import { DocxEditor, type CommentRange, type DocState, type FormatState } from './DocxEditor'
+import { markCss, useCommentsCtl, useCommentsState, type CommentHost, type PlacedThread } from '../comments/Comments'
+import { COMMENT_KEYS } from '../comments/CommentsPanel'
 import { DocxToolbar, styleChoices, type ImageActions } from './DocxToolbar'
 import { FindBar, type Match } from './FindBar'
 import { docxToMarkdown, docxToText } from '../file/text'
@@ -590,6 +592,7 @@ export function DocxView({ client, onStatus, initialZoom = 'fit' }: DocxViewProp
     const sel = editor.input.sel()
     const ranged = !!sel && (sel.a.pa !== sel.f.pa || sel.a.o !== sel.f.o)
     const items: MenuItem[] = []
+    if (cm?.canComment) items.push({ label: 'Comment', icon: 'commentAdd', hint: COMMENT_KEYS, run: () => cm.start(), disabled: !s })
     if (s?.img) {
       items.push(
         { head: 'Image', label: 'Original size', icon: 'imgOrig', run: imageActions.original },
@@ -651,6 +654,73 @@ export function DocxView({ client, onStatus, initialZoom = 'fit' }: DocxViewProp
     )
     return items
   }
+
+  // ---- comments: threads mark their text; the panel asks the editor where they are ----
+  const cm = useCommentsCtl()
+  const cmState = useCommentsState(cm)
+  const revealRef = useRef<(id: string) => void>(() => {})
+  revealRef.current = (id: string) => {
+    const place = editor.commentPlaces().get(id)
+    const sc = scrollRef.current
+    if (!place || !sc) return
+    const bi = Number(place.pa.split('.')[0])
+    const pi = pages.findIndex((p) => bi >= p.start && bi < p.end)
+    if (pi < 0) return
+    const show = () => {
+      const el = pagesRef.current?.querySelector(`[data-cm~="${CSS.escape(id)}"]`)
+      if (!el) return false
+      const r = el.getBoundingClientRect()
+      const box = sc.getBoundingClientRect()
+      if (r.top < box.top + 24 || r.bottom > box.bottom - 24) sc.scrollTop += r.top - box.top - box.height / 3
+      return true
+    }
+    if (show()) return
+    sc.scrollTop = Math.max(0, tops[pi] - 16)
+    requestAnimationFrame(() => requestAnimationFrame(() => void show()))
+  }
+  useEffect(() => {
+    if (!cm) return
+    const host: CommentHost = {
+      kind: 'docx',
+      hint: 'Select the text to comment on.',
+      pending: () => {
+        const r = editor.commentRange()
+        return r ? { quote: r.quote, range: r } : null
+      },
+      attach: (id, p) => editor.markComment(id, p.range as CommentRange),
+      placed: (threads) => {
+        const places = editor.commentPlaces()
+        const order = new Map([...places.keys()].map((id, i) => [id, i]))
+        return threads
+          .filter((t) => places.has(t.root.id))
+          .map((t): PlacedThread => ({ ...t, quote: places.get(t.root.id)!.quote }))
+          .sort((a, b) => order.get(a.root.id)! - order.get(b.root.id)!)
+      },
+      reveal: (id) => revealRef.current(id),
+    }
+    cm.setHost(host)
+    return () => cm.setHost(null)
+  }, [cm, editor])
+  useEffect(() => cm?.touch(), [cm, version])
+  const cmMarks = cm ? cm.threads().filter((t) => !t.root.done || t.root.id === cmState.active).map((t) => t.root.id) : []
+  // the text a thread being written covers stays highlighted while the box has the focus
+  useIsoLayoutEffect(() => {
+    const H = (globalThis as unknown as { Highlight?: new (...r: Range[]) => unknown }).Highlight
+    const reg = (CSS as unknown as { highlights?: Map<string, unknown> }).highlights
+    if (!H || !reg) return
+    const range = cmState.draft?.range as CommentRange | undefined
+    const root = pagesRef.current
+    const a = range && editor.posOf(range.a)
+    const f = range && editor.posOf(range.f)
+    const da = root && a && domFromPos(root, a)
+    const df = root && f && domFromPos(root, f)
+    if (!da || !df) return void reg.delete('de-cm-draft')
+    const r = document.createRange()
+    r.setStart(da[0], da[1])
+    r.setEnd(df[0], df[1])
+    reg.set('de-cm-draft', new H(r))
+  })
+  useEffect(() => () => void (CSS as unknown as { highlights?: Map<string, unknown> }).highlights?.delete('de-cm-draft'), [])
 
   // ---- outline ----
   const titleId = meta?.styles?.find((x) => x.canon === 'title')?.id
@@ -715,6 +785,14 @@ export function DocxView({ client, onStatus, initialZoom = 'fit' }: DocxViewProp
           }}
           onMouseUp={() => {
             if (editor.painter) setTimeout(() => editor.applyPainter(), 0)
+          }}
+          onClick={(e) => {
+            if (!cm) return
+            // a click on commented text shows its thread
+            const ids = (e.target as HTMLElement).closest?.<HTMLElement>('[data-cm]')?.dataset.cm?.split(' ') ?? []
+            const id = ids.find((x) => cmMarks.includes(x))
+            if (id) cm.select(id, false)
+            else if (cmState.active) cm.select(null)
           }}
           onContextMenu={(e) => {
             if (!isEditing) return
@@ -812,6 +890,7 @@ export function DocxView({ client, onStatus, initialZoom = 'fit' }: DocxViewProp
       {ctxMenu && <ContextMenu x={ctxMenu.x} y={ctxMenu.y} items={ctxItems()} onClose={() => setCtxMenu(null)} />}
       {prompt && <PromptDialog spec={prompt} onClose={() => setPrompt(null)} />}
       {toast && <Toast text={toast} onDone={() => setToast(null)} />}
+      {cmMarks.length > 0 && <style>{markCss('.de-pages', cmMarks, cmState.active)}</style>}
       <ZoomControl zoom={zoom} effective={z} onChange={setZoom} />
       <Status text={status} onStatus={onStatus} />
     </div>

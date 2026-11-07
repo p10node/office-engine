@@ -40,7 +40,7 @@ export function mount(el: HTMLElement, options: MountOptions): MountedViewer {
  * Property: `file` (File/Blob/ArrayBuffer) for local data.
  */
 export class OfficeViewerElement extends HTMLElement {
-  static observedAttributes = ['src', 'name', 'toolbar', 'thumbnails', 'editable', 'save', 'download', 'file-menu', 'open', 'capture-select-all', 'theme', 'collab', 'room', 'user', 'base']
+  static observedAttributes = ['src', 'name', 'toolbar', 'thumbnails', 'editable', 'save', 'download', 'file-menu', 'open', 'capture-select-all', 'theme', 'collab', 'room', 'user', 'base', 'comments']
   private viewer?: MountedViewer
   private _file?: Blob | ArrayBuffer
 
@@ -94,6 +94,13 @@ export class OfficeViewerElement extends HTMLElement {
               user: { name: this.getAttribute('user') || 'Guest' },
             }
           : undefined,
+      comments:
+        this.getAttribute('comments') === 'false'
+          ? false
+          : {
+              user: this.getAttribute('user') ? { name: this.getAttribute('user')! } : undefined,
+              onEvent: (e) => this.dispatchEvent(new CustomEvent('comment', { detail: e })),
+            },
       onLoad: (client) => this.dispatchEvent(new CustomEvent('load', { detail: { kind: client.kind, name: client.name } })),
       onError: (error) => this.dispatchEvent(new CustomEvent('error', { detail: error })),
     }

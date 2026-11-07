@@ -19,6 +19,8 @@ import { useDocument } from './useDocument'
 import { XlsxView } from './xlsx/XlsxView'
 import type { CollabOptions } from '../collab'
 import { CollabBar, PeerOverlay, useCollab } from '../collab/react'
+import { CommentsContext, CommentsCtl, useCommentsState, type CommentOptions } from './comments/Comments'
+import { COMMENT_KEYS, CommentsPanel } from './comments/CommentsPanel'
 
 export interface DocViewerProps {
   /** File, Blob, ArrayBuffer, Uint8Array or URL (HTTP Range requests are used when the server supports them). */
@@ -83,6 +85,11 @@ export interface DocViewerProps {
    * Default true. With false the shortcut works from the viewer only (its content or toolbar).
    */
   captureSelectAll?: boolean
+  /**
+   * Comments (stored in the file, shared with collaborators): who writes them, who can be @mentioned, what the
+   * host hears about. Shown by default, written while editing; `false` hides them.
+   */
+  comments?: CommentOptions | false
 }
 
 const EXT: Record<string, string> = { docx: '.docx', xlsx: '.xlsx', pptx: '.pptx' }
@@ -121,6 +128,36 @@ export function DocViewer(props: DocViewerProps) {
   // with collaboration, editing waits for the shared history (offline edits sync on reconnect)
   const canEdit = !props.collab || collab.status === 'live' || collab.status === 'offline'
   const [statusEl, setStatusEl] = useState<HTMLSpanElement | null>(null)
+
+  // ---- comments ----
+  const cmOn = props.comments !== false
+  const cmCtl = useMemo(() => (client && cmOn ? new CommentsCtl(client) : null), [client, cmOn])
+  useEffect(() => () => cmCtl?.dispose(), [cmCtl])
+  const cmOpts = props.comments || {}
+  if (cmCtl) {
+    cmCtl.opts = cmOpts
+    cmCtl.me = cmOpts.user ?? props.collab?.user ?? { name: 'Me' }
+    cmCtl.canComment = cmOpts.canComment ?? (editing && canEdit)
+  }
+  const cmState = useCommentsState(cmCtl)
+  const cmOpenAtLoad = !!cmOpts.open
+  useEffect(() => {
+    if (cmCtl && cmOpenAtLoad) cmCtl.toggle(true)
+  }, [cmCtl]) // eslint-disable-line react-hooks/exhaustive-deps
+  const cmCount = cmCtl ? cmCtl.visible().length : 0
+  // comments.focus: the thread shown once it is in the document (DOCX threads appear as the text loads)
+  const cmFocus = cmOpts.focus
+  const cmFocused = useRef<string | null>(null)
+  useEffect(() => {
+    if (!cmCtl || !cmFocus || cmFocused.current === cmFocus || !cmCtl.loaded) return
+    const c = cmCtl.list.get(cmFocus)
+    const root = c?.parent ?? cmFocus
+    if (!cmCtl.threads().some((t) => t.root.id === root)) return
+    cmFocused.current = cmFocus
+    cmCtl.toggle(true)
+    if (cmCtl.list.get(root)?.done) cmCtl.setShowResolved(true)
+    cmCtl.select(root)
+  }, [cmCtl, cmFocus, cmState.rev])
 
   useEffect(() => {
     if (client) onLoad?.(client)
@@ -184,6 +221,27 @@ export function DocViewer(props: DocViewerProps) {
     doc.addEventListener('keydown', on)
     return () => doc.removeEventListener('keydown', on)
   }, [captureSelectAll])
+
+  // Ctrl/⌘+Alt+M: comment on the selection — from the viewer, or the page around it when nothing else has the focus
+  // (a click on a slide shape leaves it on the page)
+  const cmRef = useRef(cmCtl)
+  cmRef.current = cmCtl
+  useEffect(() => {
+    const root = rootRef.current
+    if (!root) return
+    const on = (e: KeyboardEvent) => {
+      const ctl = cmRef.current
+      if (e.defaultPrevented || !(e.metaKey || e.ctrlKey) || !e.altKey || e.shiftKey || e.code !== 'KeyM' || !ctl?.canComment) return
+      const target = (e.composedPath()[0] ?? e.target) as Node | null
+      const doc = root.ownerDocument
+      if (!(target && root.contains(target)) && target !== doc.body && target !== doc.documentElement) return
+      e.preventDefault()
+      ctl.start()
+    }
+    const doc = root.ownerDocument
+    doc.addEventListener('keydown', on)
+    return () => doc.removeEventListener('keydown', on)
+  }, [])
 
   // ---- File menu ----
   const [toast, setToast] = useState<string | null>(null)
@@ -289,6 +347,20 @@ export function DocViewer(props: DocViewerProps) {
           {client && client.size > 0 && <span className="de-status">{fmtBytes(client.size)}</span>}
           {client && props.collab && <CollabBar client={client} state={collab} />}
           {toolbarExtra}
+          {cmCtl && (
+            <button
+              type="button"
+              className={'de-mode de-cm-toggle' + (cmState.open ? ' de-mode-on' : '')}
+              onClick={() => cmCtl.toggle()}
+              title={cmCtl.canComment ? `Comments (${COMMENT_KEYS} to comment on the selection)` : 'Comments'}
+              aria-pressed={cmState.open}
+              data-testid="de-comments-toggle"
+            >
+              <Icon name="comment" size={16} />
+              Comments
+              {cmCount > 0 && <span className="de-cm-n">{cmCount}</span>}
+            </button>
+          )}
           {client && allowEdit && (
             <button type="button" className={editing ? 'de-mode de-mode-on' : 'de-mode'} onClick={() => setEditing((v) => !v)} title={editing ? 'Switch to viewing' : 'Edit document'}>
               <Icon name={editing ? 'view' : 'edit'} size={16} />
@@ -307,9 +379,12 @@ export function DocViewer(props: DocViewerProps) {
       {toolbar && client && editing && canEdit && <div className="de-ebar-host" ref={setBarEl} />}
       <div className="de-body">
         <ViewerContext.Provider value={api}>
-          <StatusContext.Provider value={statusEl}>{body}</StatusContext.Provider>
+          <CommentsContext.Provider value={cmCtl}>
+            <StatusContext.Provider value={statusEl}>{body}</StatusContext.Provider>
+          </CommentsContext.Provider>
         </ViewerContext.Provider>
         {client && collab.collab && <PeerOverlay client={client} collab={collab.collab} />}
+        {cmCtl && cmState.open && <CommentsPanel ctl={cmCtl} />}
       </div>
       {toast && <Toast text={toast} onDone={clearToast} />}
       {confirm && <ConfirmDialog title="Discard unsaved changes?" message={confirm.message} ok="Continue" onOk={confirm.run} onClose={() => setConfirm(null)} />}

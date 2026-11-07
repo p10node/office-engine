@@ -9,6 +9,7 @@ import {
 } from '../raw'
 import { EMU_PER_PX } from '../units'
 import type { PptxPresentation } from './parser'
+import { COMMENT_EXT_RE, isCommentRel } from './comments'
 import type { Box, PresentationMeta, ShapeOp, SlideModel, SlideOp } from './types'
 
 const NS_A = 'http://schemas.openxmlformats.org/drawingml/2006/main'
@@ -396,13 +397,14 @@ export async function slideOp(pres: PptxPresentation, op: SlideOp): Promise<Pres
     case 'duplicate': {
       const src = slides[op.index]
       if (!src) break
-      const xml = await pres.pkg.text(src.path)
+      // comments stay with the original slide
+      const xml = (await pres.pkg.text(src.path)).replace(COMMENT_EXT_RE, '')
       const rp = relsPathFor(src.path)
       let rels = pres.pkg.has(rp) ? await pres.pkg.text(rp) : '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"></Relationships>'
       // notes belong to the original slide only
       const rn = parseRaw(rels)
       const rroot = rootEl(rn)!
-      rroot.c = rroot.c.filter((c) => !(isNode(c) && /notesSlide$/.test(getAttr(c, 'Type') ?? '')))
+      rroot.c = rroot.c.filter((c) => !(isNode(c) && (/notesSlide$/.test(getAttr(c, 'Type') ?? '') || isCommentRel(getAttr(c, 'Type') ?? ''))))
       rels = serialize(rn)
       await insertSlidePart(pres, op.index, xml, rels)
       break
@@ -415,9 +417,18 @@ export async function slideOp(pres: PptxPresentation, op: SlideOp): Promise<Pres
       const entry = kidsOf(lst, 'sldId').find((x) => rels.get(getAttr(x, 'r:id') ?? '')?.target === s.path)
       if (entry) lst.c.splice(lst.c.indexOf(entry), 1)
       pres.pkg.setPart(pres.mainPath, serialize(nodes))
-      const notes = relOfType(await pres.pkg.rels(s.path), 'notesSlide')?.target
+      const srels = await pres.pkg.rels(s.path)
+      const notes = relOfType(srels, 'notesSlide')?.target
+      // its comments go with it
+      const comments = [...srels.values()].filter((r) => !r.external && isCommentRel(r.type)).map((r) => r.target)
+      for (const t of pres.comments.threads()) {
+        const a = t.root.at
+        if (!a || !('slide' in a) || a.slide !== s.path) continue
+        for (const r of t.replies) pres.comments.set(r.id, null)
+        pres.comments.set(t.root.id, null)
+      }
       await pres.pkg.removeRelsTo(pres.mainPath, s.path)
-      for (const part of [s.path, notes].filter(Boolean) as string[]) {
+      for (const part of [s.path, notes, ...comments].filter(Boolean) as string[]) {
         pres.pkg.setPart(part, null)
         if (pres.pkg.has(relsPathFor(part))) pres.pkg.setPart(relsPathFor(part), null)
         await pres.pkg.setContentType(part, null)

@@ -98,7 +98,7 @@ function InlineView({ x, ctx, o }: { x: Inline; ctx: RenderCtx; o: number }): Re
   switch (x.t) {
     case 'text': {
       const span = (
-        <span data-o={o} style={runCss(x.s)}>
+        <span data-o={o} style={runCss(x.s)} data-cm={x.cm?.join(' ')}>
           {x.text}
         </span>
       )
@@ -127,7 +127,7 @@ function InlineView({ x, ctx, o }: { x: Inline; ctx: RenderCtx; o: number }): Re
     case 'img': {
       const img = <Img ctx={ctx} target={x.target} w={x.w} h={x.h} alt={x.alt} />
       return (
-        <span {...obj}>
+        <span {...obj} data-cm={x.cm?.join(' ')}>
           {x.href && !ctx.measuring && !ctx.editable ? (
             <a href={x.href} target="_blank" rel="noreferrer noopener">
               {img}

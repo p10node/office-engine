@@ -10,6 +10,7 @@ import { getHost, onLocal } from './hosts'
 import { conflictsP, transformP, type POp, type PSlideOp } from './pptx-ops'
 import type { PptxCollabResult } from './pptx-worker'
 import type { Adapter, ApplyResult } from './session'
+import { applyComment, revertComment, type CommentOp } from './comments'
 
 const CAPTURED = new Set<keyof Methods>(['pptx.setText', 'pptx.shapes', 'pptx.slides', 'pptx.image', 'pptx.undo'])
 
@@ -67,13 +68,15 @@ export class PptxCollab implements Adapter<POp> {
   }
 
   captures(method: keyof Methods): boolean {
-    return CAPTURED.has(method)
+    return method === 'comments.set' || CAPTURED.has(method)
   }
 
   intercept(method: keyof Methods, args: unknown[]): Promise<unknown> | undefined {
     if (!this.submit) return undefined
     const a = args as never[]
     switch (method) {
+      case 'comments.set':
+        return this.submit({ t: 'comment', id: this.id(), cid: a[0], c: a[1] as CommentOp['c'] })
       case 'pptx.setText':
         return this.local({ t: 'text', id: this.id(), slide: this.path(a[0]), sid: a[1], paras: a[2] }).then((r) => (r as PptxCollabResult).model)
       case 'pptx.shapes': {
@@ -147,6 +150,7 @@ export class PptxCollab implements Adapter<POp> {
   }
 
   async apply(op: POp, kind: 'local' | 'replay' | 'remote'): Promise<ApplyResult> {
+    if (op.t === 'comment') return applyComment(this.client, op)
     const { res, rec } = await this.client.direct('collab.pptx.apply', op)
     if (op.t === 'slides') {
       this.undoStack = []
@@ -158,6 +162,8 @@ export class PptxCollab implements Adapter<POp> {
   }
 
   async revert(undo: unknown) {
+    const cm = revertComment(this.client, undo)
+    if (cm) return cm
     if (typeof undo !== 'number') return
     this.client.notify('collab:pptx', await this.client.direct('collab.pptx.revert', undo))
   }

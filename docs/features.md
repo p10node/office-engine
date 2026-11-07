@@ -57,6 +57,30 @@ Single row, buttons that don't fit collapse into `⋮`; custom-drawn dropdowns (
 
 `theme="dark"`, or `"auto"` to follow the OS / browser setting (`prefers-color-scheme`), darkens the chrome: bars, toolbar, menus, dialogs, sheet headers and tabs, thumbnails, popovers, scrollbars. Pages, slides and cells keep the colors the document gives them, like paper in a dark PDF viewer. Everything is driven by CSS variables on `.de-root`, so a host can also tune the palette.
 
+## Comments
+
+- **Where**: DOCX — the selected text (or the word at the caret); XLSX — a cell (one thread per cell, as in Excel: commenting on a cell that has one answers it); PPTX — next to the selected shape, or where the slide is right-clicked
+- **Start one**: `Ctrl/⌘+Alt+M`, right-click → Comment, or Comments → New comment
+- **Threads**: replies, resolve / reopen (answering a resolved thread reopens it), edit and delete your own comments, deleting a thread's first comment deletes the thread
+- **@mentions**: type `@` to pick someone from the host's list (`comments.mentions`); the host hears who was mentioned (`comments.onEvent`) to notify them
+- **Panel**: threads in document order with what they point at (the commented text, `Sheet1!B3`, `Slide 2`), resolved ones on demand; picking a thread shows its place, clicking commented text / a marked cell / a pin on a slide shows its thread
+- **In the document**: commented text is highlighted (stronger for the current thread), cells get a mark in their top right corner, slides a pin with the author's initials; resolved threads are not shown
+- **DOCX ranges follow the text**: typing inside a commented range extends it, typing right after it does not; splitting a paragraph keeps both parts covered; undo takes a new comment away (redo brings it back); a thread whose text is deleted leaves the file
+- **XLSX**: threads move with inserted / deleted rows and columns and go with a deleted row, column or sheet (undo brings them back)
+- **PPTX**: a slide's threads stay with it (not copied by Duplicate slide, deleted with the slide)
+- **Shared rooms**: comments are shared operations like edits — every editor sees them live, newcomers get them from the file or the history
+- **Read-only** while viewing (default: comments can be written while editing, `comments.canComment` overrides)
+
+Stored the Office way, so Word, Excel and PowerPoint show them:
+
+| Format | Parts                                                                                                                 | Notes                                                                                                                                                  |
+|--------|-----------------------------------------------------------------------------------------------------------------------|--------------------------------------------------------------------------------------------------------------------------------------------------------|
+| DOCX   | `comments.xml`, `commentsExtended.xml` (threads, resolved), `commentsIds.xml`, `commentsExtensible.xml`, `people.xml` | ranges as `commentRangeStart` / `commentRangeEnd` + reference; untouched comments keep their XML (rich text); comments in headers / footnotes are kept |
+| XLSX   | `threadedComments/*.xml`, `persons/person.xml`, plus the legacy `comments*.xml` + VML Excel keeps next to them        | notes (legacy comments) are read as one-comment threads; a note nobody answered or changed stays a note                                                |
+| PPTX   | modern comments `comments/modernComment_*.xml`, `authors.xml`                                                         | legacy comments are read as one-comment threads and written back as modern comments                                                                    |
+
+Comment text is plain (lines kept); formatting inside comments read from a file is kept while the comment is not edited. Ids are durable: a comment keeps its id after saving and reopening (DOCX durable ids, XLSX / PPTX GUIDs).
+
 ## File menu
 
 - **New**: blank document, spreadsheet or presentation (16:9, Office theme, title / content / blank layouts)
@@ -86,3 +110,4 @@ Single row, buttons that don't fit collapse into `⋮`; custom-drawn dropdowns (
 - DOCX: header/footer, text boxes and nested tables are read-only; paragraphs with fields spanning multiple paragraphs (TOC) are read-only; "update style to match selection" is not available
 - XLSX: no chart/pivot/conditional format/data validation/filter editing; inserting/deleting rows & columns doesn't shift conditional formats/data validation
 - PPTX: can't rotate shapes with the mouse yet, can't edit text inside tables yet, no table insert, no animations/transitions; slide list changes (add/delete/move) are not undoable
+- Comments: plain text only; DOCX comments can't cover text in more than one table cell or across a table; comments in headers, footers and footnotes are kept but not shown; XLSX comments don't move with sorted rows; PPTX comments anchored to a shape are shown at the shape's position when the file is opened and keep that anchor until moved

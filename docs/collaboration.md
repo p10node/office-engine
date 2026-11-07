@@ -28,11 +28,12 @@ Without React: `mount(el, { src, collab })`, `<office-viewer src="…" collab="w
 - Clients apply their edits immediately. When a collaborator's batch was ordered first, a client rolls its pending edits back, applies that batch, then replays its own (transformed) — so every client ends up with the same document. Newcomers open the latest snapshot and replay the batches after it.
 - Structural changes (inserting / deleting rows or columns, the sheet list, the slide list) wait for the hub's order (one round trip).
 
-| Format | Shared as                                                         | Same thing edited at once                                                                         |
-| ------ | ----------------------------------------------------------------- | ------------------------------------------------------------------------------------------------- |
-| DOCX   | text splices per paragraph, paragraph and table states            | characters merge inside a paragraph; split / join / paragraph format: last writer wins            |
-| XLSX   | cell values, formats, layout, fill / sort, row & column structure | last writer wins per cell and property; inserted / deleted rows and columns shift the other edits |
-| PPTX   | shape text, shape edits, slide list                               | last writer wins per shape                                                                        |
+| Format | Shared as                                                         | Same thing edited at once                                                                             |
+| ------ | ----------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------- |
+| DOCX   | text splices per paragraph, paragraph and table states            | characters merge inside a paragraph; split / join / paragraph format: last writer wins                |
+| XLSX   | cell values, formats, layout, fill / sort, row & column structure | last writer wins per cell and property; inserted / deleted rows and columns shift the other edits     |
+| PPTX   | shape text, shape edits, slide list                               | last writer wins per shape                                                                            |
+| all    | comments (one op per comment set / deleted)                       | last writer wins per comment; DOCX ranges travel with the text, XLSX threads move with rows / columns |
 
 ## Storage, snapshots and version history
 

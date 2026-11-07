@@ -1,4 +1,5 @@
 import { colorOf, type ColorCtx } from '../color'
+import { readPptxComments, PptxComments, writePptxComments } from './comments'
 import { cssFont } from '../fonts'
 import { OpcPackage, relOfType, type Rels } from '../opc'
 import { parseTheme, type Theme } from '../theme'
@@ -194,6 +195,8 @@ function autoNum(type: string, n: number): string {
 
 export class PptxPresentation {
   private masters = new Map<string, Promise<Master>>()
+  /** the comments (read in `open`) */
+  comments = new PptxComments()
   private layouts = new Map<string, Promise<Layout>>()
   private tableStyles?: Promise<Map<string, XEl>>
   readonly meta: PresentationMeta
@@ -223,7 +226,12 @@ export class PptxPresentation {
       count: slides.length,
       slides,
     }
-    return new PptxPresentation(pkg, mainPath, kid(root, 'defaultTextStyle'), meta)
+    const pres = new PptxPresentation(pkg, mainPath, kid(root, 'defaultTextStyle'), meta)
+    pres.comments = await readPptxComments(pkg, rels, slides, meta).catch((e: Error) => {
+      console.warn('[office-engine] comments not read:', e.message)
+      return new PptxComments()
+    })
+    return pres
   }
 
   private async part(p: string): Promise<Part> {
@@ -330,7 +338,7 @@ export class PptxPresentation {
   }
 
   get dirty() {
-    return this.genMaps.size > 0 || this.touched
+    return this.genMaps.size > 0 || this.touched || this.comments.dirty
   }
 
   /** Rewrites the paragraphs of shape `sid` on slide `index` and returns the re-rendered slide. */
@@ -412,7 +420,8 @@ export class PptxPresentation {
     return this.slide(index)
   }
 
-  save(): Promise<Blob> {
+  async save(): Promise<Blob> {
+    if (this.comments.dirty) await writePptxComments(this.pkg, this.mainPath, this.comments, this.meta.slides)
     return this.pkg.save(PPTX_MIME)
   }
 }

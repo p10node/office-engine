@@ -3,6 +3,8 @@
  * edited sheet is streamed through a rewriter that only touches edited rows.
  */
 import { relOfType, relsPathFor } from '../opc'
+import type { DocComment } from '../comments'
+import { writeXlsxComments } from './comments'
 import {
   clone, el, escText, relIdAttrs, getAttr, isNode, kidOf, kidsOf, local, parseRaw, prefixOf, rootEl, serialize, setAttr, setOrdered,
   type RChild, type RNode,
@@ -43,6 +45,8 @@ export interface Change {
   lay?: { before: LayoutState; after: LayoutState }
   /** whole-sheet snapshots (row/column insert/delete) */
   full?: { before: Snapshot; after: Snapshot }
+  /** comments the change moved or took away (inserted / deleted rows and columns): their values before / after */
+  cm?: { before: [string, DocComment | null][]; after: [string, DocComment | null][] }
 }
 
 const FONT_ORDER = ['b', 'i', 'strike', 'condense', 'extend', 'outline', 'shadow', 'u', 'vertAlign', 'sz', 'color', 'name', 'family', 'charset', 'scheme']
@@ -303,7 +307,34 @@ export class XlsxEditor {
   constructor(private wb: XlsxWorkbook) {}
 
   get dirty() {
-    return [...this.wb.sheetsData.values()].some(needsWrite) || !!this.styleEd?.changed || this.bookChanged
+    return [...this.wb.sheetsData.values()].some(needsWrite) || !!this.styleEd?.changed || this.bookChanged || this.wb.comments.dirty
+  }
+
+  /**
+   * Comments of sheet `path` after `n` rows / columns were inserted (n > 0) or deleted (n < 0) at `at`: they move with
+   * their cell, and go with it. Returns what changed (for undo).
+   */
+  private shiftComments(path: string, axis: 'row' | 'col', at: number, n: number): Change['cm'] {
+    const store = this.wb.comments
+    const before: [string, DocComment | null][] = []
+    const after: [string, DocComment | null][] = []
+    const set = (id: string, c: DocComment | null) => {
+      before.push([id, store.get(id) ?? null])
+      after.push([id, c])
+      store.set(id, c)
+    }
+    for (const t of store.threads()) {
+      const a = t.root.at
+      if (!a || !('sheet' in a) || a.sheet !== path) continue
+      const x = axis === 'row' ? a.r : a.c
+      const y = n >= 0 ? (x >= at ? x + n : x) : x < at ? x : x < at - n ? null : x + n
+      if (y === x) continue
+      if (y === null) {
+        for (const r of t.replies) set(r.id, null)
+        set(t.root.id, null)
+      } else set(t.root.id, { ...t.root, at: axis === 'row' ? { ...a, r: y } : { ...a, c: y } })
+    }
+    return before.length ? { before, after } : undefined
   }
 
   private sheet(i: number): SheetData {
@@ -426,6 +457,7 @@ export class XlsxEditor {
     const d = this.sheet(ch.sheet)
     this.lastRecalc = []
     if (ch.full) restore(d, which === 'prev' ? ch.full.before : ch.full.after)
+    if (ch.cm) for (const [id, c] of which === 'prev' ? [...ch.cm.before].reverse() : ch.cm.after) this.wb.comments.set(id, c)
     this.apply(d, ch.cells, which)
     if (ch.lay) applyLayout(d, which === 'prev' ? ch.lay.before : ch.lay.after)
     const recalc = ch.full ? this.recalcAll() : this.lastRecalc
@@ -477,6 +509,9 @@ export class XlsxEditor {
       range: ch.range,
       lay: ch.lay ? { before: layoutState(d), after: which === 'prev' ? ch.lay.before : ch.lay.after } : undefined,
       full: ch.full ? { before: snapshot(d), after: which === 'prev' ? ch.full.before : ch.full.after } : undefined,
+      cm: ch.cm
+        ? { before: ch.cm.before.map(([id]) => [id, this.wb.comments.get(id) ?? null]), after: which === 'prev' ? [...ch.cm.before].reverse() : ch.cm.after }
+        : undefined,
     }
     const res = this.step(counter, 'next')
     this.undoStack.push(counter)
@@ -540,9 +575,10 @@ export class XlsxEditor {
         const before = snapshot(d)
         const axis = op.op.endsWith('Rows') ? 'row' : 'col'
         shiftSheet(d, name, axis, op.at, op.op.startsWith('insert') ? op.n : -op.n, others)
+        const cm = this.shiftComments(this.wb.sheets[sheet].path, axis, op.at, op.op.startsWith('insert') ? op.n : -op.n)
         this.formulaTouched = true
         const recalc = this.recalcAll()
-        const ch: Change = { sheet, cells: [], range: all, full: { before, after: snapshot(d) } }
+        const ch: Change = { sheet, cells: [], range: all, full: { before, after: snapshot(d) }, cm }
         this.undoStack.push(ch)
         this.redoStack = []
         return { sheet, range: all, layout: this.layout(sheet), recalc }
@@ -749,6 +785,13 @@ export class XlsxEditor {
       case 'delete': {
         if (sheets.length <= 1) throw new Error('A workbook needs at least one sheet')
         const s = sheets[op.index]
+        // its comments go with it
+        for (const t of this.wb.comments.threads()) {
+          const a = t.root.at
+          if (!a || !('sheet' in a) || a.sheet !== s.path) continue
+          for (const r of t.replies) this.wb.comments.set(r.id, null)
+          this.wb.comments.set(t.root.id, null)
+        }
         sheetsEl.c.splice(sheetsEl.c.indexOf(entries[op.index]), 1)
         pkg.setPart(s.path, null)
         if (pkg.has(relsPathFor(s.path))) pkg.setPart(relsPathFor(s.path), null)
@@ -810,6 +853,8 @@ export class XlsxEditor {
         await pkg.setContentType(chain.target, null)
       }
     }
+    // after the sheets: a sheet given comments here links its drawing of them
+    if (this.wb.comments.dirty) await writeXlsxComments(pkg, this.wb.mainPath, this.wb.comments, this.wb.sheets)
     return pkg.save(XLSX_MIME)
   }
 

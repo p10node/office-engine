@@ -15,8 +15,10 @@ import type { XOp } from '../../collab/xlsx-ops'
 import { PptxCollabWorker } from '../../collab/pptx-worker'
 import type { POp } from '../../collab/pptx-ops'
 import type { Events, Methods, OpenParams, OpenResult } from './protocol'
+import { checkedComment, type CommentStore } from '../comments'
 
 const WRITES = new Set<string>([
+  'comments.set',
   // `docx.convert` only reads, but what it reads (styles, lists) is what the writes before it set
   'docx.edit', 'docx.table', 'docx.image', 'docx.link', 'docx.style', 'docx.styleSet', 'docx.convert', 'save',
   'xlsx.set', 'xlsx.format', 'xlsx.sheetOp', 'xlsx.bookOp', 'xlsx.replace', 'xlsx.undo', 'xlsx.redo', 'collab.xlsx.apply', 'collab.xlsx.revert',
@@ -51,6 +53,8 @@ export class Engine {
     if (main.kind === 'docx') this.docx = await DocxDocument.open(pkg, main.path)
     else if (main.kind === 'xlsx') res.xlsx = (this.xlsx = await XlsxWorkbook.open(pkg, main.path)).meta()
     else res.pptx = (this.pptx = await PptxPresentation.open(pkg, main.path)).meta
+    // comment changes (also those made by edits, like rows deleted) reach the views
+    this.comments()
     return res
   }
 
@@ -100,6 +104,14 @@ export class Engine {
         return setStyleLook(this.need(this.docx), args[0] as string, args[1] as StyleLook)
       case 'docx.convert':
         return convertParas(this.need(this.docx), args[0] as ParaSpec[], args[1] as boolean | undefined)
+      case 'comments.list':
+        return this.comments().list()
+      case 'comments.set': {
+        const id = args[0] as string
+        const c = args[1] === null ? null : checkedComment(args[1])
+        if (args[1] !== null && (!c || c.id !== id)) throw new Error('Invalid comment')
+        return this.comments().set(id, c)
+      }
       case 'save':
         return this.save()
       case 'dirty':
@@ -155,6 +167,14 @@ export class Engine {
         return undoShapes(this.need(this.pptx), !!args[0])
     }
     throw new Error(`Unknown method ${String(method)}`)
+  }
+
+  /** the comments of the open document */
+  private comments(): CommentStore {
+    const store = this.docx?.comments ?? this.xlsx?.comments ?? this.pptx?.comments
+    if (!store) throw new Error('Document not opened')
+    store.onChange ??= (id, c) => this.emit('comment', { id, c })
+    return store
   }
 
   private xcollab?: XlsxCollabWorker

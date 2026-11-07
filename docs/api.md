@@ -74,8 +74,48 @@ CSS is auto-injected, no import needed. Container must have a height.
 | `onSave`           | `(blob, name) => void`                         | download  | Receives saved file (downloads by default)                                                           |
 | `onDirtyChange`    | `(dirty) => void`                              | –         | Whether there are unsaved changes                                                                    |
 | `collab`           | `CollabOptions`                                | –         | Real-time collaboration, see [collaboration](collaboration.md)                                       |
+| `comments`         | `CommentOptions \| false`                      | `{}`      | Comments (see below); `false` hides them                                                             |
 | `onLoad`           | `(client) => void`                             | –         |                                                                                                      |
 | `onError`          | `(error) => void`                              | –         |                                                                                                      |
+
+### Comments
+
+```tsx
+<DocViewer
+  src={file}
+  editable
+  comments={{
+    user: { id: me.id, name: me.name },                              // author of the comments written here
+    mentions: (q) => api.members(nodeId, q),                         // or a list: [{ id, name }, …]
+    onEvent: (e) => e.mentioned.length && api.notify(e.mentioned, e), // notify people mentioned
+    open: true,                                                      // panel open on load
+  }}
+/>
+```
+
+| `CommentOptions` | Type                                                      | Default                      |
+|------------------|-----------------------------------------------------------|------------------------------|
+| `user`           | `{ name, id?, initials? }`                                | the `collab` user, else "Me" |
+| `mentions`       | `CommentUser[] \| (query) => CommentUser[] \| Promise<…>` | none (no `@` suggestions)    |
+| `canComment`     | `boolean`                                                 | while editing                |
+| `onEvent`        | `(e: CommentEvent) => void`                               | –                            |
+| `open`           | `boolean`                                                 | `false`                      |
+| `focus`          | `string` (a comment id)                                   | –                            |
+
+`focus` shows a thread when the document opens (a link from a notification): the panel opens on it and the document scrolls to its place.
+
+`onEvent` is called for the changes made in this viewer (not for collaborators' — each of them reports their own):
+
+| `CommentEvent` | Meaning                                                                                     |
+|----------------|---------------------------------------------------------------------------------------------|
+| `type`         | `'add'`, `'reply'`, `'edit'`, `'delete'`, `'resolve'`, `'reopen'`                           |
+| `comment`      | the comment (`DocComment`: `id`, `parent?`, `author`, `time`, `text`, `mentions?`, `done?`) |
+| `thread`       | the thread's first comment                                                                  |
+| `mentioned`    | people mentioned by this change: all of a new comment's, those an edit added                |
+| `participants` | the people who wrote the thread's other comments (not the one who made the change)          |
+| `quote`        | what the thread points at: the commented text, `Sheet1!B3`, `Slide 2`                       |
+
+A comment's author and mentions carry the `id` the host gave (stored in the file's people / persons / authors list), so a host can tell its users apart after the file was saved and reopened. Ownership (edit / delete) is by `user.id` when there is one, else by name.
 
 Use individual views / build your own UI:
 
@@ -103,7 +143,7 @@ The views style themselves from CSS variables on `.de-root` (`--de-bg`, `--de-ch
 </script>
 ```
 
-`<office-viewer>`: attributes `src`, `name`, `editable`, `toolbar="false"`, `thumbnails="false"`, `save="false"`, `download="false"`, `file-menu="false"`, `open="false"`, `capture-select-all="false"`, `theme="dark"` (or `"auto"`), `collab` / `room` / `user` / `base` (real-time collaboration); property `.file = File`; events `load`, `error`.
+`<office-viewer>`: attributes `src`, `name`, `editable`, `toolbar="false"`, `thumbnails="false"`, `save="false"`, `download="false"`, `file-menu="false"`, `open="false"`, `capture-select-all="false"`, `theme="dark"` (or `"auto"`), `collab` / `room` / `user` / `base` (real-time collaboration; `user` also writes the comments), `comments="false"`; property `.file = File`; events `load`, `error`, `comment` (`detail`: a `CommentEvent`).
 
 ## Core API (no React)
 
@@ -119,6 +159,9 @@ doc.on('xlsx:progress', (p) => {})
 await doc.call('xlsx.block', 0, 1000, 1100) // formatted cells, rows [1000, 1100)
 await doc.call('pptx.slide', 12)           // slide model with layout/master/theme resolved
 await doc.call('xlsx.set', 0, [{ r: 4, c: 1, input: '=SUM(A1:A4)' }])
+const comments = await doc.call('comments.list')  // DocComment[]: threads are roots + replies (threadsOf)
+doc.on('comment', ({ id, c }) => {})       // a comment set / deleted (c null), here or by a collaborator
+await doc.call('comments.set', c.id, { ...c, done: true }) // XLSX / PPTX threads carry their place (`at`)
 const blob = await doc.call('save')        // edited file
 doc.destroy()
 ```

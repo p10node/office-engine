@@ -1,4 +1,5 @@
 import { OpcPackage, relOfType, type Rels } from '../opc'
+import { readXlsxComments, XlsxComments } from './comments'
 import { parseTheme, type Theme } from '../theme'
 import { Calc } from './calc'
 import { kid, kids, num, parseXmlStream, type Attrs, type SaxHandler } from '../xml'
@@ -307,6 +308,8 @@ class SstHandler implements SaxHandler {
 
 export class XlsxWorkbook {
   sheetsData = new Map<number, SheetData>()
+  /** the comments (read in `open`) */
+  comments = new XlsxComments()
   readonly calc = new Calc(this)
   sst: string[] = []
   private sstLoading?: Promise<void>
@@ -336,7 +339,12 @@ export class XlsxWorkbook {
     const styles = parseSheetStyles(stylesRel ? await pkg.xml(stylesRel.target) : undefined, theme)
     const pr = kid(root, 'workbookPr')
     const date1904 = pr?.a.date1904 === '1' || pr?.a.date1904 === 'true'
-    return new XlsxWorkbook(pkg, mainPath, rels, sheets, styles, date1904, theme)
+    const wb = new XlsxWorkbook(pkg, mainPath, rels, sheets, styles, date1904, theme)
+    wb.comments = await readXlsxComments(pkg, mainPath, rels, sheets).catch((e: Error) => {
+      console.warn('[office-engine] comments not read:', e.message)
+      return new XlsxComments()
+    })
+    return wb
   }
 
   meta(): WorkbookMeta {

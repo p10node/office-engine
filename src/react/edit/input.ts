@@ -4,7 +4,7 @@
  * composition (Vietnamese Telex/VNI, CJK…) is committed on `compositionend`.
  */
 import {
-  collapsed, deleteRange, insertText, nextBoundary, normalize, plen, prevBoundary, runAt, runsText, shiftPa, splitRuns,
+  collapsed, deleteRange, insertText, marksAt, nextBoundary, normalize, plen, prevBoundary, runAt, runsText, shiftPa, splitRuns, withMarks,
   type Pos, type RRun, type Sel,
 } from './rich'
 
@@ -114,7 +114,9 @@ export function opInsertRuns(host: RichHost, sel: Sel, lines: RRun[][], opts: Re
   const o = plan.at.o
   const [left, right] = splitRuns(p.runs, o)
   const fallback = runAt(p.runs, o) ?? (host.defaultRun?.(p) as RRun | undefined)
-  const fill = (runs: RRun[]) => runs.map((r) => (r.t === 'text' && !r.s && fallback ? { ...fallback, ...r, s: fallback.s, src: fallback.src } : r))
+  // pasted runs join the comment threads covering both sides of the paste, nothing else
+  const cm = marksAt(p.runs, o)
+  const fill = (runs: RRun[]) => runs.map((r) => withMarks(r.t === 'text' && !r.s && fallback ? { ...fallback, ...r, s: fallback.s, src: fallback.src } : r, cm))
   if (lines.length === 1) {
     const ins = fill(lines[0])
     const runs = normalize([...left, ...ins, ...right])

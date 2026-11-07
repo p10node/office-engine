@@ -11,7 +11,41 @@ import type { DocumentClient } from '../../core/worker/client'
 import { opInsert, opInsertRuns, ordered, RichInput, type ReplaceOpts, type RichHost } from '../edit/input'
 import { htmlToParas } from './html'
 import { deleteCol, deleteRow, gridOf, insertCol, insertRow, newTable } from './tables'
-import { collapsed, formatRange, normalize, plen, rlen, runAt, runsText, shiftPa, splitRuns, type Pos, type RRun, type Sel } from '../edit/rich'
+import { collapsed, formatRange, markRange, normalize, plen, rlen, runAt, runsText, shiftPa, splitRuns, type Pos, type RRun, type Sel } from '../edit/rich'
+
+/** a place in a paragraph that survives edits elsewhere: paragraph id, page-break part, offset */
+export interface ParaPos {
+  pid: number
+  k: number
+  o: number
+}
+
+/** what a new comment would cover */
+export interface CommentRange {
+  a: ParaPos
+  f: ParaPos
+  /** the text covered */
+  quote: string
+}
+
+/** where a comment thread is in the document */
+export interface CommentPlace {
+  /** first paragraph (block address) holding its text, and the offset there */
+  pa: string
+  o: number
+  /** the text it covers (paragraphs joined by spaces), shortened */
+  quote: string
+}
+
+const QUOTE_MAX = 200
+const WORD = /[\p{L}\p{N}_'’-]/u
+
+/** comment threads the runs mark */
+const marksOf = (ps: Paragraph[]) => {
+  const out = new Set<string>()
+  for (const p of ps) for (const r of p.runs) if (r.t === 'text' || r.t === 'img') for (const id of r.cm ?? []) out.add(id)
+  return out
+}
 
 export interface DocState {
   blocks: Block[]
@@ -427,6 +461,13 @@ export class DocxEditor implements RichHost<Paragraph> {
       else remove.push(b.pid)
     }
     const anchor = before[0].pid!
+    // a thread's text left these paragraphs: its other paragraphs mark their own part of the range from now on
+    const had = marksOf(before)
+    if (had.size) {
+      const kept = marksOf(next)
+      const lost = [...had].filter((id) => !kept.has(id))
+      if (lost.length) this.remark(new Set(lost), new Set([...pids, ...remove, ...before.map((b) => b.pid!)]))
+    }
     const structural = want || next.some((p) => p.pd !== before.find((b) => b.pid === p.pid)?.pd)
     // also while an earlier conversion is still due: its answer comes back after this edit and can't be applied (see applyResult)
     const convert = structural || specs.some((x) => this.stale.has(x.pid))
@@ -443,6 +484,131 @@ export class DocxEditor implements RichHost<Paragraph> {
 
   get busy() {
     return this.inflight > 0
+  }
+
+  /**
+   * Paragraphs still written as they were read (with the comment marks of the file) that hold text of threads `ids`
+   * are written from the model from now on: each marks its own part of the range, which saving joins into one.
+   */
+  private remark(ids: Set<string>, skip: Set<number>) {
+    const tables = new Set<number>()
+    const visit = (list: Block[], bi: number | undefined) => {
+      list.forEach((b, i) => {
+        if (b.t === 'tbl') return b.rows.forEach((r) => r.cells.forEach((c) => visit(c.blocks, i)))
+        if (b.t !== 'p' || b.pid === undefined || b.edited || b.ro || skip.has(b.pid)) return
+        if (!b.runs.some((r) => (r.t === 'text' || r.t === 'img') && r.cm?.some((id) => ids.has(id)))) return
+        skip.add(b.pid)
+        const parts = this.partsOf(list, b.pid, i)
+        for (const p of parts) p.edited = true
+        if (bi !== undefined && (this.st.blocks[bi] as Table).tid !== undefined) tables.add(bi)
+        else this.send('docx.edit', { anchor: b.pid, list: [paraSpec(parts)] } as EditOp)
+      })
+    }
+    visit(this.st.blocks, undefined)
+    for (const bi of tables) this.commitTable(bi)
+  }
+
+  // ---------------------------------------------------------------- comments
+
+  private paraPos(p: Pos): ParaPos | null {
+    const para = this.para(p.pa)
+    if (!para || para.pid === undefined) return null
+    const k = this.locate(para.pid).findIndex((l) => l.pa === p.pa)
+    return k < 0 ? null : { pid: para.pid, k, o: p.o }
+  }
+
+  /** the block address and offset of `d` now; null when its paragraph is gone */
+  posOf(d: ParaPos): Pos | null {
+    const locs = this.locate(d.pid)
+    const l = locs[Math.min(d.k, locs.length - 1)]
+    const p = l && this.para(l.pa)
+    return p ? { pa: l.pa, o: Math.min(d.o, plen(p.runs as RRun[])) } : null
+  }
+
+  /** what a new comment covers: the selection, or the word at the caret; null when there is no text there */
+  commentRange(sel: Sel | null = this.input.sel() ?? this.input.lastSel): CommentRange | null {
+    if (!sel) return null
+    const r = this.selectedParas(sel)
+    if (!r) return null
+    let { s, e } = r
+    if (collapsed(sel)) {
+      const t = runsText(this.para(s.pa)!.runs as RRun[])
+      let a = s.o
+      let b = s.o
+      while (a > 0 && WORD.test(t[a - 1])) a--
+      while (b < t.length && WORD.test(t[b])) b++
+      if (a === b) return null
+      s = { pa: s.pa, o: a }
+      e = { pa: s.pa, o: b }
+    }
+    let quote = ''
+    r.pas.forEach((pa, i) => {
+      const t = runsText(this.para(pa)!.runs as RRun[])
+      quote += (i ? ' ' : '') + t.slice(pa === s.pa ? s.o : 0, pa === e.pa ? e.o : t.length)
+    })
+    quote = quote.replace(/\uFFFC/g, '').replace(/\s+/g, ' ').trim()
+    const a = this.paraPos(s)
+    const f = this.paraPos(e)
+    if (!a || !f || !quote) return null
+    return { a, f, quote: quote.length > QUOTE_MAX ? quote.slice(0, QUOTE_MAX - 1) + '…' : quote }
+  }
+
+  /** marks `range` as covered by comment thread `id` (one undo step); false when its text is gone */
+  markComment(id: string, range: CommentRange): boolean {
+    const s = this.posOf(range.a)
+    const e = this.posOf(range.f)
+    if (!s || !e) return false
+    const sel = { a: s, f: e }
+    const r = this.selectedParas(sel)
+    if (!r) return false
+    let any = false
+    const next = r.pas.map((pa) => {
+      const p = this.para(pa)!
+      const a = pa === r.s.pa ? r.s.o : 0
+      const b = pa === r.e.pa ? r.e.o : plen(p.runs as RRun[])
+      if (b > a) any = true
+      return this.withRuns(p, markRange(p.runs as RRun[], a, b, id, true))
+    })
+    if (!any) return false
+    this.replace(r.pas, next, { a: r.e, f: r.e }, { label: 'comment' })
+    return true
+  }
+
+  /** the first place of each comment thread the document marks, in document order */
+  commentPlaces(): Map<string, CommentPlace> {
+    const out = new Map<string, CommentPlace>()
+    const quotes = new Map<string, string>()
+    const add = (id: string, text: string) => {
+      const q = quotes.get(id)
+      if (q !== undefined && q.length >= QUOTE_MAX) return
+      quotes.set(id, q === undefined ? text : q + text)
+    }
+    const para = (p: Paragraph, pa: string) => {
+      let o = 0
+      const seen = new Set<string>()
+      for (const r of p.runs) {
+        if (r.t === 'box') for (const b of r.blocks) if (b.t === 'p') para(b, pa)
+        if ((r.t === 'text' || r.t === 'img') && r.cm) {
+          for (const id of r.cm) {
+            if (!out.has(id)) out.set(id, { pa, o, quote: '' })
+            // paragraphs are joined by a space
+            if (!seen.has(id) && quotes.has(id)) add(id, ' ')
+            seen.add(id)
+            if (r.t === 'text') add(id, r.text)
+          }
+        }
+        o += r.t === 'text' ? r.text.length : 1
+      }
+    }
+    this.st.blocks.forEach((b, bi) => {
+      if (b.t === 'p') para(b, String(bi))
+      else if (b.t === 'tbl') b.rows.forEach((r, ri) => r.cells.forEach((c, ci) => c.blocks.forEach((x, pi) => x.t === 'p' && para(x, `${bi}.${ri}.${ci}.${pi}`))))
+    })
+    for (const [id, place] of out) {
+      const q = (quotes.get(id) ?? '').replace(/\s+/g, ' ').trim()
+      place.quote = q.length > QUOTE_MAX ? q.slice(0, QUOTE_MAX - 1) + '…' : q
+    }
+    return out
   }
 
   private locate(pid: number): { list: Block[]; index: number; pa: string }[] {
