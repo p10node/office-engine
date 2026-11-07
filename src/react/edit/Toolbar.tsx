@@ -89,6 +89,7 @@ const P: Record<string, ReactNode> = {
   gridlines: <path d="M4 4h16v16H4zM4 9.3h16M4 14.6h16M9.3 4v16M14.6 4v16" />,
   lineStyle: <path d="M4 6h16M4 12h16M4 18h3M10 18h4M17 18h3" strokeWidth={2} />,
   paint: <path d="M5 4h11v5H5zM16 6.5h3v5l-7 1.5v3M11 16h2v5h-2z" />,
+  styleMatch: <path d="m3 18 4.5-12L12 18M4.7 14h5.6M21 9.5a4 4 0 0 0-7-1.8M14 5v3h3M14 14.5a4 4 0 0 0 7 1.8M21 19v-3h-3" />,
   omega: <path d="M5 19h4v-2.5A6.5 6.5 0 1 1 15 16.5V19h4" />,
   outline: <path d="M4 6h.01M4 12h.01M4 18h.01M8 6h12M11 12h9M11 18h9" strokeWidth={2} />,
   imgOrig: <path d="M4 5h16v14H4zM8 15V9l-1.5 1.5M12 10h.01M12 14h.01M16.5 15V9L15 10.5" />,

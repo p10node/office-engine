@@ -3,13 +3,15 @@
  * mirrors every change to the worker (which regenerates the XML).
  */
 import { paraSpec } from '../../core/docx/spec'
-import type { Block, CanonStyle, EditOp, EditResult, Inline, Paragraph, ParaDirty, ParaStyle, RunSet, RunStyle, StyleInfo, Table, TableSpec } from '../../core/docx/types'
+import type {
+  Block, CanonStyle, EditOp, EditResult, HeaderFooters, Inline, Paragraph, ParaDirty, ParaStyle, RunSet, RunStyle, StyleInfo, StyleLook, Table, TableSpec,
+} from '../../core/docx/types'
 import { cssFont } from '../../core/fonts'
 import type { DocumentClient } from '../../core/worker/client'
 import { opInsert, opInsertRuns, ordered, RichInput, type ReplaceOpts, type RichHost } from '../edit/input'
 import { htmlToParas } from './html'
 import { deleteCol, deleteRow, gridOf, insertCol, insertRow, newTable } from './tables'
-import { collapsed, formatRange, normalize, plen, runAt, shiftPa, splitRuns, type Pos, type RRun, type Sel } from '../edit/rich'
+import { collapsed, formatRange, normalize, plen, rlen, runAt, runsText, shiftPa, splitRuns, type Pos, type RRun, type Sel } from '../edit/rich'
 
 export interface DocState {
   blocks: Block[]
@@ -29,6 +31,8 @@ interface Entry {
   selAfter: Sel
   label: string
   t: number
+  /** the paragraph style this entry gave another look ("update style to match"), and the looks to go back and forth */
+  style?: { id: string; undo: StyleLook; redo: StyleLook }
 }
 
 export interface FormatState {
@@ -55,6 +59,74 @@ export interface FormatState {
 }
 
 const path = (pa: string) => pa.split('.').map(Number)
+
+/** the properties "update style to match" moves from the text into the style */
+const RUN_LOOK = ['b', 'i', 'u', 'strike', 'color', 'sz', 'font'] as const
+const PARA_LOOK = ['align', 'line', 'before', 'after'] as const
+
+/** a run's look, property by property, in the form two runs are compared in */
+const runLook = (s: RunStyle | undefined) => ({
+  b: !!s?.b,
+  i: !!s?.i,
+  u: s?.u && s.u !== 'none' ? s.u : 'none',
+  strike: !!s?.strike,
+  color: s?.color ?? 'auto',
+  sz: s?.sz,
+  font: s?.font,
+})
+
+const paraLook = (ps: ParaStyle) => ({
+  align: ps.align ?? 'left',
+  // a multiple of the line height only: fixed heights are not part of the look taken over
+  line: !ps.lineRule || ps.lineRule === 'auto' ? (ps.line ?? 1) : undefined,
+  before: ps.before ?? 0,
+  after: ps.after ?? 0,
+})
+
+/** the look of each character of a paragraph (an object counts as one) */
+const charLooks = (p: Paragraph) => p.runs.flatMap((r) => (r.t === 'text' ? Array<string>(r.text.length).fill(JSON.stringify(runLook(r.s))) : ['']))
+
+/** the font a CSS stack starts with */
+const firstFont = (css: string | undefined) => (css ? (/^\s*"?([^",]+)/.exec(css)?.[1] ?? css) : undefined)
+
+/**
+ * `was` with the look of `now`: the same paragraph converted again after its style changed. Content, source
+ * references and the user's own formatting stay those of `was`; null when the two do not hold the same content.
+ */
+function reskin(was: Paragraph, now: Paragraph): Paragraph | null {
+  if (runsText(was.runs as RRun[]) !== runsText(now.runs as RRun[])) return null
+  const runs: Inline[] = []
+  let j = 0
+  let o = 0
+  // the run of `now` at the position reached (text runs already used up are passed)
+  const at = () => {
+    for (let n = now.runs[j]; n && n.t === 'text' && o >= n.text.length; n = now.runs[j]) {
+      j++
+      o = 0
+    }
+    return now.runs[j]
+  }
+  for (const w of was.runs) {
+    if (w.t !== 'text') {
+      const n = at()
+      if (!n || n.t !== w.t) return null
+      runs.push(w.t === 'box' && n.t === 'box' ? { ...w, blocks: n.blocks } : (w.t === 'field' || w.t === 'ref') && 's' in n ? { ...w, s: n.s } : w)
+      j++
+      o = 0
+      continue
+    }
+    for (let rest = w.text; rest; ) {
+      const n = at()
+      if (!n || n.t !== 'text') return null
+      const take = Math.min(rest.length, n.text.length - o)
+      runs.push({ ...w, text: rest.slice(0, take), s: n.s })
+      rest = rest.slice(take)
+      o += take
+    }
+  }
+  const marker = was.marker && now.marker ? { ...was.marker, s: now.marker.s } : was.marker
+  return { ...was, ps: now.ps, runs: normalize(runs as RRun[]) as Inline[], markSz: now.markSz, markFont: now.markFont, marker }
+}
 
 /** selection recorded around address `from`, re-based onto `to` (same container) */
 function moveSel(sel: Sel, from: string, to: string): Sel {
@@ -83,8 +155,10 @@ export class DocxEditor implements RichHost<Paragraph> {
   onState?: (s: FormatState | null) => void
   /** image selection changed (overlay with resize handles) */
   onImage?: (img: FormatState['img'] | null) => void
-  /** style list changed (a built-in style was added to the document) */
+  /** style list changed (a built-in style was added to the document, a style got another look) */
   onStyles?: (styles: StyleInfo[]) => void
+  /** headers / footers were converted again (a style they use got another look) */
+  onHeaders?: (h: HeaderFooters) => void
   shortcut?: (e: KeyboardEvent) => boolean
   onDirty?: () => void
   /** paint format: run formatting copied from the caret, applied to the next selection */
@@ -293,6 +367,8 @@ export class DocxEditor implements RichHost<Paragraph> {
     }
     this.commit(pas[0], before, next, opts.want)
     this.onCommit?.({ kind: 'paras', before, next })
+    // a collaborator's paragraphs may come with the look a style had before it changed
+    if (opts.label === 'collab') this.catchUp()
     this.pendingSel = sel
     this.onDirty?.()
     this.changed()
@@ -416,7 +492,11 @@ export class DocxEditor implements RichHost<Paragraph> {
       if (!locs.length || paras.length !== locs.length || !cur.every((x) => sent.has(x))) continue
       locs.forEach((l, i) => {
         const was = cur[i]
-        this.put(l.pa, { ...paras[i], from: was.from, orig: was.orig, pd: was.pd, edited: was.edited, keepSect: was.keepSect, ver: was.ver, pb: was.pb })
+        const p = { ...paras[i], from: was.from, orig: was.orig, pd: was.pd, edited: was.edited, keepSect: was.keepSect, ver: was.ver, pb: was.pb }
+        this.put(l.pa, p)
+        // converted with the styles as they are by now
+        this.lookAt.set(p, this.styleGen)
+        this.heir.set(was, p)
         rebuilt.add(l.pa)
       })
       touched = true
@@ -458,6 +538,7 @@ export class DocxEditor implements RichHost<Paragraph> {
   undo() {
     const e = this.history.pop()
     if (!e) return
+    if (e.style) this.restyle(e.style.id, e.style.undo)
     if (e.blocks) {
       const bi = this.whereNow(e.blocks.after, String(e.blocks.bi))
       // the blocks were removed by a collaborator: nothing left to undo
@@ -466,6 +547,8 @@ export class DocxEditor implements RichHost<Paragraph> {
       this.future.push(e)
       return
     }
+    // a style on its own: no paragraph changed with it
+    if (!e.pas.length) return this.styleOnly(e, this.future, e.selBefore)
     const at = this.whereNow(e.after, e.pas[0])
     if (at === undefined) return
     const pasAfter = e.after.map((_, i) => shiftPa(at, i))
@@ -478,6 +561,7 @@ export class DocxEditor implements RichHost<Paragraph> {
   redo() {
     const e = this.future.pop()
     if (!e) return
+    if (e.style) this.restyle(e.style.id, e.style.redo)
     if (e.blocks) {
       const bi = this.whereNow(e.blocks.before, String(e.blocks.bi))
       if (bi === undefined) return
@@ -485,12 +569,19 @@ export class DocxEditor implements RichHost<Paragraph> {
       this.history.push(e)
       return
     }
+    if (!e.pas.length) return this.styleOnly(e, this.history, e.selAfter)
     const at = this.whereNow(e.before, e.pas[0])
     if (at === undefined) return
     const pasNow = e.before.map((_, i) => shiftPa(at, i))
     if (pasNow.some((pa, i) => this.para(pa)?.pid !== e.before[i].pid)) return
     this.replace(pasNow, e.after, moveSel(e.selAfter, e.pas[0], at), { history: false, label: 'redo', want: true })
     this.history.push(e)
+  }
+
+  /** undo / redo of an entry that only changed a style: it moves to the other stack, the toolbar follows */
+  private styleOnly(e: Entry, to: Entry[], sel: Sel) {
+    to.push(e)
+    this.emitState(this.input.sel() ?? sel)
   }
 
   get canUndo() {
@@ -705,6 +796,7 @@ export class DocxEditor implements RichHost<Paragraph> {
       this.commitTable(bi + i)
     })
     this.onCommit?.({ kind: 'blocks', bi, before, next })
+    if (!history) this.catchUp()
     if (history) {
       const s = sel ?? this.input.lastSel ?? { a: { pa: String(bi), o: 0 }, f: { pa: String(bi), o: 0 } }
       this.history.push({ pas: [], before: [], after: [], blocks: { bi, before, after: next }, selBefore: this.input.lastSel ?? s, selAfter: s, label: 'table', t: Date.now() })
@@ -905,12 +997,7 @@ export class DocxEditor implements RichHost<Paragraph> {
     let id = this.styles.find((s) => s.canon === kind)?.id
     let caret: Sel | null = null
     if (!id) {
-      const r = await this.client.call('docx.style', kind)
-      // a shared session answers nothing when the operation could not be applied
-      if (!r) return
-      this.styles = r.styles
-      this.onStyles?.(r.styles)
-      id = r.id
+      id = await this.canonId(kind)
       // adding the style took a while: the user may have typed on
       caret = this.input.readSel()
     }
@@ -918,6 +1005,251 @@ export class DocxEditor implements RichHost<Paragraph> {
     this.setPara({ style: id }, {}, sel)
     // the style goes to the paragraphs picked; the caret stays where the typing took it
     if (caret) this.pendingSel = caret
+  }
+
+  /** id of a built-in style, added to the document when it lacks it; undefined when it could not be */
+  private async canonId(kind: CanonStyle): Promise<string | undefined> {
+    const have = this.styles.find((s) => s.canon === kind)?.id
+    if (have) return have
+    const r = await this.client.call('docx.style', kind)
+    // a shared session answers nothing when the operation could not be applied
+    if (!r) return undefined
+    this.styled(r)
+    return r.id || undefined
+  }
+
+  /** style call answers already taken in (a shared session hands the same answer to the caller and to its adapter) */
+  private taken = new WeakSet<object>()
+  /** counts the looks given to styles; style id → the count when it last got one */
+  private styleGen = 0
+  private changedAt = new Map<string, number>()
+  /** paragraph → the count its look was computed at (absent: when the document was read) */
+  private lookAt = new WeakMap<Paragraph, number>()
+  private passing = false
+  /** paragraph → the one that took its place when it was converted again (same content, the look of the styles by then) */
+  private heir = new WeakMap<Paragraph, Paragraph>()
+
+  /** `p` as it stands now: converted again or not, the same paragraph as long as nobody edited it */
+  private latest(p: Paragraph): Paragraph {
+    for (let n = this.heir.get(p); n; n = this.heir.get(p)) p = n
+    return p
+  }
+
+  /** takes in the answer of a style call: the picker's list and, when styles look different now, what shows them */
+  styled(res: { styles: StyleInfo[]; changed?: string[]; headers?: HeaderFooters }) {
+    if (this.taken.has(res)) return
+    this.taken.add(res)
+    this.styles = res.styles
+    this.onStyles?.(res.styles)
+    if (!res.changed?.length) return
+    if (res.headers) this.onHeaders?.(res.headers)
+    this.styleGen++
+    for (const id of res.changed) this.changedAt.set(id, this.styleGen)
+    this.onDirty?.()
+    this.catchUp()
+  }
+
+  private async setStyle(id: string, look: StyleLook) {
+    const res = await this.client.call('docx.styleSet', id, look)
+    if (res) this.styled(res)
+    return res
+  }
+
+  /** undo / redo of a style's look */
+  private restyle(id: string, look: StyleLook) {
+    this.setStyle(id, look).catch((e) => console.error('[office-engine] style change failed', e))
+  }
+
+  /**
+   * "Update style to match": the paragraph style takes the look of the selection (font, size, colour, bold, italic,
+   * underline, strikethrough; alignment, line and paragraph spacing), the selected paragraphs get the style, and
+   * every paragraph of the style follows. Written to this document's styles only.
+   * `target`: a style id, or `@kind` for a built-in style the document may not have yet.
+   * Resolves to whether the style looks different now (undefined: there was nothing to take a look from).
+   */
+  async updateStyle(target: string): Promise<boolean | undefined> {
+    const sel = this.input.sel()
+    const r = sel && this.selectedParas(sel)
+    const c = r && this.container(r.s.pa)
+    const src = r && this.para(r.s.pa)
+    if (!sel || !r || !c || !src) return
+    const picked = r.pas.map((pa) => this.para(pa)!)
+    const id = target.startsWith('@') ? await this.canonId(target.slice(1) as CanonStyle) : target
+    if (!id) return
+    // the look as the styles give it outside any table: what a table style adds belongs to the table
+    const parts = this.partsOf(c.list, src.pid!, c.at)
+    const conv = await this.client.call('docx.convert', [paraSpec(parts)], true)
+    const bare = (conv?.[0] ?? []).filter((b): b is Paragraph => b.t === 'p')[parts.indexOf(src)]
+    if (!bare || plen(bare.runs as RRun[]) !== plen(src.runs as RRun[])) return
+    // the first character selected (the one before the caret when nothing is)
+    const o = collapsed(sel) ? r.s.o : r.s.o + (plen(src.runs as RRun[]) > r.s.o ? 1 : 0)
+    const run = runAt(bare.runs as RRun[], o) as (Inline & { t: 'text' }) | undefined
+    const look: StyleLook = { ...paraLook(bare.ps), ...(run ? { ...runLook(run.s), font: firstFont(run.s.font) } : { sz: bare.markSz, font: firstFont(bare.markFont) }) }
+    const res = await this.setStyle(id, look)
+    // no answer: a shared session could not apply it
+    if (!res || res.missing) return
+    const style = res.changed.length ? { id, undo: res.undo, redo: look } : undefined
+    // the paragraphs picked, where they are now; edited meanwhile, they stay as they are and the style keeps its look
+    const where = () => {
+      const now = this.latest(src)
+      const at = this.locate(src.pid!).find((l) => l.list[l.index] === now)?.pa
+      const pas = at === undefined ? [] : picked.map((_, i) => shiftPa(at, i))
+      return pas.length > 0 && pas.every((pa, i) => this.para(pa) === this.latest(picked[i])) ? pas : null
+    }
+    const alone = () => {
+      if (!style) return false
+      this.history.push({ pas: [], before: [], after: [], selBefore: sel, selAfter: sel, label: 'style', t: Date.now(), style })
+      this.future = []
+      this.emitState(this.input.sel())
+      return true
+    }
+    if (!where()) return alone()
+    // nothing to do to them: they have the style, and it already looked like them
+    if (!style && picked.every((p) => p.sid === id)) return false
+    const cur = picked.map((p) => this.latest(p))
+    // They get the style. What their text sets itself and the style gives now is dropped, so that the next look given
+    // to the style reaches this text too; kept where dropping it would show (it overrides a table or character style).
+    const ref = runLook((runAt(src.runs as RRun[], o) as (Inline & { t: 'text' }) | undefined)?.s)
+    const refP = paraLook(src.ps)
+    const plain = cur.map((p): Paragraph => ({ ...p, pd: { ...(p.pd ?? {}), style: id }, sid: id, edited: true }))
+    const tidy = plain.map((p): Paragraph => {
+      const pd: ParaDirty = { ...p.pd }
+      const own = paraLook(p.ps)
+      for (const k of PARA_LOOK) if (look[k] !== undefined && own[k] === refP[k]) pd[k] = null
+      const runs = p.runs.map((x) => {
+        if (x.t !== 'text' || !run) return x
+        const mine = runLook(x.s)
+        const d: RunSet = { ...(x.d ?? {}) }
+        for (const k of RUN_LOOK) if (mine[k] === ref[k]) d[k] = null
+        return { ...x, d }
+      })
+      return { ...p, pd, runs }
+    })
+    const tried = await this.client.call('docx.convert', [...plain, ...tidy].map((p) => paraSpec([p])))
+    const pas = where()
+    if (!pas) return alone()
+    const first = (i: number) => (tried?.[i] ?? []).find((b): b is Paragraph => b.t === 'p')
+    const next = plain.map((p, i) => {
+      const a = first(i)
+      const b = first(i + plain.length)
+      if (!a || !b) return p
+      const la = charLooks(a)
+      const lb = charLooks(b)
+      let at = 0
+      const runs = p.runs.map((x, j) => {
+        const from = at
+        at += rlen(x as RRun)
+        for (let k = from; k < at; k++) if (la[k] !== lb[k]) return x
+        return tidy[i].runs[j]
+      })
+      const pd = JSON.stringify(paraLook(a.ps)) === JSON.stringify(paraLook(b.ps)) ? tidy[i].pd : p.pd
+      return { ...p, pd, runs: normalize(runs as RRun[]) as Inline[] }
+    })
+    this.replace(pas, next, this.input.sel() ?? sel, { label: 'style', want: true })
+    if (style) this.history[this.history.length - 1].style = style
+    return !!style
+  }
+
+  /** a paragraph whose style got another look after its own look was computed */
+  private behind(p: Paragraph, normal: string): boolean {
+    const at = this.changedAt.get(p.sid || normal)
+    return at !== undefined && (this.lookAt.get(p) ?? 0) < at
+  }
+
+  /** every paragraph with an id, in document order (those of table cells too), the parts a page break splits it in together */
+  private groups(): { pa: string; parts: Paragraph[] }[] {
+    const out: { pa: string; parts: Paragraph[] }[] = []
+    const scan = (list: Block[], pa: (i: number) => string) => {
+      let last: Paragraph | undefined
+      list.forEach((b, i) => {
+        if (b.t !== 'p' || b.pid === undefined) return void (last = undefined)
+        if (last && last.pid === b.pid) out[out.length - 1].parts.push(b)
+        else out.push({ pa: pa(i), parts: [b] })
+        last = b
+      })
+    }
+    scan(this.st.blocks, String)
+    this.st.blocks.forEach((b, bi) => {
+      if (b.t === 'tbl') b.rows.forEach((row, ri) => row.cells.forEach((cell, ci) => scan(cell.blocks, (i) => `${bi}.${ri}.${ci}.${i}`)))
+    })
+    return out
+  }
+
+  /** shows the paragraphs whose style got another look with it (those a collaborator sends may still have the old one) */
+  private catchUp() {
+    if (!this.changedAt.size || this.passing) return
+    this.passing = true
+    this.pass().catch((e) => console.error('[office-engine] restyle failed', e))
+  }
+
+  /** converts the paragraphs behind their style again, a slice at a time, and gives them the look that comes back */
+  private async pass() {
+    try {
+      const tries = new Map<number, number>()
+      let since = performance.now()
+      for (;;) {
+        // with the engine on this thread the rounds follow each other without a pause: typing and painting get through
+        if (performance.now() - since > 40) {
+          await new Promise((r) => setTimeout(r, 0))
+          since = performance.now()
+        }
+        const gen = this.styleGen
+        const normal = this.styles.find((s) => s.canon === 'normal')?.id ?? ''
+        const batch = this.groups()
+          .filter((g) => g.parts.some((p) => this.behind(p, normal)) && (tries.get(g.parts[0].pid!) ?? 0) < 3)
+          .slice(0, 200)
+        if (!batch.length) return
+        const res = await this.client.call('docx.convert', batch.map((g) => paraSpec(g.parts)))
+        // never rebuild paragraphs under an active IME composition
+        while (this.input.isComposing) await new Promise((r) => setTimeout(r, 50))
+        // a style changed again meanwhile: what came back may be the look before that
+        if (gen !== this.styleGen) {
+          tries.clear()
+          continue
+        }
+        const where = new Map(this.groups().map((g) => [g.parts[0], g]))
+        const sel = this.input.readSel()
+        let touched = false
+        let caret = false
+        for (const [gi, g] of batch.entries()) {
+          const pid = g.parts[0].pid!
+          const cur = where.get(g.parts[0])
+          if (!cur || cur.parts.length !== g.parts.length || cur.parts.some((p, i) => p !== g.parts[i])) {
+            // edited meanwhile (other objects now): converted in a later round, or with its next edit when it keeps changing
+            const n = (tries.get(pid) ?? 0) + 1
+            tries.set(pid, n)
+            if (n >= 3) this.stale.add(pid)
+            continue
+          }
+          const conv = (res?.[gi] ?? []).filter((b): b is Paragraph => b.t === 'p')
+          const next = conv.length === g.parts.length ? g.parts.map((p, i) => reskin(p, conv[i])) : []
+          if (!next.length || next.some((p) => !p)) {
+            // not the same content when converted alone: it takes the look with its next conversion
+            for (const p of g.parts) this.lookAt.set(p, gen)
+            this.stale.add(pid)
+            continue
+          }
+          next.forEach((p, i) => {
+            const pa = shiftPa(cur.pa, i)
+            this.put(pa, p!)
+            this.lookAt.set(p!, gen)
+            this.heir.set(g.parts[i], p!)
+            caret ||= sel?.a.pa === pa || sel?.f.pa === pa
+          })
+          // text typed into an empty paragraph starts from the formatting kept for it: converted with that edit
+          if (g.parts.some((p) => p.caret)) this.stale.add(pid)
+          touched = true
+        }
+        if (!touched) continue
+        // the caret inside a rebuilt paragraph is put back after the render
+        if (caret && sel && !this.pendingSel) this.pendingSel = sel
+        this.changed()
+        this.emitState(this.input.sel())
+      }
+    } finally {
+      // on the way out, before anything else runs: a style changing right then starts a pass of its own
+      this.passing = false
+    }
   }
 
   // ---------------------------------------------------------------- images

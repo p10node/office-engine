@@ -1,6 +1,6 @@
 import { DocxDocument } from '../docx/parser'
-import { addImage, addLink, applyEdit, applyTable, ensureStyle, saveDocx } from '../docx/writer'
-import type { CanonStyle, EditOp, TableOp } from '../docx/types'
+import { addImage, addLink, applyEdit, applyTable, convertParas, ensureStyle, saveDocx, setStyleLook } from '../docx/writer'
+import type { CanonStyle, EditOp, ParaSpec, StyleLook, TableOp } from '../docx/types'
 import { OpcPackage, type DocKind } from '../opc'
 import { PptxPresentation } from '../pptx/parser'
 import { openSource, type DocSource } from '../source'
@@ -17,7 +17,8 @@ import type { POp } from '../../collab/pptx-ops'
 import type { Events, Methods, OpenParams, OpenResult } from './protocol'
 
 const WRITES = new Set<string>([
-  'docx.edit', 'docx.table', 'docx.image', 'docx.link', 'docx.style', 'save',
+  // `docx.convert` only reads, but what it reads (styles, lists) is what the writes before it set
+  'docx.edit', 'docx.table', 'docx.image', 'docx.link', 'docx.style', 'docx.styleSet', 'docx.convert', 'save',
   'xlsx.set', 'xlsx.format', 'xlsx.sheetOp', 'xlsx.bookOp', 'xlsx.replace', 'xlsx.undo', 'xlsx.redo', 'collab.xlsx.apply', 'collab.xlsx.revert',
   'pptx.setText', 'pptx.shapes', 'pptx.slides', 'pptx.image', 'pptx.undo', 'collab.pptx.apply', 'collab.pptx.revert',
 ])
@@ -95,6 +96,10 @@ export class Engine {
         return addLink(this.need(this.docx), args[0] as string)
       case 'docx.style':
         return ensureStyle(this.need(this.docx), args[0] as CanonStyle)
+      case 'docx.styleSet':
+        return setStyleLook(this.need(this.docx), args[0] as string, args[1] as StyleLook)
+      case 'docx.convert':
+        return convertParas(this.need(this.docx), args[0] as ParaSpec[], args[1] as boolean | undefined)
       case 'save':
         return this.save()
       case 'dirty':

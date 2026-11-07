@@ -4,15 +4,20 @@
  * everything else is written back byte-for-byte.
  */
 import { relOfType } from '../opc'
+import { cssFont } from '../fonts'
 import {
-  clone, el, isNode, kidOf, kidsOf, local, parseRaw, prefixOf, removeKids, rootEl, serialize, setAttr, setOrdered, walkOoxml,
+  clone, el, getAttr, isNode, kidOf, kidsOf, local, parseRaw, prefixOf, removeKids, rootEl, serialize, setAttr, setOrdered, walkOoxml,
   escText, type RChild, type RNode,
 } from '../raw'
-import { parseXml } from '../xml'
+import type { Theme } from '../theme'
+import { kid, parseXml, type XEl } from '../xml'
 import { Numbering } from './numbering'
 import type { DocxDocument, GenRun } from './parser'
-import { HIGHLIGHT } from './styles'
-import type { Block, CanonStyle, CellSpec, EditOp, EditResult, ParaDirty, ParaSpec, Paragraph, RunSet, SpecRun, SrcRef, StyleInfo, TableOp, TableSpec } from './types'
+import { fontName, HIGHLIGHT, readPPr, readRPr } from './styles'
+import type {
+  Block, CanonStyle, CellSpec, EditOp, EditResult, ParaDirty, ParaSpec, ParaStyle, Paragraph, RunSet, RunStyle, SpecRun, SrcRef, StyleInfo, StyleLook, StyleSetResult,
+  TableOp, TableSpec,
+} from './types'
 
 export const DOCX_MIME = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
 const NUMBERING_REL = 'http://schemas.openxmlformats.org/officeDocument/2006/relationships/numbering'
@@ -100,7 +105,8 @@ function origRun(doc: DocxDocument, src: SrcRef | undefined): RNode | undefined 
 function applyRunSet(rPr: RNode, set: RunSet, W: string) {
   const val = W + 'val'
   const put = (l: string, node: RNode | undefined) => setOrdered(rPr, node, l, RPR_ORDER)
-  const toggle = (l: string, on: boolean) => put(l, on ? el(W + l) : el(W + l, { [val]: '0' }))
+  // null: the element goes, the property comes from the style again
+  const toggle = (l: string, on: boolean | null) => put(l, on === null ? undefined : on ? el(W + l) : el(W + l, { [val]: '0' }))
   if (set.b !== undefined) {
     toggle('b', set.b)
     toggle('bCs', set.b)
@@ -113,16 +119,16 @@ function applyRunSet(rPr: RNode, set: RunSet, W: string) {
     toggle('strike', set.strike)
     if (set.strike) put('dstrike', undefined)
   }
-  if (set.u !== undefined) put('u', el(W + 'u', { [val]: set.u && set.u !== 'none' ? set.u : 'none' }))
-  if ('color' in set) put('color', set.color ? el(W + 'color', { [val]: set.color.replace('#', '').toUpperCase() }) : undefined)
+  if (set.u !== undefined) put('u', set.u === null ? undefined : el(W + 'u', { [val]: set.u && set.u !== 'none' ? set.u : 'none' }))
+  if ('color' in set) put('color', set.color ? el(W + 'color', { [val]: set.color === 'auto' ? 'auto' : set.color.replace('#', '').toUpperCase() }) : undefined)
   if (set.sz !== undefined) {
-    const v = String(Math.round(set.sz * 2))
-    put('sz', el(W + 'sz', { [val]: v }))
-    put('szCs', el(W + 'szCs', { [val]: v }))
+    const v = set.sz === null ? undefined : String(Math.round(set.sz * 2))
+    put('sz', v ? el(W + 'sz', { [val]: v }) : undefined)
+    put('szCs', v ? el(W + 'szCs', { [val]: v }) : undefined)
   }
   if (set.font !== undefined) {
     const f = set.font
-    put('rFonts', el(W + 'rFonts', { [W + 'ascii']: f, [W + 'hAnsi']: f, [W + 'eastAsia']: f, [W + 'cs']: f }))
+    put('rFonts', f === null ? undefined : el(W + 'rFonts', { [W + 'ascii']: f, [W + 'hAnsi']: f, [W + 'eastAsia']: f, [W + 'cs']: f }))
   }
   if ('hl' in set) {
     const name = set.hl ? HL_NAME[set.hl.toLowerCase()] : undefined
@@ -134,6 +140,31 @@ function applyRunSet(rPr: RNode, set: RunSet, W: string) {
   }
   if ('va' in set) put('vertAlign', set.va ? el(W + 'vertAlign', { [val]: set.va === 'sup' ? 'superscript' : 'subscript' }) : undefined)
 }
+
+/**
+ * Paragraph spacing attributes: a number sets one (pt; `line` counted as `rule` says: a multiple when 'auto'),
+ * null removes it, undefined leaves it.
+ */
+function putSpacing(pPr: RNode, W: string, v: { before?: number | null; after?: number | null; line?: number | null }, rule: NonNullable<ParaStyle['lineRule']> = 'auto') {
+  if (v.line === undefined && v.before === undefined && v.after === undefined) return
+  const sp = clone(kidOf(pPr, 'spacing') ?? el(W + 'spacing'))
+  const twips = (x: number | null) => (x === null ? undefined : String(Math.round(x * 20)))
+  if (v.before !== undefined) {
+    setAttr(sp, W + 'before', twips(v.before))
+    setAttr(sp, W + 'beforeAutospacing', undefined)
+  }
+  if (v.after !== undefined) {
+    setAttr(sp, W + 'after', twips(v.after))
+    setAttr(sp, W + 'afterAutospacing', undefined)
+  }
+  if (v.line !== undefined) {
+    setAttr(sp, W + 'line', v.line === null ? undefined : String(Math.round(v.line * (rule === 'auto' ? 240 : 20))))
+    setAttr(sp, W + 'lineRule', v.line === null ? undefined : rule)
+  }
+  setOrdered(pPr, sp.a.trim() ? sp : undefined, 'spacing', PPR_ORDER)
+}
+
+const jcEl = (W: string, align: NonNullable<ParaStyle['align']>) => el(W + 'jc', { [W + 'val']: align === 'justify' ? 'both' : align })
 
 function textContentXml(text: string, W: string): string {
   let out = ''
@@ -216,10 +247,142 @@ export async function ensureStyle(doc: DocxDocument, kind: CanonStyle): Promise<
     await doc.pkg.setContentType(path, STYLES_CT)
     doc.rels = await doc.pkg.rels(doc.mainPath)
   }
-  const parsed = parseXml(W ? styleXml.replace(`<${W}style `, `<${W}style xmlns:${W.slice(0, -1)}="http://schemas.openxmlformats.org/wordprocessingml/2006/main" `) : styleXml)
-  if (parsed) doc.styles.add(parsed)
+  doc.styles.add(parseStyle(styleXml, W))
   doc.markEdited()
   return { id, styles: doc.styles.quickStyles() }
+}
+
+// ---------------------------------------------------------------- style look ("update style to match")
+
+const STYLE_ORDER = [
+  'name', 'aliases', 'basedOn', 'next', 'link', 'autoRedefine', 'hidden', 'uiPriority', 'semiHidden', 'unhideWhenUsed', 'qFormat', 'locked',
+  'personal', 'personalCompose', 'personalReply', 'rsid', 'pPr', 'rPr', 'tblPr', 'trPr', 'tcPr', 'tblStylePr',
+]
+/** run properties of a look → the rPr elements holding them */
+const RUN_ELS = { b: ['b', 'bCs'], i: ['i', 'iCs'], u: ['u'], strike: ['strike'], color: ['color'], sz: ['sz', 'szCs'], font: ['rFonts'] } as const
+const LOOK_KEYS = ['b', 'i', 'u', 'strike', 'color', 'sz', 'font', 'align', 'line', 'before', 'after'] as const
+type LookKey = (typeof LOOK_KEYS)[number]
+
+/** a resolved style as a look: every property has a value (the font as the CSS stack it renders with) */
+function resolvedLook({ rs, ps }: { rs: RunStyle; ps: ParaStyle }): StyleLook {
+  return {
+    b: !!rs.b, i: !!rs.i, u: rs.u ?? 'none', strike: !!rs.strike, color: rs.color ?? 'auto', sz: rs.sz ?? 10, font: rs.font ?? null,
+    align: ps.align ?? 'left', line: ps.line ?? 1, lineRule: ps.lineRule === 'exact' || ps.lineRule === 'atLeast' ? ps.lineRule : undefined,
+    before: ps.before ?? 0, after: ps.after ?? 0,
+  }
+}
+
+/** what a style element says itself about the properties of a look; one it leaves to the style it is based on is absent */
+function ownLook(s: XEl, theme: Theme): StyleLook {
+  const out: StyleLook = {}
+  const rPr = kid(s, 'rPr')
+  const rs = readRPr(rPr, theme)
+  if (kid(rPr, 'b')) out.b = !!rs.b
+  if (kid(rPr, 'i')) out.i = !!rs.i
+  if (kid(rPr, 'u')) out.u = rs.u ?? 'none'
+  if (kid(rPr, 'strike')) out.strike = !!rs.strike
+  if (kid(rPr, 'color')) out.color = rs.color ?? 'auto'
+  if (rs.sz !== undefined) out.sz = rs.sz
+  const rf = kid(rPr, 'rFonts')
+  const font = rf && fontName(rf, theme)
+  if (font) out.font = font
+  const pPr = kid(s, 'pPr')
+  const ps = readPPr(pPr).ps
+  if (kid(pPr, 'jc')) out.align = ps.align
+  if (ps.before !== undefined) out.before = ps.before
+  if (ps.after !== undefined) out.after = ps.after
+  if (ps.line !== undefined) {
+    out.line = ps.line
+    if (ps.lineRule === 'exact' || ps.lineRule === 'atLeast') out.lineRule = ps.lineRule
+  }
+  return out
+}
+
+/** a property of a look in the form two looks are compared in; `css`: its font already is a CSS stack */
+function lookValue(k: LookKey, o: StyleLook, css = false): unknown {
+  const v = o[k]
+  if (v === undefined || v === null) return v
+  if (k === 'font') return css ? v : cssFont(v as string)
+  if (k === 'line') return `${o.lineRule ?? 'auto'} ${Math.round((v as number) * 100) / 100}`
+  return typeof v === 'number' ? Math.round(v * 100) / 100 : v
+}
+
+/** `look` with only the values a look can hold (it may come from a collaborator) */
+function checkedLook(look: StyleLook): StyleLook {
+  const out: Record<string, unknown> = {}
+  const ok: Record<LookKey, (v: unknown) => boolean> = {
+    b: (v) => typeof v === 'boolean',
+    i: (v) => typeof v === 'boolean',
+    strike: (v) => typeof v === 'boolean',
+    u: (v) => typeof v === 'string' && /^[A-Za-z]{1,24}$/.test(v),
+    color: (v) => typeof v === 'string' && /^(#[0-9a-fA-F]{6}|auto)$/.test(v),
+    sz: (v) => typeof v === 'number' && v >= 1 && v <= 1638,
+    font: (v) => typeof v === 'string' && v.length > 0 && v.length <= 100,
+    align: (v) => v === 'left' || v === 'center' || v === 'right' || v === 'justify',
+    line: (v) => typeof v === 'number' && v > 0 && v <= 1584,
+    before: (v) => typeof v === 'number' && v >= 0 && v <= 1584,
+    after: (v) => typeof v === 'number' && v >= 0 && v <= 1584,
+  }
+  for (const k of LOOK_KEYS) if (look?.[k] === null || (look?.[k] !== undefined && ok[k](look[k]))) out[k] = look[k]
+  if (out.line && (look?.lineRule === 'exact' || look?.lineRule === 'atLeast')) out.lineRule = look.lineRule
+  return out as StyleLook
+}
+
+const WML = 'http://schemas.openxmlformats.org/wordprocessingml/2006/main'
+const parseStyle = (xml: string, W: string) => parseXml(W ? xml.replace(`<${W}style`, `<${W}style xmlns:${W.slice(0, -1)}="${WML}"`) : xml)
+
+/**
+ * Gives paragraph style `id` a look, in the document's own styles part: every paragraph of that style, and of the
+ * styles based on it, follows. The style only defines what differs from the style it is based on.
+ */
+export async function setStyleLook(doc: DocxDocument, id: string, asked: StyleLook): Promise<StyleSetResult> {
+  const look = checkedLook(asked)
+  const styles = doc.styles
+  const rel = relOfType(doc.rels, 'styles')
+  const x = styles.own(id)
+  const nodes = rel && x && doc.pkg.has(rel.target) ? parseRaw(await doc.pkg.text(rel.target)) : []
+  const root = rootEl(nodes)
+  const node = kidsOf(root, 'style').find((n) => getAttr(n, 'styleId', true) === id)
+  if (!rel || !x || !root || !node) return { styles: styles.quickStyles(), changed: [], undo: {}, missing: true }
+  const W = prefixOf(root.q)
+  // the definition the file came with: a property going back to the value it had there gets its elements back as
+  // they were (theme fonts and colours stay tied to the theme)
+  let orig = doc.styleOrig.get(id)
+  if (!orig) doc.styleOrig.set(id, (orig = { x, raw: clone(node) }))
+  const first = ownLook(orig.x, doc.theme)
+  const mine = ownLook(x, doc.theme)
+  const from = resolvedLook(styles.inherited(id))
+  const rPr = clone(kidOf(node, 'rPr') ?? el(W + 'rPr'))
+  const pPr = clone(kidOf(node, 'pPr') ?? el(W + 'pPr'))
+  const undo: StyleLook = {}
+  const set: RunSet = {}
+  const back: (keyof typeof RUN_ELS)[] = []
+  for (const k of LOOK_KEYS) {
+    if (look[k] === undefined) continue
+    const want = lookValue(k, look)
+    // what the style it is based on gives anyway is not repeated in it
+    const keep = want !== null && want !== lookValue(k, from, true)
+    const had = lookValue(k, mine)
+    if (keep ? had === want : had === undefined) continue
+    ;(undo as Record<string, unknown>)[k] = mine[k] ?? null
+    if (k === 'line' && mine.lineRule) undo.lineRule = mine.lineRule
+    if (k === 'align') setOrdered(pPr, keep ? jcEl(W, look.align!) : undefined, 'jc', PPR_ORDER)
+    else if (k === 'line' || k === 'before' || k === 'after') putSpacing(pPr, W, { [k]: keep ? look[k] : null }, look.lineRule ?? 'auto')
+    else {
+      ;(set as Record<string, unknown>)[k] = keep ? look[k] : null
+      if (keep && lookValue(k, first) === want) back.push(k)
+    }
+  }
+  if (!Object.keys(undo).length) return { styles: styles.quickStyles(), changed: [], undo }
+  applyRunSet(rPr, set, W)
+  const origRPr = kidOf(orig.raw, 'rPr')
+  for (const k of back) for (const l of RUN_ELS[k]) setOrdered(rPr, kidOf(origRPr, l) && clone(kidOf(origRPr, l)!), l, RPR_ORDER)
+  setOrdered(node, kidsOf(pPr).length ? pPr : undefined, 'pPr', STYLE_ORDER)
+  setOrdered(node, kidsOf(rPr).length ? rPr : undefined, 'rPr', STYLE_ORDER)
+  doc.pkg.setPart(rel.target, serialize(nodes))
+  styles.add(parseStyle(serialize(node), W))
+  doc.markEdited()
+  return { styles: styles.quickStyles(), changed: styles.family(id), undo, headers: await doc.headers() }
 }
 
 /** Finds (or creates in numbering.xml) a list definition of the given kind. */
@@ -266,23 +429,8 @@ async function applyParaDirty(doc: DocxDocument, pPr: RNode, pd: ParaDirty, W: s
   const val = W + 'val'
   const put = (l: string, node: RNode | undefined) => setOrdered(pPr, node, l, PPR_ORDER)
   if (pd.style !== undefined) put('pStyle', pd.style && pd.style !== doc.styles.defaultPara ? el(W + 'pStyle', { [val]: pd.style }) : undefined)
-  if (pd.align) put('jc', el(W + 'jc', { [val]: pd.align === 'justify' ? 'both' : pd.align }))
-  if (pd.line !== undefined || pd.before !== undefined || pd.after !== undefined) {
-    const sp = clone(kidOf(pPr, 'spacing') ?? el(W + 'spacing'))
-    if (pd.before !== undefined) {
-      setAttr(sp, W + 'before', String(Math.round(pd.before * 20)))
-      setAttr(sp, W + 'beforeAutospacing', undefined)
-    }
-    if (pd.after !== undefined) {
-      setAttr(sp, W + 'after', String(Math.round(pd.after * 20)))
-      setAttr(sp, W + 'afterAutospacing', undefined)
-    }
-    if (pd.line !== undefined) {
-      setAttr(sp, W + 'line', String(Math.round(pd.line * 240)))
-      setAttr(sp, W + 'lineRule', 'auto')
-    }
-    put('spacing', sp)
-  }
+  if (pd.align !== undefined) put('jc', pd.align ? jcEl(W, pd.align) : undefined)
+  putSpacing(pPr, W, pd)
   if (pd.pageBreak !== undefined) put('pageBreakBefore', pd.pageBreak ? el(W + 'pageBreakBefore') : undefined)
   if (pd.indL !== undefined) {
     const ind = clone(kidOf(pPr, 'ind') ?? el(W + 'ind'))
@@ -428,6 +576,46 @@ export async function genParagraph(doc: DocxDocument, spec: ParaSpec): Promise<{
   return { xml: `<${pq}${attrs}>${ppr}${starts}${body}${ends}</${pq}>`, map }
 }
 
+/** the XML a paragraph is written as: its source untouched when nothing changed, else generated */
+async function paraXml(doc: DocxDocument, spec: ParaSpec): Promise<{ xml: string; map: GenRun[] }> {
+  const orig = spec.pristine && spec.pid === spec.from ? origPara(doc, spec.pid) : undefined
+  if (!orig) return genParagraph(doc, spec)
+  return { xml: serialize(orig), map: collectRunsRaw(orig).map((_, k) => ({ src: [spec.pid, k] as SrcRef })) }
+}
+
+/**
+ * The blocks each paragraph converts to with the styles as they are now (after a style changed), in the order
+ * given. The document stays as it is, but for the look of list markers, which follows the paragraphs'.
+ * `bare`: as the paragraphs look outside their table (nothing taken from a table style).
+ */
+export async function convertParas(doc: DocxDocument, specs: ParaSpec[], bare = false): Promise<Block[][]> {
+  if (!doc.ready) throw new Error('Document is still loading')
+  const out: Block[][] = []
+  for (const spec of specs) {
+    const { xml, map } = await paraXml(doc, spec)
+    const blocks = doc.reconvert(spec.pid, xml, map, bare ? undefined : doc.info.get(spec.from)?.layer).blocks
+    const paras = blocks.filter((b): b is Paragraph => b.t === 'p')
+    // numbering is the document's: the marker keeps its text, and takes the look the paragraph gives it now
+    const look = paras[0]?.marker?.s
+    for (const p of paras) {
+      delete p.marker
+      delete p.lst
+    }
+    const inf = doc.info.get(spec.pid)
+    if (inf?.marker && paras[0]) {
+      // (a paragraph tried with another style, or outside its table, is not the document's)
+      if (look && !bare && paras[0].sid === inf.sid) {
+        const { u: _u, hl: _hl, ...s } = look
+        inf.marker = { ...inf.marker, s }
+      }
+      paras[0].marker = inf.marker
+      paras[0].lst = inf.lst
+    }
+    out.push(blocks)
+  }
+  return out
+}
+
 // ---------------------------------------------------------------- edit operations
 
 function groupFor(doc: DocxDocument, key: string): number[] {
@@ -480,13 +668,7 @@ export async function applyEdit(doc: DocxDocument, op: EditOp): Promise<EditResu
   for (const spec of op.list) {
     const tplInfo = doc.info.get(spec.from) ?? anchor
     const prev = doc.info.get(spec.pid)
-    let xml: string
-    let map: GenRun[]
-    const orig = spec.pristine && spec.pid === spec.from ? origPara(doc, spec.pid) : undefined
-    if (orig) {
-      xml = serialize(orig)
-      map = collectRunsRaw(orig).map((_, k) => ({ src: [spec.pid, k] as SrcRef }))
-    } else ({ xml, map } = await genParagraph(doc, spec))
+    const { xml, map } = await paraXml(doc, spec)
     doc.genXml.set(spec.pid, xml)
     const { blocks: bl, rec } = doc.reconvert(spec.pid, xml, map, tplInfo.layer, prev?.marker)
     doc.info.set(spec.pid, { ...rec, item, ord, marker: prev?.marker, lst: prev?.lst })

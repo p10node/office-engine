@@ -37,6 +37,16 @@ const SYMBOLS = [
   '«', '»', '“', '”', '‘', '’', '¼', '½', '¾', '¹', '²', '³',
 ]
 
+/** the paragraph styles offered: the built-in ones first (in the document or not: `@kind` then), then the document's other quick styles */
+export function styleChoices(styles: StyleInfo[]) {
+  const out: { value: string; label: string; k?: CanonStyle; s?: StyleInfo; look?: CSSProperties; sep: boolean }[] = CANON.map(({ k, label, look }, i) => {
+    const s = styles.find((x) => x.canon === k)
+    return { value: s?.id ?? `@${k}`, label, k, s, look, sep: i === 1 }
+  })
+  styles.filter((s) => !s.canon).forEach((s, i) => out.push({ value: s.id, label: s.name, s, sep: i === 0 }))
+  return out
+}
+
 /** how a style looks in the picker (size clamped to fit the menu) */
 function stylePreview(s: StyleInfo | undefined): CSSProperties | undefined {
   const p = s?.preview
@@ -84,14 +94,10 @@ export function DocxToolbar(props: {
 
   // style picker: built-ins first (with shortcuts), then the document's other quick styles
   const alt = /Mac|iPhone|iPad/.test(typeof navigator !== 'undefined' ? navigator.platform : '') ? '⌥' : 'Alt+'
-  const styleOpts: DropOption<string>[] = CANON.map(({ k, label, look }, i) => {
-    const s = styles.find((x) => x.canon === k)
-    const hint = k === 'normal' ? `${MOD}${alt}0` : k.startsWith('h') ? `${MOD}${alt}${k.slice(1)}` : undefined
-    return { value: s?.id ?? `@${k}`, label, hint, style: { lineHeight: 1.25, ...(k === 'normal' ? {} : (stylePreview(s) ?? look)) }, sep: i === 1 }
+  const styleOpts: DropOption<string>[] = styleChoices(styles).map(({ value, label, k, s, look, sep }) => {
+    const hint = k === 'normal' ? `${MOD}${alt}0` : k?.startsWith('h') ? `${MOD}${alt}${k.slice(1)}` : undefined
+    return { value, label, hint, style: k ? { lineHeight: 1.25, ...(k === 'normal' ? {} : (stylePreview(s) ?? look)) } : stylePreview(s), sep }
   })
-  styles
-    .filter((s) => !s.canon)
-    .forEach((s, i) => styleOpts.push({ value: s.id, label: s.name, style: stylePreview(s), sep: i === 0 }))
   const styleValue = st?.style && styleOpts.some((o) => o.value === st.style) ? st.style : st && !st.style ? (styles.find((x) => x.canon === 'normal')?.id ?? '') : ''
 
   return (

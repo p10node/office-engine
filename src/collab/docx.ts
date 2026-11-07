@@ -7,7 +7,7 @@
  *  - `paras`  contiguous paragraphs replaced (Enter, join, paste, paragraph formatting…) — last writer wins
  *  - `blocks` top-level blocks replaced (tables)
  *  - `image` / `link`  package resources, shared by key (relationship ids differ per client)
- *  - `call`   other document-level worker calls (e.g. adding a built-in style), run in hub order
+ *  - `call`   other document-level worker calls (adding a built-in style, giving a style another look), run in hub order
  */
 import type { Block, Inline, Paragraph, StyleInfo } from '../core/docx/types'
 import type { DocumentClient } from '../core/worker/client'
@@ -66,7 +66,7 @@ type Step =
 type Undo = Step[] | null
 
 /** worker methods that only read */
-const READS = new Set<keyof Methods>(['open', 'part', 'docx.start', 'save', 'dirty'])
+const READS = new Set<keyof Methods>(['open', 'part', 'docx.start', 'docx.convert', 'save', 'dirty'])
 
 const bkey = (b: Block): BKey | null => (b.t === 'p' ? (b.pid !== undefined ? { p: b.pid } : null) : b.t === 'tbl' ? { tid: b.tid, item: b.item } : null)
 
@@ -420,11 +420,8 @@ export class DocxCollab implements Adapter<DocxOp> {
       case 'call': {
         await this.fetchRes(op)
         const result = this.results.get(op)
-        if (op.method === 'docx.style' && result && typeof result === 'object' && this.host) {
-          const styles = (result as { styles: StyleInfo[] }).styles
-          this.ed.styles = styles
-          this.ed.onStyles?.(styles)
-        }
+        // a style added to the document, or one given another look: the editor shows it (once, whoever asked)
+        if ((op.method === 'docx.style' || op.method === 'docx.styleSet') && result && typeof result === 'object' && this.host) this.ed.styled(result as { styles: StyleInfo[] })
         return { result }
       }
     }

@@ -1,6 +1,8 @@
 import { describe, expect, test } from 'bun:test'
 import { readFileSync } from 'node:fs'
+import { BlobSource } from '../src/core/source'
 import type { Paragraph } from '../src/core/docx/types'
+import { ZipArchive } from '../src/core/zip'
 import { docxBlocks, docxParas, paraText, PNG, runsOf, SAMPLES, useBrowser, viewer } from './harness'
 
 useBrowser()
@@ -186,6 +188,80 @@ describe('docx editing', () => {
     const labels = await v.page.locator('.de-ctx .de-ctx-label').allInnerTexts()
     expect(labels).toEqual(expect.arrayContaining(['Cut', 'Copy', 'Paste']))
     await v.page.keyboard.press('Escape')
+  })
+
+  test('update style to match: the style takes the look of the selection, its other paragraphs follow, undo takes it back', async () => {
+    const v = await open()
+    const look = (text: string) =>
+      v.page.evaluate((x) => {
+        const el = [...document.querySelectorAll('.de-pages *')].find((e) => e.childElementCount === 0 && (e.textContent ?? '').includes(x))
+        return el ? `${getComputedStyle(el).fontStyle} ${getComputedStyle(el).textDecorationLine}` : 'not found'
+      }, text)
+    const rightClickSelection = async () => {
+      const r = await v.page.evaluate(() => {
+        const b = getSelection()!.getRangeAt(0).getBoundingClientRect()
+        return { x: b.x + b.width / 2, y: b.y + b.height / 2 }
+      })
+      await v.page.mouse.click(r.x, r.y, { button: 'right' })
+      await v.page.locator('.de-ctx').first().waitFor()
+    }
+    expect(await look('2. Next steps')).toBe('normal none')
+    await v.selectText('1. Highlights')
+    await v.btn('Italic').click()
+    await v.btn('Underline').click()
+    await v.page.waitForTimeout(200)
+    // formatting the text alone leaves the other headings as they are
+    expect(await look('2. Next steps')).toBe('normal none')
+
+    // keyboard: up from the top wraps to the end of the menu; → opens the styles, Esc closes them, then the menu
+    await rightClickSelection()
+    for (let i = 0; i < 3; i++) await v.page.keyboard.press('ArrowUp')
+    expect(await v.page.locator('.de-ctx > .de-ctx-row > .de-ctx-hi .de-ctx-label').innerText()).toBe('Update style to match')
+    await v.page.keyboard.press('ArrowRight')
+    expect(await v.page.locator('.de-ctx-sub .de-ctx-hi .de-ctx-label').innerText()).toBe('Normal text')
+    expect(await v.page.locator('.de-ctx-sub .de-ctx-row', { hasText: 'current' }).locator('.de-ctx-label').innerText()).toBe('Heading 1')
+    await v.page.keyboard.press('Escape')
+    expect(await v.page.locator('.de-ctx-sub').count()).toBe(0)
+    expect(await v.page.locator('.de-ctx').count()).toBe(1)
+    await v.page.keyboard.press('Escape')
+    expect(await v.page.locator('.de-ctx').count()).toBe(0)
+
+    // mouse: Update style to match → Heading 1
+    await rightClickSelection()
+    await v.page.locator('.de-ctx .de-ctx-label', { hasText: 'Update style to match' }).hover()
+    await v.page.locator('.de-ctx-sub .de-ctx-label', { hasText: /^Heading 1$/ }).click()
+    expect(await v.toast()).toBe('“Heading 1” updated to match the selection')
+    await v.page.waitForFunction(() => [...document.querySelectorAll('.de-pages span')].some((e) => e.textContent === '2. Next steps' && getComputedStyle(e).fontStyle === 'italic'))
+    expect(await look('2. Next steps')).toBe('italic underline')
+    expect(await look('1. Highlights')).toBe('italic underline')
+    // other styles keep their look
+    expect(await look('Figures')).toBe('normal none')
+    expect(await look(INTRO)).toBe('normal none')
+
+    const saved = (await v.save()).bytes
+    const paras = await docxParas(saved)
+    const heads = paras.filter((p) => p.sid === 'Heading1')
+    expect(heads.length).toBeGreaterThan(2)
+    for (const p of heads) expect(runsOf(p).every((r) => r.s.i === true && r.s.u === 'single')).toBe(true)
+    expect(runsOf(paras.find((p) => paraText(p) === 'Figures')!).some((r) => r.s.i)).toBe(false)
+    // the look lives in the style of this file; the paragraph picked no longer carries it itself
+    const zip = await ZipArchive.open(new BlobSource(new Blob([saved as Uint8Array<ArrayBuffer>])))
+    expect(/<w:style [^>]*w:styleId="Heading1">.*?<\/w:style>/.exec(await zip.text('word/styles.xml'))![0]).toContain('<w:i/><w:iCs/>')
+    expect(/<w:p[ >](?:(?!<\/w:p>)[\s\S])*?1\. Highlights[\s\S]*?<\/w:p>/.exec(await zip.text('word/document.xml'))![0]).not.toContain('<w:i/>')
+
+    // again: nothing to update
+    await v.selectText('1. Highlights')
+    await rightClickSelection()
+    await v.page.locator('.de-ctx .de-ctx-label', { hasText: 'Update style to match' }).hover()
+    await v.page.locator('.de-ctx-sub .de-ctx-label', { hasText: /^Heading 1$/ }).click()
+    await v.page.locator('.de-toast', { hasText: 'already matches' }).waitFor()
+
+    // undo: the style as it was, the text with the formatting it had been given
+    await v.btn('Undo').click()
+    await v.page.waitForFunction(() => [...document.querySelectorAll('.de-pages span')].some((e) => e.textContent === '2. Next steps' && getComputedStyle(e).fontStyle === 'normal'))
+    expect(await look('2. Next steps')).toBe('normal none')
+    expect(await look('1. Highlights')).toBe('italic underline')
+    expect(v.errors).toEqual([])
   })
 
   test('typing right after a style change: the caret stays, old and new text get the look of the style', async () => {

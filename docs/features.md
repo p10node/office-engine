@@ -26,11 +26,11 @@
 
 - **Typing**: type/delete/Enter, paste (keeps formatting when pasting from Word/Google Docs/web), IME input (e.g. Vietnamese)
 - **Text formatting**: B/I/U/S, superscript/subscript, font, size, color, highlight, paint format
-- **Styles**: Normal, Title, Subtitle, Heading 1–6 always available (created in the file when missing; Ctrl/⌘+Alt+0…6), document outline panel
+- **Styles**: Normal, Title, Subtitle, Heading 1–6 always available (created in the file when missing; Ctrl/⌘+Alt+0…6), update a style to match the selection (right-click → Update style to match: font, size, color, B/I/U/S, alignment and spacing go into the style, every paragraph of it follows; written to that file's own styles only), document outline panel
 - **Paragraphs**: alignment, line spacing, bullet/number list, indent, page break
 - **Images**: insert (file picker/paste/drag & drop), click to select with 8 resize handles, original size, fit width, replace, alt text, download
 - **Tables**: insert, add/delete rows & columns, delete table, Tab between cells
-- **Other**: select all (Ctrl/⌘+A), link (dialog), special characters, right-click context menu (clipboard, link, table, image, insert), find & replace, word count, undo/redo
+- **Other**: select all (Ctrl/⌘+A), link (dialog), special characters, right-click context menu (clipboard, link, table, image, insert, styles), find & replace, word count, undo/redo
 
 ### XLSX
 

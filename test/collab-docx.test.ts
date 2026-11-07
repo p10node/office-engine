@@ -286,6 +286,100 @@ describe('collab docx', () => {
     for (const x of [a, b]) x.collab.close()
   })
 
+  test('a style updated to match the selection: its paragraphs follow for everyone, in the files too, and undo takes it back', async () => {
+    const hub = new CollabHub()
+    const a = await open(hub, 'Ann', () => 5)
+    const b = await open(hub, 'Bob', () => 5)
+    await settle([a.collab, b.collab])
+    const heads = (st: DocState) => st.blocks.filter((x): x is Paragraph => x.t === 'p' && x.sid === 'Heading1')
+    const looks = (st: DocState) => heads(st).map((p) => p.runs.flatMap((r) => (r.t === 'text' ? [`${r.s.color} ${r.s.sz}`] : [])).join())
+    /** the paragraphs take the look of their style a moment after the style changed */
+    const shown = async (want: string) => {
+      for (let i = 0; i < 200 && ![a, b].every((x) => looks(x.st).every((l) => l === want)); i++) await sleep(10)
+      for (const x of [a, b]) expect(looks(x.st)).toEqual(heads(x.st).map(() => want))
+    }
+    const [first, second] = heads(a.st)
+    const bi = a.st.blocks.indexOf(first)
+    const all = { a: { pa: String(bi), o: 0 }, f: { pa: String(bi), o: plen(first.runs as RRun[]) } }
+    a.editor.input.lastSel = all
+    a.editor.setColor('#c00000')
+    a.editor.setSize(20)
+    await settle([a.collab, b.collab])
+    expect(looks(b.st)).toEqual(['#c00000 20', '#365f91 14', '#365f91 14'])
+
+    // offline, Bob types into another heading: text that comes with the look the style had
+    b.transport.drop()
+    const bj = b.st.blocks.findIndex((x) => x.t === 'p' && x.pid === second.pid)
+    opInsert(b.editor, { a: { pa: String(bj), o: 3 }, f: { pa: String(bj), o: 3 } }, 'late ')
+    expect(await a.editor.updateStyle('Heading1')).toBe(true)
+    await settle([a.collab])
+    b.transport.connect()
+    await settle([a.collab, b.collab])
+    await shown('#c00000 20')
+    expect(runsText((a.st.blocks.find((x) => x.t === 'p' && x.pid === second.pid) as Paragraph).runs as RRun[])).toContain('late ')
+    // the paragraph picked leaves colour and size to the style now
+    const picked = (st: DocState) => (st.blocks.find((x) => x.t === 'p' && x.pid === first.pid) as Paragraph).runs.find((r) => r.t === 'text') as { d?: object }
+    for (const x of [a, b]) expect(picked(x.st).d).toMatchObject({ color: null, sz: null })
+    // asking again changes nothing
+    a.editor.input.lastSel = all
+    expect(await a.editor.updateStyle('Heading1')).toBe(false)
+    // who joins later replays the room: the same look
+    const c = await open(hub, 'Cid', () => 0)
+    await settle([a.collab, b.collab, c.collab])
+    for (let i = 0; i < 200 && looks(c.st).join() !== looks(a.st).join(); i++) await sleep(10)
+    expect(looks(c.st)).toEqual(['#c00000 20', '#c00000 20', '#c00000 20'])
+    expect(text(c.st.blocks)).toEqual(text(a.st.blocks))
+    c.client.destroy()
+    c.collab.close()
+
+    // the files hold the style, and the paragraph without its own colour
+    const saved = await Promise.all([a, b].map(async (x) => load(await x.client.call('save'))))
+    for (const x of saved) expect(looks(x.st)).toEqual(['#c00000 20', '#c00000 20', '#c00000 20'])
+    const xml = await (await ZipArchive.open(new BlobSource(await b.client.call('save')))).text('word/document.xml')
+    expect(/<w:p[ >](?:(?!<\/w:p>)[\s\S])*?1\. Highlights[\s\S]*?<\/w:p>/.exec(xml)![0]).not.toContain('C00000')
+
+    // Ann takes it back: the style as it was, her paragraph with the colour and size she gave it
+    a.editor.undo()
+    await settle([a.collab, b.collab])
+    for (let i = 0; i < 200 && looks(b.st).join() !== '#c00000 20,#365f91 14,#365f91 14'; i++) await sleep(10)
+    for (const x of [a, b]) expect(looks(x.st)).toEqual(['#c00000 20', '#365f91 14', '#365f91 14'])
+    for (const x of [a, b]) expect(picked(x.st).d).toEqual({ color: '#c00000', sz: 20 })
+    a.editor.redo()
+    await settle([a.collab, b.collab])
+    await shown('#c00000 20')
+    for (const x of [a, b, ...saved]) x.client.destroy()
+    for (const x of [a, b]) x.collab.close()
+  })
+
+  test('a style updated from a paragraph of another style, in a table: the paragraph gets the style, what the table style adds stays out of it', async () => {
+    const { client, st } = await load(Bun.file(S('sample.docx')) as unknown as Blob)
+    const editor = new DocxEditor(client, st, () => {})
+    const heads = () => st.blocks.filter((x): x is Paragraph => x.t === 'p' && x.sid === 'Heading2')
+    const before = heads().length
+    expect(before).toBeGreaterThan(0)
+    const ti = st.blocks.findIndex((x) => x.t === 'tbl')
+    const cell = () => (st.blocks[ti] as Extract<Block, { t: 'tbl' }>).rows[0].cells[0].blocks[0] as Paragraph
+    const italic = (p: Paragraph) => p.runs.every((r) => r.t !== 'text' || r.s.i === true)
+    // the table style packs its paragraphs: no space after, single line spacing — the document's paragraphs have both
+    const body = st.blocks.find((x): x is Paragraph => x.t === 'p' && x.sid === 'Normal')!
+    expect([cell().sid, cell().ps.after, cell().ps.line]).toEqual(['Normal', 0, 1])
+    expect([body.ps.after, body.ps.line]).toEqual([10, 1.15])
+    const pa = `${ti}.0.0.0`
+    editor.input.lastSel = { a: { pa, o: 0 }, f: { pa, o: plen(cell().runs as RRun[]) } }
+    editor.toggle('i')
+    expect(await editor.updateStyle('@h2')).toBe(true)
+    for (let i = 0; i < 200 && !(heads().every(italic) && cell().sid === 'Heading2'); i++) await sleep(10)
+    // the headings take the look the cell's text has outside a table: italic, the document's own spacing
+    expect(heads().length).toBe(before)
+    for (const p of heads()) expect([italic(p), p.ps.after, p.ps.line, p.ps.outline]).toEqual([true, 10, 1.15, 1])
+    // the cell is a heading now, and looks as it did
+    expect([cell().sid, italic(cell()), cell().ps.after, cell().ps.line]).toEqual(['Heading2', true, 0, 1])
+    const saved = await load(await client.call('save'))
+    const again = (saved.st.blocks[ti] as Extract<Block, { t: 'tbl' }>).rows[0].cells[0].blocks[0] as Paragraph
+    expect([again.sid, italic(again), again.ps.after, again.ps.line]).toEqual(['Heading2', true, 0, 1])
+    for (const x of [client, saved.client]) x.destroy()
+  })
+
   test('text typed while the operation adding a missing style is on its way is kept for everyone', async () => {
     const zip = await ZipArchive.open(new BlobSource(new Blob([await Bun.file(S('sample.docx')).arrayBuffer()])))
     const styles = (await zip.text('word/styles.xml')).replace(/<w:style [^>]*w:styleId="(Heading\d|Title|Subtitle)"[^>]*>[\s\S]*?<\/w:style>/g, '')

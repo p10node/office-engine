@@ -909,6 +909,8 @@
 .de-ctx button:disabled .de-ctx-icon { opacity: 0.4; }
 .de-ctx-label { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .de-ctx-hint { margin-left: 16px; color: var(--de-muted); font-size: 12px; }
+.de-ctx-more { display: inline-flex; margin: 0 -6px 0 8px; color: var(--de-muted); transform: rotate(-90deg); }
+.de-ctx-sub { min-width: 200px; max-height: calc(100vh - 8px); overflow-y: auto; }
 .de-ctx-sep { height: 1px; margin: 6px 0; background: var(--de-sep); }
 .de-ctx-head { padding: 6px 16px 2px 38px; color: var(--de-muted); font-size: 11px; font-weight: 600; letter-spacing: 0.03em; text-transform: uppercase; }
 .de-tab-add { font-size: 18px; padding: 0 10px; }

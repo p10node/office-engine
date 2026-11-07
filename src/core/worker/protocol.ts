@@ -2,7 +2,7 @@ import type { DocKind } from '../opc'
 import type { XOp } from '../../collab/xlsx-ops'
 import type { POp } from '../../collab/pptx-ops'
 import type { PptxCollabResult } from '../../collab/pptx-worker'
-import type { CanonStyle, DocxMeta, Block, EditOp, EditResult, StyleInfo, TableOp } from '../docx/types'
+import type { CanonStyle, DocxMeta, Block, EditOp, EditResult, ParaSpec, StyleInfo, StyleLook, StyleSetResult, TableOp } from '../docx/types'
 import type { BlockOut, BookOp, CellDetail, CellInput, FindMatch, FindOptions, FmtPatch, Range, SheetOp, SheetProgress, WorkbookMeta, XlsxEditResult } from '../xlsx/types'
 import type { PParaSpec, PresentationMeta, ShapeOp, SlideModel, SlideOp } from '../pptx/types'
 
@@ -30,6 +30,10 @@ export interface Methods {
   'docx.link'(url: string): string
   /** id of a built-in paragraph style, created in styles.xml when missing */
   'docx.style'(kind: CanonStyle): { id: string; styles: StyleInfo[] }
+  /** gives paragraph style `id` a look ("update style to match"); only the document's own styles part is written */
+  'docx.styleSet'(id: string, look: StyleLook): StyleSetResult
+  /** the blocks each paragraph converts to with the styles as they are now; `bare`: as it looks outside its table */
+  'docx.convert'(specs: ParaSpec[], bare?: boolean): Block[][]
   /** builds the edited file */
   save(): Blob
   dirty(): boolean

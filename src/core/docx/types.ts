@@ -49,16 +49,19 @@ export interface ParaStyle {
 /** [paragraph id, run ordinal] of the source run in the original XML */
 export type SrcRef = [number, number]
 
-/** Direct formatting changed by the user (written back as explicit run properties). */
+/**
+ * Direct formatting changed by the user (written back as explicit run properties).
+ * null: the run stops setting the property itself, the paragraph style decides.
+ */
 export interface RunSet {
-  b?: boolean
-  i?: boolean
-  u?: string
-  strike?: boolean
+  b?: boolean | null
+  i?: boolean | null
+  u?: string | null
+  strike?: boolean | null
   color?: string | null
-  sz?: number
+  sz?: number | null
   /** raw font name */
-  font?: string
+  font?: string | null
   hl?: string | null
   va?: 'sup' | 'sub' | null
 }
@@ -132,17 +135,18 @@ export interface Paragraph {
   caret?: Inline
 }
 
+/** null (alignment, spacing): the paragraph stops setting the property itself, its style decides. */
 export interface ParaDirty {
   style?: string
-  align?: 'left' | 'center' | 'right' | 'justify'
+  align?: 'left' | 'center' | 'right' | 'justify' | null
   list?: 'bullet' | 'number' | 'none'
   ilvl?: number
   indL?: number
   /** line spacing multiple (1, 1.15, 1.5, 2…) */
-  line?: number
+  line?: number | null
   /** spacing before / after in pt */
-  before?: number
-  after?: number
+  before?: number | null
+  after?: number | null
   pageBreak?: boolean
 }
 
@@ -212,6 +216,44 @@ export interface StyleInfo {
   outline?: number
   /** run look of the style, for the style picker */
   preview?: { b?: boolean; i?: boolean; color?: string; sz?: number; font?: string }
+}
+
+/**
+ * The look given to a paragraph style ("update style to match"). Only the properties present are touched;
+ * null: the style stops defining the property and takes it from the style it is based on.
+ */
+export interface StyleLook {
+  b?: boolean | null
+  i?: boolean | null
+  /** underline kind, 'none' for no underline */
+  u?: string | null
+  strike?: boolean | null
+  /** '#rrggbb', or 'auto' */
+  color?: string | null
+  sz?: number | null
+  /** raw font name */
+  font?: string | null
+  align?: 'left' | 'center' | 'right' | 'justify' | null
+  /** line spacing: a multiple, or pt when `lineRule` says so */
+  line?: number | null
+  lineRule?: 'exact' | 'atLeast'
+  /** spacing before / after in pt */
+  before?: number | null
+  after?: number | null
+}
+
+export type HeaderFooters = Pick<DocxMeta, 'header' | 'footer' | 'firstHeader' | 'firstFooter'>
+
+export interface StyleSetResult {
+  styles: StyleInfo[]
+  /** paragraph styles that look different now (the style and those based on it); empty when nothing changed */
+  changed: string[]
+  /** the look that puts the style back as it was */
+  undo: StyleLook
+  /** the document has no such paragraph style */
+  missing?: boolean
+  /** headers / footers converted again, when the document has any */
+  headers?: HeaderFooters
 }
 
 export interface CellBorders {

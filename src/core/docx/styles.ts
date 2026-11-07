@@ -34,11 +34,14 @@ export function border(el: XEl | undefined): Border | undefined | null {
 export const borderCss = (b: Border | null | undefined): string | undefined =>
   b === null ? 'none' : b ? `${b.w}pt ${b.style} ${b.color}` : undefined
 
-function fontOf(rf: XEl, theme: Theme): string | undefined {
+/** the font an rFonts element names (theme fonts resolved) */
+export function fontName(rf: XEl, theme: Theme): string | undefined {
   const th = rf.a.asciiTheme ?? rf.a.hAnsiTheme
-  if (th) return cssFont(th.startsWith('major') ? theme.major : theme.minor)
-  return cssFont(rf.a.ascii ?? rf.a.hAnsi ?? rf.a.cs ?? rf.a.eastAsia)
+  if (th) return th.startsWith('major') ? theme.major : theme.minor
+  return rf.a.ascii ?? rf.a.hAnsi ?? rf.a.cs ?? rf.a.eastAsia
 }
+
+const fontOf = (rf: XEl, theme: Theme): string | undefined => cssFont(fontName(rf, theme))
 
 export function readRPr(rPr: XEl | undefined, theme: Theme): RunStyle {
   const s: RunStyle = {}
@@ -196,6 +199,22 @@ const CANON_BY_NAME: Record<string, CanonStyle> = {
   heading6: 'h6',
 }
 
+function readDef(s: XEl): StyleDef | undefined {
+  const id = s.a.styleId
+  if (!id) return undefined
+  return {
+    id,
+    type: s.a.type ?? 'paragraph',
+    basedOn: kid(s, 'basedOn')?.a.val,
+    el: s,
+    isDefault: s.a.default === '1' || s.a.default === 'true',
+    name: kid(s, 'name')?.a.val ?? id,
+    next: kid(s, 'next')?.a.val,
+    quick: !!kid(s, 'qFormat'),
+    hidden: !!kid(s, 'semiHidden') || !!kid(s, 'hidden'),
+  }
+}
+
 export class StyleSheet {
   private defs = new Map<string, StyleDef>()
   private paraCache = new Map<string, ResolvedParaStyle>()
@@ -212,41 +231,40 @@ export class StyleSheet {
     this.docRs = readRPr(path(dd, 'rPrDefault', 'rPr'), theme)
     this.docPs = readPPr(path(dd, 'pPrDefault', 'pPr')).ps
     for (const s of kids(root, 'style')) {
-      const id = s.a.styleId
-      if (!id) continue
-      const def: StyleDef = {
-        id,
-        type: s.a.type ?? 'paragraph',
-        basedOn: kid(s, 'basedOn')?.a.val,
-        el: s,
-        isDefault: s.a.default === '1' || s.a.default === 'true',
-        name: kid(s, 'name')?.a.val ?? id,
-        next: kid(s, 'next')?.a.val,
-        quick: !!kid(s, 'qFormat'),
-        hidden: !!kid(s, 'semiHidden') || !!kid(s, 'hidden'),
-      }
-      this.defs.set(id, def)
-      if (def.isDefault && def.type === 'paragraph') this.defaultPara = id
-      if (def.isDefault && def.type === 'table') this.defaultTable = id
+      const def = readDef(s)
+      if (!def) continue
+      this.defs.set(def.id, def)
+      if (def.isDefault && def.type === 'paragraph') this.defaultPara = def.id
+      if (def.isDefault && def.type === 'table') this.defaultTable = def.id
     }
   }
 
-  /** registers a style element added to styles.xml */
+  /** registers a style element added to styles.xml, or the new definition of a style that changed */
   add(s: XEl) {
-    const id = s.a.styleId
-    if (!id) return
-    this.defs.set(id, {
-      id,
-      type: s.a.type ?? 'paragraph',
-      basedOn: kid(s, 'basedOn')?.a.val,
-      el: s,
-      isDefault: false,
-      name: kid(s, 'name')?.a.val ?? id,
-      next: kid(s, 'next')?.a.val,
-      quick: !!kid(s, 'qFormat'),
-      hidden: false,
-    })
+    const def = readDef(s)
+    if (!def) return
+    this.defs.set(def.id, def)
     this.paraCache.clear()
+  }
+
+  /** the element of paragraph style `id`: what the style says itself, nothing inherited */
+  own(id: string): XEl | undefined {
+    const d = this.defs.get(id)
+    return d?.type === 'paragraph' ? d.el : undefined
+  }
+
+  /** what paragraph style `id` gets from the styles it is based on and the document defaults, its own properties left out */
+  inherited(id: string): ResolvedParaStyle {
+    const base = this.defs.get(id)?.basedOn
+    const r = base && base !== id && this.defs.has(base) ? this.para(base) : undefined
+    return { ps: merge(this.docPs, r?.ps), rs: merge(this.docRs, r?.rs) }
+  }
+
+  /** paragraph style `id` and every paragraph style based on it, directly or not */
+  family(id: string): string[] {
+    const out: string[] = []
+    for (const d of this.defs.values()) if (d.type === 'paragraph' && this.chain(d.id).some((x) => x.id === id)) out.push(d.id)
+    return out
   }
 
   /** ids of the built-in paragraph styles present in the document (matched by name, any locale id) */

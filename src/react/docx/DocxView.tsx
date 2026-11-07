@@ -13,7 +13,7 @@ import { domFromPos, getSel, opInsert, posFromDom } from '../edit/input'
 import { download, pickFiles } from '../edit/Toolbar'
 import { runsText, type RRun } from '../edit/rich'
 import { DocxEditor, type DocState, type FormatState } from './DocxEditor'
-import { DocxToolbar, type ImageActions } from './DocxToolbar'
+import { DocxToolbar, styleChoices, type ImageActions } from './DocxToolbar'
 import { FindBar, type Match } from './FindBar'
 import { docxToMarkdown, docxToText } from '../file/text'
 import { BlockView, contextual, type RenderCtx } from './render'
@@ -122,9 +122,10 @@ export function DocxView({ client, onStatus, initialZoom = 'fit' }: DocxViewProp
   useEffect(() => {
     editor.onImage = (x) => setImg((p) => (p?.pa === x?.pa && p?.o === x?.o && p?.w === x?.w && p?.h === x?.h && p?.target === x?.target && p?.alt === x?.alt ? p : x))
     editor.onStyles = (styles) => setMeta((m) => (m ? { ...m, styles } : m))
+    editor.onHeaders = (h) => setMeta((m) => (m ? { ...m, ...h } : m))
     editor.onPainter = setPainter
     return () => {
-      editor.onImage = editor.onStyles = editor.onPainter = undefined
+      editor.onImage = editor.onStyles = editor.onHeaders = editor.onPainter = undefined
     }
   }, [editor])
 
@@ -631,8 +632,21 @@ export function DocxView({ client, onStatus, initialZoom = 'fit' }: DocxViewProp
         { label: 'Page break', icon: 'pagebreak', hint: `${MOD}↵`, run: () => editor.insertPageBreak(), disabled: !s },
       )
     }
+    // the style takes the look of the selection; every paragraph of that style follows
+    const match = (label: string, value: string) => () =>
+      void editor
+        .updateStyle(value)
+        .then((changed) => changed !== undefined && setToast(changed ? `“${label}” updated to match the selection` : `“${label}” already matches the selection`))
+        .catch((e) => console.error('[office-engine] style update failed', e))
     items.push(
-      { label: 'Clear formatting', icon: 'clear', hint: `${MOD}\\`, sep: true, run: () => editor.clearFormat(), disabled: !s },
+      {
+        label: 'Update style to match',
+        icon: 'styleMatch',
+        sep: true,
+        disabled: !s || !!s.img,
+        items: styleChoices(meta?.styles ?? []).map((o) => ({ label: o.label, hint: o.value === s?.style ? 'current' : undefined, sep: o.sep, run: match(o.label, o.value) })),
+      },
+      { label: 'Clear formatting', icon: 'clear', hint: `${MOD}\\`, run: () => editor.clearFormat(), disabled: !s },
       { label: 'Select all', icon: 'selectAll', hint: `${MOD}A`, run: () => editor.selectAll() },
     )
     return items

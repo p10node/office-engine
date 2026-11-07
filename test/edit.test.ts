@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'bun:test'
 import { Engine } from '../src/core/worker/engine'
 import { paraSpec } from '../src/core/docx/spec'
-import type { Block, EditResult, Paragraph } from '../src/core/docx/types'
+import type { Block, EditResult, Paragraph, StyleSetResult } from '../src/core/docx/types'
 import { ZipArchive } from '../src/core/zip'
 import { BlobSource } from '../src/core/source'
 import { rebuildZip } from '../src/core/zipwrite'
@@ -266,6 +266,99 @@ describe('docx styles + pictures', () => {
     const pic = paras(re.blocks).flatMap((p) => p.runs).find((x) => x.t === 'img') as any
     expect(pic.alt).toBe('Doanh thu "Q1"')
     expect(pic.target).toBe(img.path)
+  })
+})
+
+describe('docx style looks', () => {
+  const src = async () => new Blob([await Bun.file(S('sample.docx')).arrayBuffer()])
+  const first = (bl: Block[]) => bl[0] as Paragraph
+  const look = (p: Paragraph) => (p.runs.find((x) => x.t === 'text') as Extract<Paragraph['runs'][number], { t: 'text' }>).s
+
+  test('a style takes another look in the document itself: its paragraphs follow, the file keeps it, the way back is exact', async () => {
+    const file = await src()
+    const { engine, blocks } = await openDocx(file)
+    const heads = paras(blocks).filter((p) => p.sid === 'Heading1')
+    const body = paras(blocks).find((p) => textOf(p).startsWith('This document shows'))!
+    expect(heads.length).toBeGreaterThan(1)
+    const r = (await engine.call('docx.styleSet', ['Heading1', { color: '#c00000', sz: 20, b: false, font: 'Georgia', align: 'center', before: 6 }])) as StyleSetResult
+    // the style and those based on it, nothing else
+    expect(r.changed).toContain('Heading1')
+    expect(r.changed).not.toContain('Normal')
+    expect(r.changed).not.toContain('Heading2')
+    expect(r.undo).toEqual({ color: '#365f91', sz: 14, b: true, font: 'Calibri', align: null, before: 24 })
+    expect(r.styles.find((x) => x.canon === 'h1')!.preview).toMatchObject({ color: '#c00000', sz: 20 })
+    expect(r.headers?.header?.length).toBeGreaterThan(0)
+
+    const conv = (await engine.call('docx.convert', [[...heads, body].map((p) => paraSpec([p]))])) as Block[][]
+    for (const bl of conv.slice(0, heads.length)) {
+      expect(look(first(bl))).toMatchObject({ color: '#c00000', sz: 20, font: '"Georgia", serif' })
+      expect(look(first(bl)).b).toBeFalsy()
+      expect(first(bl).ps).toMatchObject({ align: 'center', before: 6 })
+    }
+    // a paragraph of another style keeps its look
+    expect(first(conv.at(-1)!).ps.align).toBeUndefined()
+    expect(look(first(conv.at(-1)!))).toEqual(look(body))
+
+    // the look it has, or values no look can hold: nothing changes
+    expect(((await engine.call('docx.styleSet', ['Heading1', { color: '#c00000', sz: 20, align: 'center' }])) as StyleSetResult).changed).toEqual([])
+    expect(((await engine.call('docx.styleSet', ['Heading1', { color: 'red"/><w:x', sz: 'big', align: 'up' }])) as StyleSetResult).changed).toEqual([])
+    expect(((await engine.call('docx.styleSet', ['NoSuchStyle', { sz: 30 }])) as StyleSetResult).changed).toEqual([])
+
+    // only the styles part of this file is written
+    const saved = (await engine.call('save', [])) as Blob
+    expect(await partText(saved, 'word/document.xml')).toBe(await partText(file, 'word/document.xml'))
+    const def = /<w:style [^>]*w:styleId="Heading1">.*?<\/w:style>/.exec(await partText(saved, 'word/styles.xml'))![0]
+    expect(def).toContain('<w:rFonts w:ascii="Georgia" w:hAnsi="Georgia" w:eastAsia="Georgia" w:cs="Georgia"/><w:color w:val="C00000"/><w:sz w:val="40"/><w:szCs w:val="40"/>')
+    expect(def).toContain('<w:spacing w:before="120" w:after="0"/><w:jc w:val="center"/>')
+    // bold is what the style it is based on gives: not repeated in it
+    expect(def).not.toMatch(/<w:b(Cs)?[ \/]/)
+    const re = await openDocx(saved)
+    for (const p of paras(re.blocks).filter((x) => x.sid === 'Heading1')) expect(look(p)).toMatchObject({ color: '#c00000', sz: 20 })
+
+    // back: theme font and theme colour included, as the file came
+    expect(((await engine.call('docx.styleSet', ['Heading1', r.undo])) as StyleSetResult).undo).toEqual({ color: '#c00000', sz: 20, b: null, font: 'Georgia', align: 'center', before: 6 })
+    expect(await partText((await engine.call('save', [])) as Blob, 'word/styles.xml')).toBe(await partText(file, 'word/styles.xml'))
+  })
+
+  test('the default style: every style based on it follows, list markers and headers included', async () => {
+    const { engine, blocks, events } = await openDocx(await src())
+    const meta = events.filter((e) => e.event === 'docx:meta').pop()!.data
+    const item = paras(blocks).find((p) => p.lst === 'number')!
+    expect(item.marker!.s.sz).toBe(11)
+    const r = (await engine.call('docx.styleSet', ['Normal', { sz: 13, color: '#1f4e79' }])) as StyleSetResult
+    expect(r.changed).toEqual(expect.arrayContaining(['Normal', 'Heading1', 'ListNumber', 'Header']))
+    const [bl] = (await engine.call('docx.convert', [[paraSpec([item])]])) as Block[][]
+    // the number keeps its text and takes the size of the paragraph
+    expect(first(bl).marker).toMatchObject({ text: item.marker!.text, s: { sz: 13, color: '#1f4e79' } })
+    expect(look(first(bl)).sz).toBe(13)
+    const header = (b: Block[] | undefined) => look(b!.find((x): x is Paragraph => x.t === 'p' && x.runs.length > 0)!)
+    expect(header(meta.header).sz).toBe(11)
+    expect(header(r.headers!.header)).toMatchObject({ sz: 13, color: '#1f4e79' })
+    // a heading sets its own size and colour: only what it inherits moved
+    const head = paras(blocks).find((p) => p.sid === 'Heading1')!
+    const [hb] = (await engine.call('docx.convert', [[paraSpec([head])]])) as Block[][]
+    expect(look(first(hb))).toEqual(look(head))
+  })
+
+  test('formatting a run or a paragraph sets itself can be dropped: the style decides again', async () => {
+    const { engine, blocks } = await openDocx(await src())
+    const p = paras(blocks).find((x) => textOf(x).startsWith('This document shows'))!
+    const bold = p.runs.findIndex((x) => x.t === 'text' && x.s.b)
+    const big = p.runs.findIndex((x) => x.t === 'text' && (x.s.sz ?? 0) > 11)
+    expect(bold).toBeGreaterThan(-1)
+    expect(big).toBeGreaterThan(-1)
+    const runs = p.runs.map((x, i) => (i === bold ? { ...x, d: { b: null } } : i === big ? { ...x, d: { sz: null, font: null } } : x)) as Paragraph['runs']
+    const centred = { ...paraSpec([{ ...p, edited: true }]), pd: { align: 'center' as const, before: 9, line: 2 } }
+    await engine.call('docx.edit', [{ anchor: p.pid, list: [centred] }])
+    const res = (await engine.call('docx.edit', [{ anchor: p.pid, list: [{ ...paraSpec([{ ...p, edited: true, runs }]), pd: { align: null, before: null, line: null } }], want: true }])) as EditResult
+    const q = res.blocks[p.pid!][0] as Paragraph
+    expect(textOf(q)).toBe(textOf(p))
+    expect(q.runs.every((x) => x.t !== 'text' || (!x.s.b && x.s.sz === 11))).toBe(true)
+    expect(q.ps).toEqual(p.ps)
+    const xml = await partText((await engine.call('save', [])) as Blob, 'word/document.xml')
+    const out = /<w:p[ >](?:(?!<\/w:p>)[\s\S])*?This document shows[\s\S]*?<\/w:p>/.exec(xml)![0]
+    expect(out).not.toContain('<w:b/>')
+    expect(out).not.toContain('<w:jc')
   })
 })
 

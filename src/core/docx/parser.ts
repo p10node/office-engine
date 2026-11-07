@@ -1,4 +1,5 @@
 import { OpcPackage, relOfType, type Rels } from '../opc'
+import type { RNode } from '../raw'
 import { parseTheme, type Theme } from '../theme'
 import { emuToPt } from '../units'
 import { desc, descAll, kid, kids, num, parseXml, parseXmlStream, path, TreeBuilder, type SaxHandler, type XEl } from '../xml'
@@ -7,7 +8,7 @@ import {
   borderCss, merge, readMargins, readPPr, readRPr, readTableBorders, shading, StyleSheet, type NumPr,
 } from './styles'
 import type {
-  Block, CellBorders, DocxMeta, Inline, ListMarker, PageSetup, Paragraph, ParaStyle, RunSet, RunStyle, SrcRef, Table, TableCell, TableRow,
+  Block, CellBorders, DocxMeta, HeaderFooters, Inline, ListMarker, PageSetup, Paragraph, ParaStyle, RunSet, RunStyle, SrcRef, Table, TableCell, TableRow,
 } from './types'
 import { DEFAULT_PAGE } from './types'
 
@@ -683,6 +684,8 @@ export class DocxDocument {
   genXml = new Map<number, string>()
   /** whole body items replaced by the editor (regenerated tables; '' = deleted) */
   itemXml = new Map<number, string>()
+  /** styles the editor changed → their definition in the file as opened (parsed, and as source) */
+  styleOrig = new Map<string, { x: XEl; raw: RNode }>()
   private nextPid = 1
   private captured = false
   private edited = false
@@ -713,6 +716,21 @@ export class DocxDocument {
 
   markEdited() {
     this.edited = true
+  }
+
+  /** relationship ids of the headers / footers shown (final section) */
+  private hfRefs?: Record<keyof HeaderFooters, string | undefined>
+
+  /** the headers / footers, converted with the styles as they are now; undefined when the document has none */
+  async headers(): Promise<HeaderFooters | undefined> {
+    const r = this.hfRefs
+    if (!r || !Object.values(r).some(Boolean)) return undefined
+    return {
+      header: await this.headerFooter(r.header),
+      footer: await this.headerFooter(r.footer),
+      firstHeader: await this.headerFooter(r.firstHeader),
+      firstFooter: await this.headerFooter(r.firstFooter),
+    }
   }
 
   private async headerFooter(id: string | undefined): Promise<Block[] | undefined> {
@@ -815,13 +833,10 @@ export class DocxDocument {
     const meta: DocxMeta = { page: pageSetup(sect), ...baseMeta, final: true }
     if (sect) {
       const ref = (tag: string, type: string) => kids(sect, tag).find((r) => (r.a.type ?? 'default') === type)?.a['r:id']
-      meta.header = await this.headerFooter(ref('headerReference', 'default'))
-      meta.footer = await this.headerFooter(ref('footerReference', 'default'))
       meta.titlePg = !!kid(sect, 'titlePg') && kid(sect, 'titlePg')?.a.val !== '0'
-      if (meta.titlePg) {
-        meta.firstHeader = await this.headerFooter(ref('headerReference', 'first'))
-        meta.firstFooter = await this.headerFooter(ref('footerReference', 'first'))
-      }
+      const first = (tag: string) => (meta.titlePg ? ref(tag, 'first') : undefined)
+      this.hfRefs = { header: ref('headerReference', 'default'), footer: ref('footerReference', 'default'), firstHeader: first('headerReference'), firstFooter: first('footerReference') }
+      Object.assign(meta, await this.headers())
     }
     cb.onMeta(meta)
     flush()
