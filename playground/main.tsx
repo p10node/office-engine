@@ -7,6 +7,9 @@ const SAMPLES = [
   { label: 'sample.docx', url: 'samples/sample.docx' },
   { label: 'sample.xlsx', url: 'samples/sample.xlsx' },
   { label: 'sample.pptx', url: 'samples/sample.pptx' },
+  { label: 'sample.pages', url: 'samples/sample.pages' },
+  { label: 'sample.key', url: 'samples/sample.key' },
+  { label: 'sample.numbers', url: 'samples/sample.numbers' },
   { label: 'large-doc.docx', url: 'samples/large-doc.docx' },
   { label: 'large-sheet.xlsx (300k rows)', url: 'samples/large-sheet.xlsx' },
   { label: 'large-deck.pptx (305 slides)', url: 'samples/large-deck.pptx' },
@@ -157,7 +160,7 @@ function App() {
         ))}
         <label style={{ ...btn, display: 'inline-block' }}>
           Open file…
-          <input type="file" accept=".docx,.xlsx,.pptx,.docm,.xlsm,.pptm" hidden onChange={(e) => e.target.files?.[0] && open(e.target.files[0])} />
+          <input type="file" accept=".docx,.xlsx,.pptx,.docm,.xlsm,.pptm,.pages,.key,.numbers" hidden onChange={(e) => e.target.files?.[0] && open(e.target.files[0])} />
         </label>
         <form onSubmit={(e) => { e.preventDefault(); if (url) open(url) }} style={{ display: 'flex', gap: 6, flex: '1 1 260px' }}>
           <input value={url} onChange={(e) => setUrl(e.target.value)} placeholder="https://…/file.xlsx (Range requests)" style={{ ...btn, flex: 1, cursor: 'text' }} />

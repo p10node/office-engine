@@ -63,7 +63,7 @@ export interface DocViewerProps {
   allowDownload?: boolean
   /** Show the File menu (new, open, save, rename, download as PDF / HTML / text…, details, print) and its shortcuts. Default true. */
   fileMenu?: boolean
-  /** File → New / Open: replace the document with a blank one or a local file (Office, CSV, text, Markdown, HTML). Default true. */
+  /** File → New / Open: replace the document with a blank one or a local file (Office, Pages, Keynote, Numbers, CSV, text, Markdown, HTML). Default true. */
   allowOpen?: boolean
   /** Extra File menu entries (Share, Version history…), shown before Close. */
   fileMenuItems?: FileMenuItem[]
@@ -93,6 +93,7 @@ export interface DocViewerProps {
 }
 
 const EXT: Record<string, string> = { docx: '.docx', xlsx: '.xlsx', pptx: '.pptx' }
+const FROM_LABEL: Record<'pages' | 'keynote' | 'numbers', string> = { pages: 'Apple Pages document', keynote: 'Apple Keynote presentation', numbers: 'Apple Numbers spreadsheet' }
 const UNTITLED: Record<DocKind, string> = { docx: 'Untitled document', xlsx: 'Untitled spreadsheet', pptx: 'Untitled presentation' }
 
 function fmtBytes(n: number) {
@@ -125,8 +126,10 @@ export function DocViewer(props: DocViewerProps) {
   const { client, error, loading, progress } = useDocument(opened ? opened.src : src, { name: loadName, headers, credentials, worker })
   const docName = renamed ?? loadName
   const collab = useCollab(client, props.collab)
+  // converted from another format (Apple Pages, Keynote, Numbers): view only
+  const readOnly = !!client?.info?.from
   // with collaboration, editing waits for the shared history (offline edits sync on reconnect)
-  const canEdit = !props.collab || collab.status === 'live' || collab.status === 'offline'
+  const canEdit = !readOnly && (!props.collab || collab.status === 'live' || collab.status === 'offline')
   const [statusEl, setStatusEl] = useState<HTMLSpanElement | null>(null)
 
   // ---- comments ----
@@ -137,7 +140,7 @@ export function DocViewer(props: DocViewerProps) {
   if (cmCtl) {
     cmCtl.opts = cmOpts
     cmCtl.me = cmOpts.user ?? props.collab?.user ?? { name: 'Me' }
-    cmCtl.canComment = cmOpts.canComment ?? (editing && canEdit)
+    cmCtl.canComment = !readOnly && (cmOpts.canComment ?? (editing && canEdit))
   }
   const cmState = useCommentsState(cmCtl)
   const cmOpenAtLoad = !!cmOpts.open
@@ -338,7 +341,7 @@ export function DocViewer(props: DocViewerProps) {
     <div ref={rootRef} className={'de-root' + (dark ? ' de-dark' : '') + (className ? ` ${className}` : '')} style={style} onKeyDown={onKeyDown}>
       {toolbar && (
         <div className="de-bar">
-          {client && <span className={`de-badge de-badge-${client.kind}`}>{client.kind}</span>}
+          {client && <span className={`de-badge de-badge-${client.kind}`}>{client.info?.from ?? client.kind}</span>}
           {fileMenu && <FileMenu actions={fileActions} />}
           <span className="de-title" title={title}>
             {title}
@@ -361,13 +364,13 @@ export function DocViewer(props: DocViewerProps) {
               {cmCount > 0 && <span className="de-cm-n">{cmCount}</span>}
             </button>
           )}
-          {client && allowEdit && (
+          {client && allowEdit && !readOnly && (
             <button type="button" className={editing ? 'de-mode de-mode-on' : 'de-mode'} onClick={() => setEditing((v) => !v)} title={editing ? 'Switch to viewing' : 'Edit document'}>
               <Icon name={editing ? 'view' : 'edit'} size={16} />
               {editing ? 'View' : 'Edit'}
             </button>
           )}
-          {client && canSave && (editing || dirty) && (
+          {client && canSave && ((editing && !readOnly) || dirty) && (
             <button type="button" className={dirty ? 'de-mode de-save-dirty' : 'de-mode'} disabled={saving} onClick={() => void save()} title="Save a copy (Ctrl+S)">
               <Icon name="save" size={16} />
               {saving ? 'Saving…' : dirty || onSave ? 'Save' : 'Download'}
@@ -410,7 +413,7 @@ export function DocViewer(props: DocViewerProps) {
           client={client}
           file={[
             ['Name', fileName],
-            ['Type', KIND_LABEL[client.kind]],
+            ['Type', client.info?.from ? `${FROM_LABEL[client.info.from]} (view only)` : KIND_LABEL[client.kind]],
             ...(client.size > 0 ? [['File size', fmtBytes(client.size)] as [string, string]] : []),
             ...(dirty ? [['Status', 'Unsaved changes'] as [string, string]] : []),
           ]}

@@ -61,7 +61,7 @@ CSS is auto-injected, no import needed. Container must have a height.
 | `worker`           | `() => Worker \| false`                        | inline    | Custom worker (CSP), `false` = main thread                                                           |
 | `styleTarget`      | `Document \| ShadowRoot`                       | document  | Where CSS is injected                                                                                |
 | `theme`            | `'light' \| 'dark' \| 'auto'`                  | `'light'` | Color scheme of the chrome; `'auto'` follows `prefers-color-scheme`. Documents keep their own colors |
-| `editable`         | `boolean`                                      | `false`   | Open in edit mode                                                                                    |
+| `editable`         | `boolean`                                      | `false`   | Open in edit mode (Pages, Keynote and Numbers files stay view only)                                  |
 | `allowEdit`        | `boolean`                                      | `true`    | Show Edit/View button                                                                                |
 | `allowSave`        | `boolean`                                      | `true`    | Show Save/Download button, enable Ctrl+S                                                             |
 | `allowDownload`    | `boolean`                                      | `true`    | Allow downloads to device (save without `onSave`, images)                                            |
@@ -152,6 +152,7 @@ import { DocumentClient } from '@p10node/office-engine/core'
 
 const doc = await DocumentClient.open(fileOrUrl, { onProgress: console.log })
 doc.kind                                   // 'docx' | 'xlsx' | 'pptx'
+doc.info.from                              // 'pages' / 'keynote' / 'numbers': an Apple file, converted to docx / pptx / xlsx (view only)
 doc.on('docx:blocks', (blocks) => {})      // docx: streamed blocks
 await doc.call('docx.start')
 doc.call('xlsx.load', 0)                   // xlsx: stream sheet

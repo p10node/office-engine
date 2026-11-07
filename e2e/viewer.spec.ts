@@ -41,6 +41,71 @@ describe('viewing', () => {
     expect(v.errors).toEqual([])
   })
 
+  test('pages: rendered read-only, downloads as Word', async () => {
+    // even when asked to start in edit mode: a converted document is view only
+    const v = await viewer({ src: 'samples/sample.pages', editable: true })
+    const { page } = v
+    expect(await v.title()).toBe('sample.pages')
+    expect(await page.locator('.de-badge').innerText()).toBe('PAGES')
+    expect(await v.barButton('Edit').count()).toBe(0)
+    expect(await page.locator('.de-ebar').count()).toBe(0)
+    const text = await v.pagesText()
+    for (const t of ['Quarterly Field Report', 'Northern sites reported first', 'Region', '1480.5', 'Northwind Field Lab']) expect(text).toContain(t)
+    expect(await page.locator('.de-pages img').count()).toBeGreaterThan(0)
+    expect(await page.locator('.de-pages [contenteditable=true]').count()).toBe(0)
+
+    const dl = await v.downloadAs('Word document')
+    expect(dl.name).toBe('sample.docx')
+    expect(dl.bytes.subarray(0, 2).toString()).toBe('PK')
+    expect(v.errors).toEqual([])
+  })
+
+  test('keynote: slides rendered read-only, downloads as PowerPoint', async () => {
+    const v = await viewer({ src: 'samples/sample.key', editable: true })
+    const { page } = v
+    expect(await v.title()).toBe('sample.key')
+    expect(await page.locator('.de-badge').innerText()).toBe('KEYNOTE')
+    expect(await v.barButton('Edit').count()).toBe(0)
+    expect(await page.locator('.de-ebar').count()).toBe(0)
+    // the skipped slide is listed but marked hidden, like a hidden PowerPoint slide
+    await page.waitForFunction(() => /Slide 1 of 5/.test(document.querySelector('.de-bar')?.textContent ?? ''))
+    expect(await page.locator('.de-thumb').count()).toBe(5)
+    await page.locator('.de-thumb').nth(2).click()
+    await page.waitForFunction(() => /Slide 3 of 5/.test(document.querySelector('.de-bar')?.textContent ?? ''))
+    const text = await page.locator('.de-slide-inner').nth(2).innerText()
+    for (const t of ['Results', 'Region', '1480.5']) expect(text).toContain(t)
+    expect(await page.locator('.de-slide-inner').nth(1).locator('img').count()).toBeGreaterThan(0)
+
+    const dl = await v.downloadAs('PowerPoint presentation')
+    expect(dl.name).toBe('sample.pptx')
+    expect(dl.bytes.subarray(0, 2).toString()).toBe('PK')
+    expect(v.errors).toEqual([])
+  })
+
+  test('numbers: tables as sheets, read-only, downloads as Excel', async () => {
+    const v = await viewer({ src: 'samples/sample.numbers', editable: true })
+    const { page } = v
+    expect(await v.title()).toBe('sample.numbers')
+    expect(await page.locator('.de-badge').innerText()).toBe('NUMBERS')
+    expect(await v.barButton('Edit').count()).toBe(0)
+    expect(await page.locator('.de-ebar').count()).toBe(0)
+    expect(await page.locator('.de-tab[role=tab]').allInnerTexts()).toEqual(['Budget', 'Notes - Contacts', 'Notes - Totals'])
+    expect(await v.shown('A2')).toBe('Rent')
+    expect(await v.shown('B3')).toBe('$450.00')
+    expect(await v.shown('D3')).toBe('17.6%')
+    expect(await v.shown('E3')).toBe('Jan 31, 2025')
+    expect(await v.shown('G3')).toBe('3h 30m')
+    // typing does not edit the cell
+    await v.clickCell('A2')
+    await page.keyboard.type('x')
+    expect(await v.shown('A2')).toBe('Rent')
+
+    const dl = await v.downloadAs('Excel workbook')
+    expect(dl.name).toBe('sample.xlsx')
+    expect(dl.bytes.subarray(0, 2).toString()).toBe('PK')
+    expect(v.errors).toEqual([])
+  })
+
   test('pptx: slides, thumbnails, slideshow', async () => {
     const v = await viewer({ src: 'samples/sample.pptx' })
     const { page } = v

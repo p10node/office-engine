@@ -5,7 +5,7 @@
 [![CI](https://github.com/p10node/office-engine/actions/workflows/ci.yml/badge.svg)](https://github.com/p10node/office-engine/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/npm/l/@p10node/office-engine)](LICENSE)
 
-View + edit **DOCX / XLSX / PPTX** directly in the browser. Loads progressively like Google Docs, handles heavy files, one-line React embed, saves back to the original format.
+View + edit **DOCX / XLSX / PPTX** directly in the browser, and view Apple **Pages**, **Keynote** and **Numbers** files. Loads progressively like Google Docs, handles heavy files, one-line React embed, saves back to the original format.
 
 **[npm](https://www.npmjs.com/package/@p10node/office-engine)** · **[Live demo](https://p10node.github.io/office-engine/demo/)** · **[Docs](https://p10node.github.io/office-engine/)**
 
@@ -63,7 +63,8 @@ Also online at [p10node.github.io/office-engine](https://p10node.github.io/offic
 - **Virtualized views**: only visible pages, cells and slides render
 - **Editing** with a Google Docs-style toolbar: DOCX text, styles, lists, images, tables; XLSX cells, formulas (134 functions), formats, borders, rows/columns, sheets; PPTX text, shapes, images, slides, slideshow
 - **Fast save**: only edited parts are regenerated, everything else keeps its original bytes
-- **File menu**: new, open (also CSV / text / Markdown / HTML), import CSV, rename, download as PDF / HTML / text / CSV, document details, print
+- **Apple Pages, Keynote and Numbers (view only)**: `.pages` / `.key` / `.numbers` files open read-only, converted to Word / PowerPoint / Excel in the worker (styles, lists, tables, images, shapes, header/footer, footnotes, master slides, typed and formatted cells); *Download as* Word / PowerPoint / Excel saves the converted file
+- **File menu**: new, open (also Pages / Keynote / Numbers / CSV / text / Markdown / HTML), import CSV, rename, download as PDF / HTML / text / CSV, document details, print
 - **Comments**: threads with replies, resolve, edit / delete, @mentions; on DOCX text, XLSX cells and PPTX slides, stored in the file the way Word, Excel and PowerPoint store them
 - **Real-time collaboration**: live edits, avatars, collaborators' cursors, offline edits sync on reconnect
 - **Dark mode**: `theme="dark"` or `"auto"` (follows the OS); documents keep their own colors

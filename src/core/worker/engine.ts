@@ -10,6 +10,7 @@ import type { BookOp, CellInput, FindOptions, FmtPatch, Range, SheetOp } from '.
 import type { PParaSpec, ShapeOp, SlideOp } from '../pptx/types'
 import { addSlideImage, shapeOps, slideOp, undoShapes } from '../pptx/edit'
 import { ZipArchive } from '../zip'
+import { isIworkZip, isLegacyIwork, openIwork } from '../iwork'
 import { XlsxCollabWorker } from '../../collab/xlsx-worker'
 import type { XOp } from '../../collab/xlsx-ops'
 import { PptxCollabWorker } from '../../collab/pptx-worker'
@@ -45,11 +46,15 @@ export class Engine {
       signal: this.abort.signal,
       onProgress: (loaded, total) => this.emit('progress', { phase: 'download', loaded, total }),
     })
-    const zip = await ZipArchive.open(source)
+    let zip = await ZipArchive.open(source)
+    let from: OpenResult['from']
+    // Apple Pages / Keynote / Numbers: converted to a Word document / PowerPoint presentation / Excel workbook, shown read-only
+    if (isIworkZip(zip)) ({ zip, from } = await openIwork(zip))
+    else if (isLegacyIwork(zip)) throw new Error('iWork ’09 (and older) Pages, Keynote and Numbers files are not supported')
     const pkg = (this.pkg = new OpcPackage(zip))
     const main = await pkg.mainPart()
     this.kind = main.kind
-    const res: OpenResult = { kind: main.kind, name: params.name ?? source.name, size: source.size }
+    const res: OpenResult = { kind: main.kind, name: params.name ?? source.name, size: source.size, ...(from ? { from } : {}) }
     if (main.kind === 'docx') this.docx = await DocxDocument.open(pkg, main.path)
     else if (main.kind === 'xlsx') res.xlsx = (this.xlsx = await XlsxWorkbook.open(pkg, main.path)).meta()
     else res.pptx = (this.pptx = await PptxPresentation.open(pkg, main.path)).meta

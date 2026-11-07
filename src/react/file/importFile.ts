@@ -1,7 +1,8 @@
 import { detectSeparator, markdownToHtml, parasToDocx, parseCsv, rowsToXlsx, textToParas, type ImportPara } from '../../core/convert'
 import { htmlToParas } from '../docx/html'
 
-const OFFICE = new Set(['docx', 'dotx', 'xlsx', 'xltx', 'pptx', 'potx'])
+// .pages / .key / .numbers (Apple iWork) open as read-only Word / PowerPoint / Excel files
+const OFFICE = new Set(['docx', 'dotx', 'xlsx', 'xltx', 'pptx', 'potx', 'pages', 'key', 'numbers'])
 const TABLE = new Set(['csv', 'tsv', 'tab'])
 const TEXT = new Set(['txt', 'text', 'log'])
 const MARKDOWN = new Set(['md', 'markdown'])
@@ -24,7 +25,7 @@ const fromHtml = (html: string): ImportPara[] =>
     runs: p.runs.flatMap((r) => (r.t === 'text' ? [{ text: r.text, set: r.d, href: r.href }] : [])),
   }))
 
-/** Office files open as they are; CSV / TSV become a workbook, text / Markdown / HTML a document. */
+/** Office and iWork (Pages, Keynote, Numbers) files open as they are; CSV / TSV become a workbook, text / Markdown / HTML a document. */
 export async function importFile(file: File): Promise<Imported> {
   const ext = /\.([^./\\]+)$/.exec(file.name)?.[1].toLowerCase() ?? ''
   const base = file.name.replace(/\.[^./\\]+$/, '') || 'document'
@@ -42,5 +43,5 @@ export async function importFile(file: File): Promise<Imported> {
   // no / unknown extension: an Office package is a ZIP
   const sig = new Uint8Array(await file.slice(0, 4).arrayBuffer())
   if (sig[0] === 0x50 && sig[1] === 0x4b) return { src: file, name: file.name, converted: false }
-  throw new Error(`Cannot open “${file.name}”: supported files are Word, Excel, PowerPoint, CSV, text, Markdown and HTML`)
+  throw new Error(`Cannot open “${file.name}”: supported files are Word, Excel, PowerPoint, Pages, Keynote, Numbers, CSV, text, Markdown and HTML`)
 }

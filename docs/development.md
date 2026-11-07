@@ -9,6 +9,7 @@ bun run test:e2e     # browser tests (headless Chromium: bunx playwright install
 bun run build        # dist/: ESM lib + office-engine.embed.js + .d.ts
 python3 -m venv .venv && .venv/bin/pip install python-docx openpyxl python-pptx Pillow
 .venv/bin/python scripts/fixtures.py --large   # generate samples + heavy files (--large-deck: only the deck the browser tests need)
+bun scripts/iwork-samples.ts                   # sample.pages / .key / .numbers (built by test/iwork-builder.ts)
 bun run screenshots  # README screenshots -> docs/screenshots/ (headless Chromium)
 bun run gifs         # README GIFs (300k-row sheet opening, collaboration) -> docs/screenshots/*.gif (headless Chromium + ffmpeg)
 ```

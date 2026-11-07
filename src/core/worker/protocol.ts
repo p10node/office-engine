@@ -17,6 +17,8 @@ export interface OpenResult {
   kind: DocKind
   name?: string
   size: number
+  /** the file was converted from another format (shown read-only): Apple Pages (as docx), Keynote (as pptx), Numbers (as xlsx) */
+  from?: 'pages' | 'keynote' | 'numbers'
   xlsx?: WorkbookMeta
   pptx?: PresentationMeta
 }

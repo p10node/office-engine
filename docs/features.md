@@ -20,6 +20,29 @@
 
 `.doc/.xls/.ppt` (legacy binary) and encrypted files are not supported.
 
+### Apple Pages, Keynote and Numbers (view only)
+
+Files from Pages 5, Keynote 6 and Numbers 3 (2013) and later open read-only: the worker converts a `.pages` document to DOCX, a `.key` presentation to PPTX and a `.numbers` spreadsheet to XLSX, in memory, and the matching view shows it. Find, print, word count, slideshow, sheet tabs and *Download as* work as usual; *Download as* **Word** / **PowerPoint** / **Excel** saves the converted file. The bar shows a `PAGES` / `KEYNOTE` / `NUMBERS` badge and no Edit button, even with `editable`. Single files and zipped package folders (`Report.pages/…` inside a ZIP) both open.
+
+**Pages**
+
+- **Converted**: paragraph and character styles (named styles become Word styles), fonts, sizes, bold/italic/underline/strikethrough, colors, highlights, super/subscript, caps, alignment, indents, spacing, page breaks, bullet and numbered lists (levels), links, inline images, text boxes and shapes with a fill, tables (merged cells, header rows, cell fills, banded rows, lines, text/number/date cells, rich text cells), header and footer (left, center and right parts, page number), footnotes (listed after the text), page size and margins
+- **Not yet**: charts, equations, comments, tracked changes, exact positions of floating objects (placed in the text flow: those on the first page before the body, the others after it; on page layout documents, page by page), image cropping, several sections with different headers
+
+**Keynote**
+
+- **Converted**: slide size and order, skipped slides (hidden), master slide objects (drawn under the slide's), slide backgrounds (color, gradient, image), title / body / slide number placeholders, text boxes (text styles, bullet and numbered lists, links), shapes (rectangles, rounded rectangles, polygons, arrows, stars, custom paths and curves, fill and line), images cropped by their mask, movie poster frames, groups, rotation and flips, tables (merged cells, header rows, cell fills, banded rows, lines)
+- **Not yet**: charts (a placeholder box), builds and transitions, speaker notes, shadows and reflections, text that shrinks to fit
+
+**Numbers**
+
+- **Converted**: every table becomes a worksheet (named after its sheet, plus the table's name when a sheet holds several), hidden sheets stay hidden; values keep their type: numbers, currencies, percentages, scientific and dates with the matching Excel number format (Numbers date patterns translated), booleans; durations, fractions, numbers in other bases, checkboxes, star ratings and pop-up menu choices as the text Numbers shows; rich text cells as their text; cell look (font, size, bold/italic/underline/strikethrough, color, alignment, vertical alignment, wrap, fill, banded rows, lines), column widths, row heights (grown to fit wrapped text), merged cells, hidden rows / columns, frozen header rows / columns
+- **Not yet**: formulas (cells hold the values Numbers computed), charts, images and text boxes placed on sheets, custom formats (shown with the General format), accounting-style currency, the document locale's decimal / thousands separators, conditional highlighting, comments
+
+Cell values in Pages and Keynote tables use the same formats.
+
+**Not supported**: password-protected files and the iWork '09 and older XML format: each gives an error saying so.
+
 ## Editing
 
 ### DOCX

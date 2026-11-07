@@ -136,11 +136,12 @@ function parseSection(src: string): Section {
       toks.push({ k: 'text' })
       i++
     } else if (lower.startsWith('am/pm', i)) {
-      toks.push({ k: 'date', v: 'AM/PM' })
+      // the marker keeps the code's case: "am/pm" shows "pm"
+      toks.push({ k: 'date', v: src[i] === 'a' ? 'am/pm' : 'AM/PM' })
       isDate = true
       i += 5
     } else if (lower.startsWith('a/p', i)) {
-      toks.push({ k: 'date', v: 'A/P' })
+      toks.push({ k: 'date', v: src[i] === 'a' ? 'a/p' : 'A/P' })
       isDate = true
       i += 3
     } else if ('ymdhs'.includes(lc) || (lc === 'g' && lower.startsWith('ge', i)) || lc === 'b') {
@@ -358,7 +359,7 @@ export function serialToDate(serial: number, date1904 = false): Date {
 function formatDate(v: number, sec: Section, date1904: boolean): string {
   const d = serialToDate(v, date1904)
   const toks = sec.toks
-  const hasAmPm = toks.some((t) => t.k === 'date' && (t.v === 'AM/PM' || t.v === 'A/P'))
+  const hasAmPm = toks.some((t) => t.k === 'date' && /^(am\/pm|a\/p)$/i.test(t.v ?? ''))
   const Y = d.getUTCFullYear()
   const M = d.getUTCMonth()
   const D = d.getUTCDate()
@@ -400,7 +401,7 @@ function formatDate(v: number, sec: Section, date1904: boolean): string {
       return
     }
     const tv = t.v
-    switch (tv[0]) {
+    switch (tv[0] === 'a' ? 'A' : tv[0]) {
       case 'y':
         out += tv.length <= 2 ? pad(Y % 100) : String(Y)
         break
@@ -431,7 +432,10 @@ function formatDate(v: number, sec: Section, date1904: boolean): string {
         out += '.' + pad(Math.floor(msec / Math.pow(10, 3 - (tv.length - 1))), tv.length - 1)
         break
       case 'A':
-        out += tv === 'AM/PM' ? (H < 12 ? 'AM' : 'PM') : H < 12 ? 'A' : 'P'
+        {
+          const m = tv.length > 3 ? (H < 12 ? 'AM' : 'PM') : H < 12 ? 'A' : 'P'
+          out += tv[0] === 'a' ? m.toLowerCase() : m
+        }
         break
     }
   })
