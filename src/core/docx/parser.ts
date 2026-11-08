@@ -252,6 +252,8 @@ export class Converter {
     const parts: Paragraph[] = [cur]
     const sink: Sink = {
       push: (x) => {
+        // pictures, boxes, fields, note references inside w:ins / w:del belong to the change too
+        if (this.tc && x.t !== 'text' && !x.tc) x = { ...x, tc: this.tc } as Inline
         const runs = cur.runs
         const last = runs[runs.length - 1]
         if (x.t === 'text' && !x.cm) delete x.cm
@@ -812,6 +814,8 @@ export class DocxDocument {
   titlePgSet?: boolean
   /** "different first page" in the file */
   titlePg = false
+  /** page setup or header / footer references were changed in this session (sections rebuilt on save) */
+  sectTouched = false
 
   /** the headers / footers, converted with the styles as they are now; undefined when the document has none */
   async headers(): Promise<HeaderFooters | undefined> {
@@ -922,6 +926,10 @@ export class DocxDocument {
     this.items = capture.items
     this.prefix = capture.prefix
     this.suffix = capture.suffix
+    // tracked changes written later get ids above every annotation id of the file (one saved here before included)
+    let maxId = 0
+    for (const x of this.items) for (const m of x.matchAll(/:id="(\d{1,9})"/g)) maxId = Math.max(maxId, Number(m[1]))
+    this.nextTrackId = Math.max(this.nextTrackId, maxId + 1)
     this.captured = true
     const sect = finalSect
     this.page = pageSetup(sect)

@@ -98,11 +98,12 @@ export type Inline =
       altSet?: boolean
       /** picture replaced (rid points to the new image part) */
       repl?: boolean
+      tc?: TrackMark
     }
-  | { t: 'field'; kind: 'PAGE' | 'NUMPAGES'; s: RunStyle; src?: SrcRef }
-  | { t: 'box'; w: number; h: number; blocks: Block[]; fill?: string; border?: string; src?: SrcRef }
-  | { t: 'shape'; w: number; h: number; label?: string; src?: SrcRef }
-  | { t: 'ref'; text: string; s: RunStyle; src?: SrcRef }
+  | { t: 'field'; kind: 'PAGE' | 'NUMPAGES'; s: RunStyle; src?: SrcRef; tc?: TrackMark }
+  | { t: 'box'; w: number; h: number; blocks: Block[]; fill?: string; border?: string; src?: SrcRef; tc?: TrackMark }
+  | { t: 'shape'; w: number; h: number; label?: string; src?: SrcRef; tc?: TrackMark }
+  | { t: 'ref'; text: string; s: RunStyle; src?: SrcRef; tc?: TrackMark }
 
 export interface ListMarker {
   text: string
@@ -164,7 +165,7 @@ export interface ParaDirty {
 
 export type SpecRun =
   | { text: string; src?: SrcRef; set?: RunSet; lk?: string; cm?: string[]; tc?: TrackMark }
-  | { obj: 'copy'; src: SrcRef; size?: [number, number]; alt?: string; rid?: string; cm?: string[] }
+  | { obj: 'copy'; src: SrcRef; size?: [number, number]; alt?: string; rid?: string; cm?: string[]; tc?: TrackMark }
   | { obj: 'image'; rid: string; w: number; h: number; name?: string; alt?: string; cm?: string[] }
   | { obj: 'field'; kind: 'PAGE' | 'NUMPAGES'; set?: RunSet; cm?: string[] }
 

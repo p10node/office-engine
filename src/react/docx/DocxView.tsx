@@ -92,6 +92,9 @@ interface Box {
 }
 const HANDLES = ['nw', 'n', 'ne', 'e', 'se', 's', 'sw', 'w'] as const
 
+/** a paragraph's text without its tracked deletions (word count, outline) */
+const shownText = (p: Paragraph) => runsText(p.runs.filter((r) => r.t !== 'text' || r.tc?.k !== 'del') as RRun[])
+
 /** heading entries for the outline panel */
 function outlineOf(blocks: Block[], titleId: string | undefined) {
   const out: { bi: number; lvl: number; text: string }[] = []
@@ -100,7 +103,7 @@ function outlineOf(blocks: Block[], titleId: string | undefined) {
     const title = !!titleId && b.sid === titleId
     const lvl = title ? 0 : b.ps.outline
     if (lvl === undefined || lvl > 5) return
-    const text = runsText(b.runs as RRun[]).trim()
+    const text = shownText(b).trim()
     if (text) out.push({ bi, lvl: title ? 0 : lvl + (titleId ? 1 : 0), text })
   })
   return out
@@ -269,7 +272,7 @@ export function DocxView({ client, onStatus, initialZoom = 'fit' }: DocxViewProp
     const id = setTimeout(() => {
       let n = 0
       const count = (b: Block) => {
-        if (b.t === 'p') n += runsText(b.runs as RRun[]).split(/\s+/).filter((w) => /[\p{L}\p{N}]/u.test(w)).length
+        if (b.t === 'p') n += shownText(b).split(/\s+/).filter((w) => /[\p{L}\p{N}]/u.test(w)).length
         else if (b.t === 'tbl') for (const r of b.rows) for (const c of r.cells) c.blocks.forEach(count)
       }
       st.blocks.forEach(count)

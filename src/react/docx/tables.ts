@@ -203,7 +203,8 @@ export function unmergeCell(t: Table, ri: number, ci: number, mk: NewPara): Tabl
   if (!gc || (gc.cell.colSpan <= 1 && gc.cell.rowSpan <= 1)) return null
   const { colSpan, rowSpan } = gc.cell
   const rows = t.rows.map((r) => ({ ...r, cells: [...r.cells] }))
-  const blank = (): TableCell => ({ ...gc.cell, blocks: [mk(gc.cell)], colSpan: 1, rowSpan: 1, src: undefined })
+  // the new cells look like the merged one (its properties as template, its changes marked to be written)
+  const blank = (): TableCell => ({ ...gc.cell, blocks: [mk(gc.cell)], colSpan: 1, rowSpan: 1 })
   rows[ri].cells.splice(ci, 1, { ...gc.cell, colSpan: 1, rowSpan: 1 }, ...Array.from({ length: colSpan - 1 }, blank))
   for (let r = ri + 1; r < ri + rowSpan && r < rows.length; r++) {
     const at = cells.filter((c) => c.ri === r && c.g < gc.g).length

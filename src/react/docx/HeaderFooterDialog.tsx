@@ -13,7 +13,8 @@ const NUMBERS: { label: string; k: HFKind; line: HFLine }[] = [
   { label: 'Bottom center: 1', k: 'footer', line: { text: '{PAGE}', align: 'center' } },
   { label: 'Bottom right: 1', k: 'footer', line: { text: '{PAGE}', align: 'right' } },
   { label: 'Bottom center: Page 1 of 5', k: 'footer', line: { text: 'Page {PAGE} of {NUMPAGES}', align: 'center' } },
-  { label: 'Bottom center: Trang 1/5', k: 'footer', line: { text: 'Trang {PAGE}/{NUMPAGES}', align: 'center' } },
+  // Vietnamese documents: "Trang" is "Page"
+  { label: 'Bottom center: Trang 1/5 (Vietnamese)', k: 'footer', line: { text: 'Trang {PAGE}/{NUMPAGES}', align: 'center' } },
   { label: 'Top right: 1', k: 'header', line: { text: '{PAGE}', align: 'right' } },
 ]
 

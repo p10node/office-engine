@@ -127,6 +127,8 @@ export function insertText<R extends RRun>(runs: R[], o: number, text: string, s
   const [l, r] = splitRuns(runs, o)
   const base = runAt(runs, o)
   let run = { t: 'text', ...(base ?? fallback ?? {}), ...(style ?? {}), text } as R
+  // the look of the neighbouring run, not its tracked change: tracking marks new text itself
+  if (!style?.tc) delete run.tc
   if (style?.s && base?.s) run.s = { ...base.s, ...style.s }
   if (style?.d || base?.d) run.d = { ...(base?.d ?? {}), ...(style?.d ?? {}) }
   if (run.d && !Object.keys(run.d).length) delete run.d

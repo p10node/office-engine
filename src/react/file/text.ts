@@ -3,7 +3,8 @@ import type { SlideModel, TextBody } from '../../core/pptx/types'
 
 // ---------------------------------------------------------------- DOCX
 
-const plain = (runs: Inline[]) => runs.map((r) => (r.t === 'text' || r.t === 'ref' ? (r.s.vanish ? '' : r.text) : '')).join('')
+/** text as it reads with its tracked changes accepted: deleted text is left out */
+const plain = (runs: Inline[]) => runs.map((r) => (r.t === 'text' || r.t === 'ref' ? (r.s.vanish || r.tc?.k === 'del' ? '' : r.text) : '')).join('')
 
 const cellText = (blocks: Block[]) =>
   blocks
@@ -31,7 +32,7 @@ function mdInline(runs: Inline[], heading = false): string {
   let i = 0
   while (i < runs.length) {
     const r = runs[i]
-    if (r.t !== 'text' && r.t !== 'ref') {
+    if ((r.t !== 'text' && r.t !== 'ref') || r.tc?.k === 'del') {
       i++
       continue
     }
@@ -39,7 +40,10 @@ function mdInline(runs: Inline[], heading = false): string {
       // a link spans the consecutive runs with the same target
       let text = ''
       const href = r.href
-      while (i < runs.length && runs[i].t === 'text' && (runs[i] as { href?: string }).href === href) text += (runs[i++] as { text: string }).text
+      while (i < runs.length && runs[i].t === 'text' && (runs[i] as { href?: string }).href === href) {
+        const x = runs[i++] as Inline & { t: 'text' }
+        if (x.tc?.k !== 'del') text += x.text
+      }
       out += `[${mdEsc(text)}](${href.replace(/[()\s]/g, encodeURIComponent)})`
       continue
     }

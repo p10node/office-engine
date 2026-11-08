@@ -4,7 +4,8 @@
  * edit (typing, Backspace / Delete, paste, replacing a selection, several paragraphs) by comparing the paragraphs
  * before and after it, so every editing path is covered without touching them.
  *
- * Not tracked: formatting, paragraph marks (Enter, joining paragraphs), pictures and other objects (removed for real).
+ * Not tracked: formatting, paragraph marks (Enter, joining paragraphs), pictures and other objects (removed for real;
+ * one already deleted in the file stays deleted).
  */
 import type { Inline, Paragraph, TrackMark } from '../../core/docx/types'
 import { normalize, plen, shiftPa, splitRuns, type RRun, type Sel } from '../edit/rich'
@@ -19,7 +20,7 @@ function flatten(paras: Paragraph[]): Tok[] {
     if (i > 0) out.push({ b: true })
     for (const r of p.runs) {
       if (r.t === 'text') for (const ch of r.text.split('')) out.push({ ch, run: r, tc: r.tc })
-      else out.push({ ch: '￼', run: r, obj: true })
+      else out.push({ ch: '￼', run: r, obj: true, tc: r.tc })
     }
   })
   return out
@@ -59,7 +60,7 @@ function runsOf(toks: Extract<Tok, { b?: false }>[]): Inline[] {
   for (const t of toks) {
     if (t.obj) {
       flush()
-      out.push(t.run)
+      out.push(t.tc === (t.run as { tc?: TrackMark }).tc ? t.run : ({ ...t.run, tc: t.tc } as Inline))
       continue
     }
     if (cur && cur.run === t.run && cur.tc === t.tc) cur.text += t.ch
@@ -95,12 +96,15 @@ export function trackEdit(before: Paragraph[], next: Paragraph[], pa0: string, s
   const inserted = N.slice(p, N.length - s)
   if (!removed.some(isText) && !inserted.some(isText)) return { next, sel }
 
-  // what stays of the removed text: deleted marks (an insertion taken out again is gone for good)
+  // what stays of the removed text: deleted marks. The author's own insertion taken out again is gone for good;
+  // someone else's becomes a deletion, so the reviewer still sees it. Objects go for real, unless already deleted.
   const kept: Extract<Tok, { b?: false }>[] = []
   for (const t of removed) {
-    if (!isText(t) || t.obj) continue
-    if (t.tc?.k === 'ins') continue
-    kept.push(t.tc?.k === 'del' ? t : { ...t, tc: { ...mark, k: 'del' } })
+    if (!isText(t)) continue
+    if (t.tc?.k === 'del') kept.push(t)
+    else if (t.obj) continue
+    else if (t.tc?.k === 'ins' && t.tc.author === mark.author) continue
+    else kept.push({ ...t, tc: { ...mark, k: 'del' } })
   }
   const ins: TrackMark = { ...mark, k: 'ins' }
 
@@ -137,7 +141,7 @@ export function resolveRuns(runs: Inline[], a: number, b: number, accept: boolea
   const [l, rest] = splitRuns(runs as RRun[], a)
   const [mid, r] = splitRuns(rest, b - a)
   const kept = (mid as Inline[]).flatMap((x) => {
-    if (x.t !== 'text' || !x.tc) return [x]
+    if (!x.tc) return [x]
     const goes = accept ? x.tc.k === 'del' : x.tc.k === 'ins'
     if (goes) return []
     const { tc: _tc, ...plain } = x
@@ -146,7 +150,7 @@ export function resolveRuns(runs: Inline[], a: number, b: number, accept: boolea
   return normalize([...l, ...kept, ...r] as RRun[]) as Inline[]
 }
 
-export const hasChanges = (p: Paragraph) => p.runs.some((r) => r.t === 'text' && !!r.tc)
+export const hasChanges = (p: Paragraph) => p.runs.some((r) => !!r.tc)
 
 /** [start, end) of each run of tracked change in a paragraph */
 export function changeSpans(p: Paragraph): { a: number; b: number; tc: TrackMark }[] {
@@ -154,7 +158,7 @@ export function changeSpans(p: Paragraph): { a: number; b: number; tc: TrackMark
   let o = 0
   for (const r of p.runs) {
     const n = r.t === 'text' ? r.text.length : 1
-    if (r.t === 'text' && r.tc) {
+    if (r.tc) {
       const last = out[out.length - 1]
       if (last && last.b === o && last.tc.k === r.tc.k && last.tc.author === r.tc.author) last.b = o + n
       else out.push({ a: o, b: o + n, tc: r.tc })

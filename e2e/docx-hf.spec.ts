@@ -47,7 +47,7 @@ describe('docx header & footer', () => {
     const dlg = v.page.locator('form[aria-label="Header and footer"]')
     await dlg.waitFor()
     expect(await dlg.locator('[role=tab][aria-selected=true]').innerText()).toBe('Footer')
-    await dlg.locator('select[aria-label="Page number preset"]').selectOption({ label: 'Bottom center: Trang 1/5' })
+    await dlg.locator('select[aria-label="Page number preset"]').selectOption({ label: 'Bottom center: Trang 1/5 (Vietnamese)' })
     await dlg.getByRole('button', { name: 'Apply' }).click()
     await v.page.waitForTimeout(500)
 

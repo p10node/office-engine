@@ -72,6 +72,8 @@ interface Entry {
   page?: { undo: PageSet; redo: PageSet }
   /** a header / footer change */
   hf?: { undo: HFSet; redo: HFSet }
+  /** several entries made by one command (accept / reject all), undone and redone together */
+  group?: Entry[]
 }
 
 export interface FormatState {
@@ -726,6 +728,17 @@ export class DocxEditor implements RichHost<Paragraph> {
   undo() {
     const e = this.history.pop()
     if (!e) return
+    if (e.group) {
+      // its parts, last first, each through the usual path
+      for (const part of [...e.group].reverse()) {
+        this.history.push(part)
+        const n = this.future.length
+        this.undo()
+        if (this.future.length > n) this.future.pop()
+      }
+      this.future.push(e)
+      return
+    }
     if (e.style) this.restyle(e.style.id, e.style.undo)
     if (e.page) this.repage(e.page.undo)
     if (e.hf) this.rehf(e.hf.undo)
@@ -751,6 +764,16 @@ export class DocxEditor implements RichHost<Paragraph> {
   redo() {
     const e = this.future.pop()
     if (!e) return
+    if (e.group) {
+      for (const part of e.group) {
+        this.future.push(part)
+        const n = this.history.length
+        this.redo()
+        if (this.history.length > n) this.history.pop()
+      }
+      this.history.push(e)
+      return
+    }
     if (e.style) this.restyle(e.style.id, e.style.redo)
     if (e.page) this.repage(e.page.redo)
     if (e.hf) this.rehf(e.hf.redo)
@@ -1377,6 +1400,7 @@ export class DocxEditor implements RichHost<Paragraph> {
         if (last && !last.pa.includes('.') && !h.pa.includes('.') && Number(h.pa) === Number(last.pa) + 1) g.push(h)
         else groups.push([h])
       }
+      const h0 = this.history.length
       for (const g of groups) {
         const next = g.map(({ p }) => ({ ...p, runs: resolveRuns(p.runs, 0, plen(p.runs as RRun[]), accept), edited: true }))
         done += g.reduce((n, x) => n + changeSpans(x.p).length, 0)
@@ -1387,6 +1411,9 @@ export class DocxEditor implements RichHost<Paragraph> {
           { label, want: true, remount: true },
         )
       }
+      // one undo step for the whole command
+      const parts = this.history.splice(Math.min(h0, this.history.length))
+      if (parts.length) this.history.push(parts.length > 1 ? { ...parts[parts.length - 1], group: parts } : parts[0])
       return done
     }
     const sel = this.input.sel()

@@ -116,7 +116,14 @@ function Img({ ctx, target, w, h, alt }: { ctx: RenderCtx; target: string; w: nu
 }
 
 function InlineView({ x, ctx, o }: { x: Inline; ctx: RenderCtx; o: number }): ReactNode {
-  const obj = { 'data-o': o, 'data-obj': '', contentEditable: ctx.editable ? false : undefined } as const
+  // an object inside a tracked change: outlined in the author's colour (dimmed when deleted)
+  const objTc = x.t !== 'text' ? x.tc : undefined
+  const obj = {
+    'data-o': o,
+    'data-obj': '',
+    contentEditable: ctx.editable ? false : undefined,
+    ...(objTc ? { 'data-tc': objTc.k, title: `${objTc.k === 'ins' ? 'Inserted' : 'Deleted'}${objTc.author ? ` by ${objTc.author}` : ''}` } : {}),
+  } as const
   switch (x.t) {
     case 'text': {
       const tc = x.tc

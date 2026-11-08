@@ -35,8 +35,9 @@ const RPR_ORDER = [
   'noProof', 'snapToGrid', 'vanish', 'webHidden', 'color', 'spacing', 'w', 'kern', 'position', 'sz', 'szCs', 'highlight', 'u',
   'effect', 'bdr', 'shd', 'fitText', 'vertAlign', 'rtl', 'cs', 'em', 'lang', 'eastAsianLayout', 'specVanish', 'oMath',
 ]
-const START_MARKS = new Set(['bookmarkStart', 'commentRangeStart', 'permStart', 'moveFromRangeStart', 'moveToRangeStart'])
-const END_MARKS = new Set(['bookmarkEnd', 'commentRangeEnd', 'permEnd', 'moveFromRangeEnd', 'moveToRangeEnd'])
+// move ranges are dropped: a regenerated paragraph writes moved text back as plain w:ins / w:del
+const START_MARKS = new Set(['bookmarkStart', 'commentRangeStart', 'permStart'])
+const END_MARKS = new Set(['bookmarkEnd', 'commentRangeEnd', 'permEnd'])
 const RUN_STOP = new Set(['p', 'oMath', 'oMathPara', 'pPr', 'rPr', 'r'])
 const HL_NAME: Record<string, string> = Object.fromEntries(Object.entries(HIGHLIGHT).map(([k, v]) => [v, k]))
 
@@ -564,8 +565,8 @@ export async function genParagraph(doc: DocxDocument, spec: ParaSpec): Promise<{
                   setAttr(n, m ? `${m[1]}:embed` : 'r:embed', run.rid)
                 }
               })
-              body += serialize(r)
-            } else body += serialize(src)
+              body += run.tc ? trackXml(doc, W, run.tc, serialize(r)) : serialize(r)
+            } else body += run.tc ? trackXml(doc, W, run.tc, serialize(src)) : serialize(src)
             map.push({ src: run.src, cm: run.cm })
           }
         }
@@ -842,7 +843,7 @@ export async function genTable(doc: DocxDocument, spec: TableSpec): Promise<stri
   const grid = `<${W}tblGrid>${spec.cols.map((w) => `<${W}gridCol ${W}w="${Math.round(w * 20)}"/>`).join('')}</${W}tblGrid>`
   const firstTcPr = rows.length ? kidOf(rawCells(rows[0])[0], 'tcPr') : undefined
   const nCols = spec.cols.length
-  const cont: ({ left: number; span: number; tcPr?: RNode } | undefined)[] = []
+  const cont: ({ left: number; span: number; src?: [number, number]; cell?: CellSpec } | undefined)[] = []
   let out = `<${W}tbl${orig?.a ?? ''}>${serialize(tblPr)}${grid}`
   const tcPrFor = (src: [number, number] | undefined, g: number, span: number, vm?: 'restart' | 'continue', shd?: string, cell?: CellSpec) => {
     const tpl = src ? kidOf(rawCells(rows[src[0]] ?? ({ c: [] } as unknown as RNode))[src[1]], 'tcPr') : undefined
@@ -872,7 +873,8 @@ export async function genTable(doc: DocxDocument, spec: TableSpec): Promise<stri
     while (g < nCols && (k < cells.length || cont[g])) {
       const c = cont[g]
       if (c && c.left > 0) {
-        out += `<${W}tc>${c.tcPr ? '' : ''}${tcPrFor(undefined, g, c.span, 'continue')}<${W}p/></${W}tc>`
+        // the merged cell's properties (Word draws its sides and bottom from the continuation cells)
+        out += `<${W}tc>${tcPrFor(c.src, g, c.span, 'continue', c.cell?.shd, c.cell)}<${W}p/></${W}tc>`
         c.left--
         if (!c.left) cont[g] = undefined
         g += c.span
@@ -887,7 +889,7 @@ export async function genTable(doc: DocxDocument, spec: TableSpec): Promise<stri
         paras += orig ? serialize(orig) : (await genParagraph(doc, p)).xml
       }
       out += `<${W}tc>${tcPrFor(cell.src, g, span, cell.rowSpan > 1 ? 'restart' : undefined, cell.shd, cell)}${paras || `<${W}p/>`}</${W}tc>`
-      if (cell.rowSpan > 1) cont[g] = { left: cell.rowSpan - 1, span }
+      if (cell.rowSpan > 1) cont[g] = { left: cell.rowSpan - 1, span, src: cell.src, cell }
       g += span
     }
     out += `</${W}tr>`
@@ -936,7 +938,12 @@ export async function setPage(doc: DocxDocument, set: PageSet): Promise<PageSetR
   const cur: PageSetup = { ...doc.page, ...doc.pageSet }
   const undo: PageSet = {}
   for (const k of Object.keys(set) as (keyof PageSet)[]) undo[k] = k === 'cols' ? (cur.cols ?? 1) : k === 'colGap' ? (cur.colGap ?? 36) : cur[k]
-  doc.pageSet = { ...doc.pageSet, ...set }
+  const merged: PageSet = { ...doc.pageSet, ...set }
+  // a value back to what the file had (undo) is no change: the sections keep their own values on save
+  const orig: Required<PageSet> = { w: doc.page.w, h: doc.page.h, mt: doc.page.mt, mr: doc.page.mr, mb: doc.page.mb, ml: doc.page.ml, cols: doc.page.cols ?? 1, colGap: doc.page.colGap ?? 36 }
+  for (const k of Object.keys(merged) as (keyof PageSet)[]) if (Math.abs((merged[k] as number) - orig[k]) < 0.01) delete merged[k]
+  doc.pageSet = Object.keys(merged).length ? merged : undefined
+  doc.sectTouched = true
   doc.markEdited()
   const page: PageSetup = { ...doc.page, ...doc.pageSet }
   if (!page.cols || page.cols <= 1) delete page.cols
@@ -974,6 +981,16 @@ function rewriteSects(xml: string, fn: (sect: RNode) => void): string {
     open.lastIndex = end
   }
   return out + xml.slice(from)
+}
+
+/** the document with a final (body-level) sectPr: an empty one is added before </w:body> when it has none */
+function withBodySect(xml: string): string {
+  const end = /<\/([\w.-]+:)?body>/.exec(xml)
+  if (!end) return xml
+  const before = xml.slice(0, end.index).trimEnd()
+  const W = end[1] ?? ''
+  if (new RegExp(`(</${W}sectPr>|<${W}sectPr\\b[^>]*/>)$`).test(before)) return xml
+  return xml.slice(0, end.index) + `<${W}sectPr/>` + xml.slice(end.index)
 }
 
 function applyPageSet(sect: RNode, set: PageSet, page: PageSetup) {
@@ -1033,7 +1050,8 @@ function hfParaXml(doc: DocxDocument, k: HFKind, line: HFLine): string {
 /** the whole part: the original root element (namespaces) kept when there is one */
 function hfXml(doc: DocxDocument, k: HFKind, lines: HFLine[], was?: string): string {
   const tag = isFooter(k) ? 'w:ftr' : 'w:hdr'
-  const head = was ? (/^[\s\S]*?<w:(hdr|ftr)\b[^>]*>/.exec(was)?.[0] ?? '') : ''
+  // an empty part may be a self-closing root: reopen it
+  const head = was ? (/^[\s\S]*?<w:(hdr|ftr)\b[^>]*>/.exec(was)?.[0] ?? '').replace(/\s*\/>$/, '>') : ''
   const open = head || `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n<${tag} ${HF_NS}>`
   const end = head ? `</w:${/<w:(hdr|ftr)\b/.exec(head)![1]}>` : `</${tag}>`
   return open + (lines.length ? lines.map((l) => hfParaXml(doc, k, l)).join('') : '<w:p/>') + end
@@ -1073,8 +1091,10 @@ export async function setHeaderFooter(doc: DocxDocument, set: HFSet): Promise<HF
   const titleWas = doc.titlePgSet ?? doc.titlePg
   if (set.titlePg !== undefined) {
     undo.titlePg = titleWas
-    doc.titlePgSet = set.titlePg
+    // back to the file's own setting: left as it is in every section
+    doc.titlePgSet = set.titlePg === doc.titlePg ? undefined : set.titlePg
   }
+  doc.sectTouched = true
   doc.markEdited()
   const headers = (await doc.headers()) ?? {}
   return { headers, titlePg: doc.titlePgSet ?? doc.titlePg, undo }
@@ -1138,11 +1158,16 @@ export async function saveDocx(doc: DocxDocument): Promise<Blob> {
     const lost = [...comments.inBody].some((id) => !fixed.found.has(id))
     if (comments.dirty || lost) await writeDocxComments(doc.pkg, doc.mainPath, comments, num, fixed.found)
   }
-  if (doc.hfNew.size || doc.titlePgSet !== undefined) body = rewriteSects(body ?? (await doc.pkg.text(doc.mainPath)), (sect) => applyHF(sect, doc))
+  // section properties are rebuilt from the file as opened on every save: the package's main part may hold a
+  // previous save's, and a change undone since must not stay in it
+  if (doc.sectTouched) body ??= doc.prefix + doc.items.join('') + doc.suffix
+  // a body without a final sectPr (allowed: Word's defaults apply) gets one, or the changes below would be lost
+  if (doc.hfNew.size || doc.titlePgSet !== undefined || doc.pageSet) body = withBodySect(body!)
+  if (doc.hfNew.size || doc.titlePgSet !== undefined) body = rewriteSects(body!, (sect) => applyHF(sect, doc))
   if (doc.pageSet) {
     const set = doc.pageSet
     const page: PageSetup = { ...doc.page, ...set }
-    body = rewriteSects(body ?? (await doc.pkg.text(doc.mainPath)), (sect) => applyPageSet(sect, set, page))
+    body = rewriteSects(body!, (sect) => applyPageSet(sect, set, page))
   }
   if (body !== undefined) doc.pkg.setPart(doc.mainPath, body)
   return doc.pkg.save(DOCX_MIME)
