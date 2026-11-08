@@ -477,3 +477,28 @@ describe('collab docx page setup', () => {
     re.destroy()
   })
 })
+
+describe('collab docx headers / footers', () => {
+  test('a footer change reaches the other editor, a late joiner and the saved file; undo goes back', async () => {
+    const hub = new CollabHub()
+    const a = await open(hub, 'Ann', () => 3)
+    const b = await open(hub, 'Bob', () => 5)
+    await settle([a.collab, b.collab])
+    const seen: string[] = []
+    const line = (r: { headers: { footer?: Block[] } }) => {
+      const p = r.headers.footer?.[0]
+      return p?.t === 'p' ? p.runs.map((x) => (x.t === 'text' ? x.text : x.t === 'field' ? `{${x.kind}}` : '')).join('') : ''
+    }
+    b.editor.onHF = (r) => seen.push(line(r))
+    await a.editor.setHeaderFooter({ parts: { footer: [{ text: 'Trang {PAGE}', align: 'center' }] } })
+    await settle([a.collab, b.collab])
+    expect(seen.at(-1)).toBe('Trang {PAGE}')
+    const c = await open(hub, 'Cid', () => 0)
+    await settle([a.collab, b.collab, c.collab])
+    expect(c.editor.hfNow && line(c.editor.hfNow)).toBe('Trang {PAGE}')
+    a.editor.undo()
+    await settle([a.collab, b.collab, c.collab])
+    expect(seen.at(-1)).not.toBe('Trang {PAGE}')
+    for (const x of [a, b, c]) x.client.destroy()
+  })
+})

@@ -786,7 +786,13 @@ export class DocxDocument {
   }
 
   /** relationship ids of the headers / footers shown (final section) */
-  private hfRefs?: Record<keyof HeaderFooters, string | undefined>
+  hfRefs?: Record<keyof HeaderFooters, string | undefined>
+  /** headers / footers created by the editor: referenced from the sections on save */
+  hfNew = new Map<keyof HeaderFooters, string>()
+  /** "different first page" as set by the editor (undefined: as in the file) */
+  titlePgSet?: boolean
+  /** "different first page" in the file */
+  titlePg = false
 
   /** the headers / footers, converted with the styles as they are now; undefined when the document has none */
   async headers(): Promise<HeaderFooters | undefined> {
@@ -903,8 +909,10 @@ export class DocxDocument {
     const meta: DocxMeta = { page: { ...this.page }, ...baseMeta, final: true }
     if (sect) {
       const ref = (tag: string, type: string) => kids(sect, tag).find((r) => (r.a.type ?? 'default') === type)?.a['r:id']
-      meta.titlePg = !!kid(sect, 'titlePg') && kid(sect, 'titlePg')?.a.val !== '0'
-      const first = (tag: string) => (meta.titlePg ? ref(tag, 'first') : undefined)
+      meta.titlePg = !!kid(sect, 'titlePg') && kid(sect, 'titlePg')?.a.val !== '0' && kid(sect, 'titlePg')?.a.val !== 'false'
+      this.titlePg = meta.titlePg
+      // first-page parts are known even when "different first page" is off (turning it on shows them)
+      const first = (tag: string) => ref(tag, 'first')
       this.hfRefs = { header: ref('headerReference', 'default'), footer: ref('footerReference', 'default'), firstHeader: first('headerReference'), firstFooter: first('footerReference') }
       Object.assign(meta, await this.headers())
     }

@@ -1093,6 +1093,13 @@
   resize: vertical;
 }
 .de-dialog input:focus, .de-dialog textarea:focus { border-color: var(--de-accent); box-shadow: inset 0 0 0 1px var(--de-accent); }
+.de-hf-zone { position: absolute; left: 0; right: 0; z-index: 1; cursor: default; }
+.de-hf-zone:hover { background: rgba(26, 115, 232, 0.05); }
+.de-hfd { width: 460px; }
+.de-hfd textarea { min-height: 70px; }
+.de-hfd-tabs { display: flex; gap: 4px; flex-wrap: wrap; }
+.de-hfd-tabs button { padding: 5px 10px; border: 1px solid var(--de-border); border-radius: 14px; background: var(--de-pop); color: var(--de-text); font: inherit; font-size: 12.5px; cursor: pointer; }
+.de-hfd-tabs button.on { background: var(--de-accent); border-color: var(--de-accent); color: var(--de-accent-ink); }
 .de-ps { width: 380px; max-width: calc(100vw - 32px); gap: 10px; }
 .de-ps-note { font-size: 12px; color: var(--de-muted, #5f6368); margin-top: -4px; }
 .de-ps-row { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }

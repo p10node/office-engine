@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
-import type { Block, DocxMeta, PageSetup, Paragraph } from '../../core/docx/types'
+import type { Block, DocxMeta, HFKind, PageSetup, Paragraph } from '../../core/docx/types'
 import { DEFAULT_PAGE } from '../../core/docx/types'
 import { registerHost } from '../../collab/hosts'
 import type { DocumentClient } from '../../core/worker/client'
@@ -17,6 +17,7 @@ import { markCss, useCommentsCtl, useCommentsState, type CommentHost, type Place
 import { COMMENT_KEYS } from '../comments/CommentsPanel'
 import { DocxToolbar, styleChoices, type ImageActions } from './DocxToolbar'
 import { FindBar, type Match } from './FindBar'
+import { HeaderFooterDialog } from './HeaderFooterDialog'
 import { PageSetupDialog } from './PageSetupDialog'
 import { docxToMarkdown, docxToText } from '../file/text'
 import { BlockView, contextual, type RenderCtx } from './render'
@@ -118,6 +119,9 @@ export function DocxView({ client, onStatus, initialZoom = 'fit' }: DocxViewProp
   const [version, bump] = useForceUpdate()
   const [meta, setMeta] = useState<DocxMeta | null>(null)
   const [pageDlg, setPageDlg] = useState(false)
+  /** header / footer dialog, opened on that part */
+  const [hfDlg, setHfDlg] = useState<HFKind | null>(null)
+  const openHF = useCallback((k: HFKind) => setHfDlg(k), [])
   const [done, setDone] = useState<{ error?: string } | null>(null)
   const [zoom, setZoom] = useState<Zoom>(initialZoom)
   const [scrollRef, size] = useSize<HTMLDivElement>()
@@ -143,9 +147,10 @@ export function DocxView({ client, onStatus, initialZoom = 'fit' }: DocxViewProp
     editor.onStyles = (styles) => setMeta((m) => (m ? { ...m, styles } : m))
     editor.onHeaders = (h) => setMeta((m) => (m ? { ...m, ...h } : m))
     editor.onPage = (pg) => setMeta((m) => (m ? { ...m, page: pg } : m))
+    editor.onHF = (r) => setMeta((m) => (m ? { ...m, header: undefined, footer: undefined, firstHeader: undefined, firstFooter: undefined, ...r.headers, titlePg: r.titlePg } : m))
     editor.onPainter = setPainter
     return () => {
-      editor.onImage = editor.onStyles = editor.onHeaders = editor.onPainter = editor.onPage = undefined
+      editor.onImage = editor.onStyles = editor.onHeaders = editor.onPainter = editor.onPage = editor.onHF = undefined
     }
   }, [editor])
 
@@ -160,7 +165,9 @@ export function DocxView({ client, onStatus, initialZoom = 'fit' }: DocxViewProp
       }),
       client.on('docx:meta', (m) => {
         // a page setup made before the file finished loading (a collaborator's, replayed) wins over the file's
-        setMeta(editor.pageNow ? { ...m, page: editor.pageNow } : m)
+        let next = editor.pageNow ? { ...m, page: editor.pageNow } : m
+        if (editor.hfNow) next = { ...next, header: undefined, footer: undefined, firstHeader: undefined, firstFooter: undefined, ...editor.hfNow.headers, titlePg: editor.hfNow.titlePg }
+        setMeta(next)
         if (m.styles) editor.styles = m.styles
       }),
       client.on('docx:done', setDone),
@@ -843,6 +850,7 @@ export function DocxView({ client, onStatus, initialZoom = 'fit' }: DocxViewProp
                 docStyle={docStyle}
                 editing={isEditing}
                 colResize={colResize}
+                onHF={isEditing && done ? openHF : undefined}
               />
             ),
           )}
@@ -907,6 +915,7 @@ export function DocxView({ client, onStatus, initialZoom = 'fit' }: DocxViewProp
           onLink={askLink}
           image={imageActions}
           onPageSetup={done ? () => setPageDlg(true) : undefined}
+          onHeaderFooter={done ? () => setHfDlg('header') : undefined}
         />
       )}
       {!isEditing && done && (
@@ -915,6 +924,9 @@ export function DocxView({ client, onStatus, initialZoom = 'fit' }: DocxViewProp
         </button>
       )}
       {pageDlg && <PageSetupDialog page={page} onClose={() => setPageDlg(false)} onOk={(set) => void editor.setPage(set).catch((e) => console.error('[office-engine] page setup failed', e))} />}
+      {hfDlg && meta && (
+        <HeaderFooterDialog meta={meta} focus={hfDlg} onClose={() => setHfDlg(null)} onOk={(set) => void editor.setHeaderFooter(set).catch((e) => console.error('[office-engine] header / footer change failed', e))} />
+      )}
       {ctxMenu && <ContextMenu x={ctxMenu.x} y={ctxMenu.y} items={ctxItems()} onClose={() => setCtxMenu(null)} />}
       {prompt && <PromptDialog spec={prompt} onClose={() => setPrompt(null)} />}
       {toast && <Toast text={toast} onDone={() => setToast(null)} />}
@@ -940,9 +952,11 @@ interface PageViewProps {
   docStyle: CSSProperties
   editing: boolean
   colResize?: RenderCtx['colResize']
+  /** editing: a double click on the header / footer area edits it */
+  onHF?: (k: HFKind) => void
 }
 
-function PageView({ index, count, slice, blocks, meta, page, top, left, height, zoom, client, docStyle, editing, colResize }: PageViewProps) {
+function PageView({ index, count, slice, blocks, meta, page, top, left, height, zoom, client, docStyle, editing, colResize, onHF }: PageViewProps) {
   const ctx = useMemo<RenderCtx>(
     () => ({ client, page: index, pages: count, measuring: false, editable: editing, colResize: editing ? colResize : undefined }),
     [client, index, count, editing, colResize],
@@ -951,6 +965,8 @@ function PageView({ index, count, slice, blocks, meta, page, top, left, height, 
   const first = index === 0 && meta?.titlePg
   const header = first ? meta?.firstHeader : meta?.header
   const footer = first ? meta?.firstFooter : meta?.footer
+  const hk: HFKind = first ? 'firstHeader' : 'header'
+  const fk: HFKind = first ? 'firstFooter' : 'footer'
   const items = []
   for (let i = slice.start; i < slice.end; i++) {
     const b = blocks[i]
@@ -967,8 +983,14 @@ function PageView({ index, count, slice, blocks, meta, page, top, left, height, 
   return (
     <div className="de-page" style={{ top, left, width: page.w * PX * zoom, height }} data-page={index + 1}>
       <div className="de-page-inner de-doc" style={{ ...docStyle, width: `${page.w}pt`, height: height / zoom, zoom }}>
+        {onHF && (
+          <>
+            <div className="de-hf-zone" contentEditable={false} title="Double-click to edit the header" style={{ top: 0, height: `${page.mt}pt` }} onDoubleClick={() => onHF(hk)} />
+            <div className="de-hf-zone" contentEditable={false} title="Double-click to edit the footer" style={{ bottom: 0, height: `${page.mb}pt` }} onDoubleClick={() => onHF(fk)} />
+          </>
+        )}
         {header && (
-          <div className="de-hf" contentEditable={editing ? false : undefined} style={{ top: `${page.header}pt`, padding: `0 ${page.mr}pt 0 ${page.ml}pt` }}>
+          <div className="de-hf" contentEditable={editing ? false : undefined} style={{ top: `${page.header}pt`, padding: `0 ${page.mr}pt 0 ${page.ml}pt` }} onDoubleClick={onHF && (() => onHF(hk))}>
             {header.map((b, i) => (
               <BlockView key={i} block={b} ctx={hfCtx} />
             ))}
@@ -987,7 +1009,7 @@ function PageView({ index, count, slice, blocks, meta, page, top, left, height, 
           {items}
         </div>
         {footer && (
-          <div className="de-hf" contentEditable={editing ? false : undefined} style={{ bottom: `${page.footer}pt`, padding: `0 ${page.mr}pt 0 ${page.ml}pt` }}>
+          <div className="de-hf" contentEditable={editing ? false : undefined} style={{ bottom: `${page.footer}pt`, padding: `0 ${page.mr}pt 0 ${page.ml}pt` }} onDoubleClick={onHF && (() => onHF(fk))}>
             {footer.map((b, i) => (
               <BlockView key={i} block={b} ctx={hfCtx} />
             ))}

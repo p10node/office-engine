@@ -17,7 +17,7 @@ import type { DocxDocument, GenRun } from './parser'
 import { fontName, HIGHLIGHT, readPPr, readRPr } from './styles'
 import type {
   Block, CanonStyle, CellSpec, EditOp, EditResult, ParaDirty, ParaSpec, ParaStyle, Paragraph, RunSet, RunStyle, SpecRun, SrcRef, StyleInfo, StyleLook, StyleSetResult,
-  TableOp, TableSpec, PageSet, PageSetResult, PageSetup,
+  TableOp, TableSpec, PageSet, PageSetResult, PageSetup, HFKind, HFLine, HFSet, HFSetResult,
 } from './types'
 
 export const DOCX_MIME = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
@@ -990,6 +990,100 @@ function applyPageSet(sect: RNode, set: PageSet, page: PageSetup) {
   }
 }
 
+// ---------------------------------------------------------------- headers / footers
+
+const HF_REL = { header: 'http://schemas.openxmlformats.org/officeDocument/2006/relationships/header', footer: 'http://schemas.openxmlformats.org/officeDocument/2006/relationships/footer' }
+const HF_CT = {
+  header: 'application/vnd.openxmlformats-officedocument.wordprocessingml.header+xml',
+  footer: 'application/vnd.openxmlformats-officedocument.wordprocessingml.footer+xml',
+}
+const HF_NS = 'xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"'
+const isFooter = (k: HFKind) => k === 'footer' || k === 'firstFooter'
+const hfType = (k: HFKind) => (k === 'firstHeader' || k === 'firstFooter' ? 'first' : 'default')
+
+/** a header / footer paragraph; {PAGE} / {NUMPAGES} become fields Word updates */
+function hfParaXml(doc: DocxDocument, k: HFKind, line: HFLine): string {
+  const style = isFooter(k) ? 'Footer' : 'Header'
+  const ppr = (doc.styles.has(style) ? `<w:pStyle w:val="${style}"/>` : '') + (line.align && line.align !== 'left' ? `<w:jc w:val="${line.align}"/>` : '')
+  const rpr = (line.b ? '<w:b/>' : '') + (line.sz ? `<w:sz w:val="${Math.round(line.sz * 2)}"/><w:szCs w:val="${Math.round(line.sz * 2)}"/>` : '')
+  const R = rpr ? `<w:rPr>${rpr}</w:rPr>` : ''
+  let runs = ''
+  for (const part of line.text.split(/(\{PAGE\}|\{NUMPAGES\})/)) {
+    if (!part) continue
+    if (part === '{PAGE}' || part === '{NUMPAGES}') runs += `<w:fldSimple w:instr=" ${part.slice(1, -1)} "><w:r>${R}<w:t>1</w:t></w:r></w:fldSimple>`
+    else runs += `<w:r>${R}${textContentXml(part, 'w:')}</w:r>`
+  }
+  return `<w:p>${ppr ? `<w:pPr>${ppr}</w:pPr>` : ''}${runs}</w:p>`
+}
+
+/** the whole part: the original root element (namespaces) kept when there is one */
+function hfXml(doc: DocxDocument, k: HFKind, lines: HFLine[], was?: string): string {
+  const tag = isFooter(k) ? 'w:ftr' : 'w:hdr'
+  const head = was ? (/^[\s\S]*?<w:(hdr|ftr)\b[^>]*>/.exec(was)?.[0] ?? '') : ''
+  const open = head || `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n<${tag} ${HF_NS}>`
+  const end = head ? `</w:${/<w:(hdr|ftr)\b/.exec(head)![1]}>` : `</${tag}>`
+  return open + (lines.length ? lines.map((l) => hfParaXml(doc, k, l)).join('') : '<w:p/>') + end
+}
+
+/** Changes the headers / footers ("different first page" too); resolves to them converted again and the undo. */
+export async function setHeaderFooter(doc: DocxDocument, set: HFSet): Promise<HFSetResult> {
+  if (!doc.ready) throw new Error('Document is still loading')
+  const kinds = new Set<HFKind>([...(Object.keys(set.parts ?? {}) as HFKind[]), ...(Object.keys(set.raw ?? {}) as HFKind[])])
+  for (const k of kinds) if (!['header', 'footer', 'firstHeader', 'firstFooter'].includes(k)) throw new Error('Invalid header / footer')
+  for (const lines of Object.values(set.parts ?? {}))
+    if (!Array.isArray(lines) || lines.length > 20 || lines.some((l) => typeof l?.text !== 'string' || l.text.length > 2000 || (l.sz !== undefined && !(l.sz >= 4 && l.sz <= 96))))
+      throw new Error('Invalid header / footer')
+  doc.hfRefs ??= { header: undefined, footer: undefined, firstHeader: undefined, firstFooter: undefined }
+  const undo: HFSet = {}
+  for (const k of kinds) {
+    let rid = doc.hfRefs[k]
+    const rel = rid ? doc.rels.get(rid) : undefined
+    const was = rel ? await doc.pkg.text(rel.target) : undefined
+    if (was !== undefined) (undo.raw ??= {})[k] = was
+    else (undo.parts ??= {})[k] = []
+    const raw = set.raw?.[k]
+    const xml = raw !== undefined ? raw : hfXml(doc, k, set.parts![k]!, was)
+    if (rel) {
+      doc.pkg.setPart(rel.target, xml)
+      continue
+    }
+    const f = isFooter(k) ? 'footer' : 'header'
+    const path = doc.pkg.freeName('word', f, 'xml')
+    doc.pkg.setPart(path, xml)
+    await doc.pkg.setContentType(path, HF_CT[f])
+    rid = await doc.pkg.addRel(doc.mainPath, HF_REL[f], path)
+    doc.rels = await doc.pkg.rels(doc.mainPath)
+    doc.hfRefs[k] = rid
+    doc.hfNew.set(k, rid)
+  }
+  const titleWas = doc.titlePgSet ?? doc.titlePg
+  if (set.titlePg !== undefined) {
+    undo.titlePg = titleWas
+    doc.titlePgSet = set.titlePg
+  }
+  doc.markEdited()
+  const headers = (await doc.headers()) ?? {}
+  return { headers, titlePg: doc.titlePgSet ?? doc.titlePg, undo }
+}
+
+/** references to the headers / footers the editor created, and "different first page", in every section */
+function applyHF(sect: RNode, doc: DocxDocument) {
+  const W = prefixOf(sect.q)
+  for (const [k, rid] of doc.hfNew) {
+    const tag = isFooter(k) ? 'footerReference' : 'headerReference'
+    const type = hfType(k)
+    const refs = sect.c.filter((c): c is RNode => isNode(c) && local(c.q) === tag)
+    if (refs.some((r) => (getAttr(r, W + 'type') ?? 'default') === type)) continue
+    const node = el(W + tag, { [W + 'type']: type, 'r:id': rid })
+    // references come first, headers before footers
+    const at = sect.c.findIndex((c) => isNode(c) && (tag === 'headerReference' ? local(c.q) !== 'headerReference' : !['headerReference', 'footerReference'].includes(local(c.q))))
+    if (at < 0) sect.c.push(node)
+    else sect.c.splice(at, 0, node)
+    sect.self = false
+  }
+  if (doc.titlePgSet !== undefined) setOrdered(sect, doc.titlePgSet ? el(W + 'titlePg') : undefined, 'titlePg', SECT_ORDER)
+}
+
 export async function saveDocx(doc: DocxDocument): Promise<Blob> {
   if (!doc.ready) throw new Error('Document is still loading')
   const comments = doc.comments
@@ -1030,6 +1124,7 @@ export async function saveDocx(doc: DocxDocument): Promise<Blob> {
     const lost = [...comments.inBody].some((id) => !fixed.found.has(id))
     if (comments.dirty || lost) await writeDocxComments(doc.pkg, doc.mainPath, comments, num, fixed.found)
   }
+  if (doc.hfNew.size || doc.titlePgSet !== undefined) body = rewriteSects(body ?? (await doc.pkg.text(doc.mainPath)), (sect) => applyHF(sect, doc))
   if (doc.pageSet) {
     const set = doc.pageSet
     const page: PageSetup = { ...doc.page, ...set }

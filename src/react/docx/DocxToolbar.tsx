@@ -106,6 +106,8 @@ export function DocxToolbar(props: {
   image: ImageActions
   /** opens the page setup dialog */
   onPageSetup?: () => void
+  /** opens the header / footer dialog */
+  onHeaderFooter?: () => void
 }) {
   const { editor, styles, image } = props
   const [st, setSt] = useState<FormatState | null>(null)
@@ -235,6 +237,7 @@ export function DocxToolbar(props: {
         {(close) => <GridPicker onPick={(r, c) => (close(), editor.insertTable(r, c))} />}
       </Pop>
       <Btn icon="pageSetup" title="Page setup (size, orientation, margins, columns)" disabled={!props.onPageSetup} onClick={() => props.onPageSetup?.()} />
+      <Btn icon="headerFooter" title="Header & footer, page numbers" disabled={!props.onHeaderFooter} onClick={() => props.onHeaderFooter?.()} />
       <Pop icon="omega" title="Special characters" disabled={dis}>
         {(close) => (
           <div className="de-symbols">

@@ -250,6 +250,34 @@ export interface StyleLook {
 
 export type HeaderFooters = Pick<DocxMeta, 'header' | 'footer' | 'firstHeader' | 'firstFooter'>
 
+export type HFKind = 'header' | 'footer' | 'firstHeader' | 'firstFooter'
+
+/** one paragraph of a header / footer; `text` may hold {PAGE} and {NUMPAGES} (page number, page count) */
+export interface HFLine {
+  text: string
+  align?: 'left' | 'center' | 'right'
+  b?: boolean
+  /** font size, pt */
+  sz?: number
+}
+
+/** a change of the headers / footers of the document (the final section's, used by every page) */
+export interface HFSet {
+  /** new content per kind; [] empties it */
+  parts?: Partial<Record<HFKind, HFLine[]>>
+  /** a part's XML as it was (undo) */
+  raw?: Partial<Record<HFKind, string>>
+  /** different first page */
+  titlePg?: boolean
+}
+
+export interface HFSetResult {
+  headers: HeaderFooters
+  titlePg: boolean
+  /** the change that puts the headers / footers back */
+  undo: HFSet
+}
+
 export interface StyleSetResult {
   styles: StyleInfo[]
   /** paragraph styles that look different now (the style and those based on it); empty when nothing changed */

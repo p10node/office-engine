@@ -3,7 +3,7 @@ import type { DocComment } from '../comments'
 import type { XOp } from '../../collab/xlsx-ops'
 import type { POp } from '../../collab/pptx-ops'
 import type { PptxCollabResult } from '../../collab/pptx-worker'
-import type { CanonStyle, DocxMeta, Block, EditOp, EditResult, PageSet, PageSetResult, ParaSpec, StyleInfo, StyleLook, StyleSetResult, TableOp } from '../docx/types'
+import type { CanonStyle, DocxMeta, Block, EditOp, EditResult, HFSet, HFSetResult, PageSet, PageSetResult, ParaSpec, StyleInfo, StyleLook, StyleSetResult, TableOp } from '../docx/types'
 import type { BlockOut, BookOp, CellDetail, CellInput, FindMatch, FindOptions, FmtPatch, Range, SheetOp, SheetProgress, WorkbookMeta, XlsxEditResult } from '../xlsx/types'
 import type { PParaSpec, PresentationMeta, ShapeOp, SlideModel, SlideOp } from '../pptx/types'
 
@@ -37,6 +37,8 @@ export interface Methods {
   'docx.styleSet'(id: string, look: StyleLook): StyleSetResult
   /** changes the page setup of every section (size, orientation, margins, columns) */
   'docx.page'(set: PageSet): PageSetResult
+  /** changes the headers / footers (text, page numbers, different first page) */
+  'docx.hf'(set: HFSet): HFSetResult
   /** the blocks each paragraph converts to with the styles as they are now; `bare`: as it looks outside its table */
   'docx.convert'(specs: ParaSpec[], bare?: boolean): Block[][]
   /** the document's comments (threads: roots and their replies) */

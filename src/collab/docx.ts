@@ -10,7 +10,7 @@
  *  - `call`   other document-level worker calls (adding a built-in style, giving a style another look), run in hub order
  *  - `comment` a comment set / deleted (its range is marked in the text, shared with the text)
  */
-import type { Block, Inline, PageSetResult, Paragraph, StyleInfo } from '../core/docx/types'
+import type { Block, HFSetResult, Inline, PageSetResult, Paragraph, StyleInfo } from '../core/docx/types'
 import type { DocumentClient } from '../core/worker/client'
 import type { Methods } from '../core/worker/protocol'
 import type { DocState, DocxCommit, DocxEditor } from '../react/docx/DocxEditor'
@@ -434,6 +434,7 @@ export class DocxCollab implements Adapter<DocxOp> {
         if ((op.method === 'docx.style' || op.method === 'docx.styleSet') && result && typeof result === 'object' && this.host) this.ed.styled(result as { styles: StyleInfo[] })
         // the page setup changed: every editor lays the pages out again
         if (op.method === 'docx.page' && result && typeof result === 'object' && this.host) this.ed.paged(result as PageSetResult)
+        if (op.method === 'docx.hf' && result && typeof result === 'object' && this.host) this.ed.hfed(result as HFSetResult)
         return { result }
       }
     }
