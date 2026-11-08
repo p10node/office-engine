@@ -1,4 +1,4 @@
-import type { Inline, Paragraph, ParaSpec, SpecRun } from './types'
+import type { Inline, Paragraph, ParaSpec, SpecRun, Table, TableSpec } from './types'
 
 export function inlineSpec(x: Inline): SpecRun {
   switch (x.t) {
@@ -25,5 +25,26 @@ export function paraSpec(parts: Paragraph[]): ParaSpec {
     keepSect: p0.keepSect,
     pristine: !parts.some((p) => p.edited) && (p0.from === undefined || p0.from === p0.pid),
     parts: parts.map((p) => p.runs.map(inlineSpec)),
+  }
+}
+
+/** Write-back spec for a table regenerated from the editor model (`t.tid` set). */
+export function tableSpec(t: Table): TableSpec {
+  return {
+    tid: t.tid!,
+    item: t.item,
+    cols: t.cols,
+    rows: t.rows.map((r) => ({
+      src: r.src,
+      cells: r.cells.map((c) => ({
+        src: c.src,
+        colSpan: c.colSpan,
+        rowSpan: c.rowSpan,
+        shd: c.set?.shd ? (c.shd ?? 'none') : undefined,
+        borders: c.set?.borders ? c.borders : undefined,
+        vAlign: c.set?.vAlign ? (c.vAlign ?? 'top') : undefined,
+        paras: c.blocks.filter((b): b is Paragraph => b.t === 'p' && b.pid !== undefined).map((p) => paraSpec([p])),
+      })),
+    })),
   }
 }

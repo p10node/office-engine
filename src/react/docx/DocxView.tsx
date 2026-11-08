@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
 import type { Block, DocxMeta, PageSetup, Paragraph } from '../../core/docx/types'
 import { DEFAULT_PAGE } from '../../core/docx/types'
 import { registerHost } from '../../collab/hosts'
@@ -108,6 +108,7 @@ export function DocxView({ client, onStatus, initialZoom = 'fit' }: DocxViewProp
   const scroll = useScroll(scrollRef)
   const pagesRef = useRef<HTMLDivElement>(null)
   const editor = useMemo(() => new DocxEditor(client, st, bump), [client, st, bump])
+  const colResize = useCallback((bi: number, cols: number[]) => editor.setColumnWidths(bi, cols), [editor])
   const isEditing = viewer.editable && !!done && !done.error
   const [find, setFind] = useState<{ open: boolean; q: string; idx: number }>({ open: false, q: '', idx: 0 })
   const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number } | null>(null)
@@ -627,6 +628,9 @@ export function DocxView({ client, onStatus, initialZoom = 'fit' }: DocxViewProp
         { label: 'Delete row', icon: 'delRow', run: op('delRow') },
         { label: 'Delete column', icon: 'delCol', run: op('delCol') },
         { label: 'Delete table', icon: 'trash', run: op('delTable') },
+        ...(s.cells && s.cells.n > 1 ? [{ label: 'Merge cells', icon: 'merge', run: () => editor.mergeCells() } as MenuItem] : []),
+        ...(s.cells?.merged && s.cells.n < 2 ? [{ label: 'Unmerge cells', icon: 'merge', run: () => editor.unmergeCell() } as MenuItem] : []),
+        { label: 'Distribute columns evenly', icon: 'colAdd', run: () => editor.distributeColumns() },
       )
     } else {
       items.push(
@@ -817,6 +821,7 @@ export function DocxView({ client, onStatus, initialZoom = 'fit' }: DocxViewProp
                 client={client}
                 docStyle={docStyle}
                 editing={isEditing}
+                colResize={colResize}
               />
             ),
           )}
@@ -911,10 +916,14 @@ interface PageViewProps {
   client: DocumentClient
   docStyle: CSSProperties
   editing: boolean
+  colResize?: RenderCtx['colResize']
 }
 
-function PageView({ index, count, slice, blocks, meta, page, top, left, height, zoom, client, docStyle, editing }: PageViewProps) {
-  const ctx = useMemo<RenderCtx>(() => ({ client, page: index, pages: count, measuring: false, editable: editing }), [client, index, count, editing])
+function PageView({ index, count, slice, blocks, meta, page, top, left, height, zoom, client, docStyle, editing, colResize }: PageViewProps) {
+  const ctx = useMemo<RenderCtx>(
+    () => ({ client, page: index, pages: count, measuring: false, editable: editing, colResize: editing ? colResize : undefined }),
+    [client, index, count, editing, colResize],
+  )
   const hfCtx = useMemo<RenderCtx>(() => ({ ...ctx, editable: false }), [ctx])
   const first = index === 0 && meta?.titlePg
   const header = first ? meta?.firstHeader : meta?.header

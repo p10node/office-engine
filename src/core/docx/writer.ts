@@ -761,6 +761,17 @@ export async function addLink(doc: DocxDocument, url: string): Promise<string> {
 
 // ---------------------------------------------------------------- tables
 
+const CSS_TO_LINE: Record<string, string> = { solid: 'single', dashed: 'dashed', dotted: 'dotted', double: 'double' }
+
+/** a border element from a CSS line ('0.5pt solid #000000', 'none') */
+export function borderXml(W: string, side: string, css: string): string {
+  const m = /^([\d.]+)pt\s+(\w+)\s+(#[0-9a-fA-F]{6}|\w+)/.exec(css.trim())
+  if (!m || css.trim() === 'none') return `<${W}${side} ${W}val="nil"/>`
+  const sz = Math.max(2, Math.min(96, Math.round(Number(m[1]) * 8)))
+  const color = m[3].startsWith('#') ? m[3].slice(1).toUpperCase() : 'auto'
+  return `<${W}${side} ${W}val="${CSS_TO_LINE[m[2]] ?? 'single'}" ${W}sz="${sz}" ${W}space="0" ${W}color="${color}"/>`
+}
+
 const TCPR_ORDER = ['cnfStyle', 'tcW', 'gridSpan', 'hMerge', 'vMerge', 'tcBorders', 'shd', 'noWrap', 'tcMar', 'textDirection', 'tcFitText', 'vAlign', 'hideMark']
 
 function rawRows(tbl: RNode): RNode[] {
@@ -819,7 +830,7 @@ export async function genTable(doc: DocxDocument, spec: TableSpec): Promise<stri
   const nCols = spec.cols.length
   const cont: ({ left: number; span: number; tcPr?: RNode } | undefined)[] = []
   let out = `<${W}tbl${orig?.a ?? ''}>${serialize(tblPr)}${grid}`
-  const tcPrFor = (src: [number, number] | undefined, g: number, span: number, vm?: 'restart' | 'continue', shd?: string) => {
+  const tcPrFor = (src: [number, number] | undefined, g: number, span: number, vm?: 'restart' | 'continue', shd?: string, cell?: CellSpec) => {
     const tpl = src ? kidOf(rawCells(rows[src[0]] ?? ({ c: [] } as unknown as RNode))[src[1]], 'tcPr') : undefined
     const pr = clone(tpl ?? firstTcPr ?? el(W + 'tcPr'))
     pr.q = W + 'tcPr'
@@ -828,7 +839,13 @@ export async function genTable(doc: DocxDocument, spec: TableSpec): Promise<stri
     setOrdered(pr, el(W + 'tcW', { [W + 'w']: String(Math.round(w * 20)), [W + 'type']: 'dxa' }), 'tcW', TCPR_ORDER)
     if (span > 1) setOrdered(pr, el(W + 'gridSpan', { [val]: String(span) }), 'gridSpan', TCPR_ORDER)
     if (vm) setOrdered(pr, el(W + 'vMerge', vm === 'restart' ? { [val]: 'restart' } : {}), 'vMerge', TCPR_ORDER)
-    if (shd !== undefined) setOrdered(pr, shd ? el(W + 'shd', { [val]: 'clear', [W + 'color']: 'auto', [W + 'fill']: shd.replace('#', '').toUpperCase() }) : undefined, 'shd', TCPR_ORDER)
+    if (shd !== undefined) setOrdered(pr, shd ? el(W + 'shd', { [val]: 'clear', [W + 'color']: 'auto', [W + 'fill']: shd === 'none' ? 'auto' : shd.replace('#', '').toUpperCase() }) : undefined, 'shd', TCPR_ORDER)
+    if (cell?.borders) {
+      const lines = (['t', 'l', 'b', 'r'] as const).map((k) => [{ t: 'top', l: 'left', b: 'bottom', r: 'right' }[k], cell.borders![k]] as const)
+      const xml = lines.filter(([, css]) => css !== undefined).map(([side, css]) => borderXml(W, side, css!)).join('')
+      setOrdered(pr, xml ? (parseRaw(`<${W}tcBorders>${xml}</${W}tcBorders>`)[0] as RNode) : undefined, 'tcBorders', TCPR_ORDER)
+    }
+    if (cell?.vAlign) setOrdered(pr, el(W + 'vAlign', { [val]: cell.vAlign === 'middle' ? 'center' : cell.vAlign }), 'vAlign', TCPR_ORDER)
     return serialize(pr)
   }
   for (const row of spec.rows) {
@@ -855,7 +872,7 @@ export async function genTable(doc: DocxDocument, spec: TableSpec): Promise<stri
         const orig = p.pristine && p.pid === p.from ? origPara(doc, p.pid) : undefined
         paras += orig ? serialize(orig) : (await genParagraph(doc, p)).xml
       }
-      out += `<${W}tc>${tcPrFor(cell.src, g, span, cell.rowSpan > 1 ? 'restart' : undefined, cell.shd)}${paras || `<${W}p/>`}</${W}tc>`
+      out += `<${W}tc>${tcPrFor(cell.src, g, span, cell.rowSpan > 1 ? 'restart' : undefined, cell.shd, cell)}${paras || `<${W}p/>`}</${W}tc>`
       if (cell.rowSpan > 1) cont[g] = { left: cell.rowSpan - 1, span }
       g += span
     }

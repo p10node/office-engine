@@ -1,4 +1,4 @@
-import { memo, type CSSProperties, type ReactNode } from 'react'
+import { memo, type CSSProperties, type PointerEvent as RPointerEvent, type ReactNode } from 'react'
 import type { Block, Inline, Paragraph, ParaStyle, RunStyle, Table } from '../../core/docx/types'
 import type { DocumentClient } from '../../core/worker/client'
 import { useMediaUrl } from '../common/hooks'
@@ -10,6 +10,8 @@ export interface RenderCtx {
   pages: number
   measuring: boolean
   editable: boolean
+  /** editing: a column edge of the top-level table `bi` was dragged */
+  colResize?: (bi: number, cols: number[]) => void
 }
 
 const pt = (v: number | undefined) => (v ? `${+v.toFixed(2)}pt` : undefined)
@@ -203,7 +205,47 @@ function TableView({ t, ctx, pa }: { t: Table; ctx: RenderCtx; pa?: string }) {
   if (t.align === 'center') style.margin = '0 auto'
   else if (t.align === 'right') style.marginLeft = 'auto'
   else if (t.indL) style.marginLeft = `${t.indL}pt`
-  return (
+  const resize = ctx.colResize && pa !== undefined && !pa.includes('.') && total > 0 ? ctx.colResize : undefined
+  const drag = (i: number) => (e: RPointerEvent<HTMLDivElement>) => {
+    const tbl = (e.currentTarget.parentElement as HTMLElement).querySelector('table')
+    if (!tbl || !resize) return
+    e.preventDefault()
+    e.stopPropagation()
+    const ptPerPx = total / tbl.getBoundingClientRect().width
+    const x0 = e.clientX
+    const handle = e.currentTarget
+    handle.setPointerCapture(e.pointerId)
+    const widths = (dx: number) => {
+      const cols = [...t.cols]
+      const d = dx * ptPerPx
+      if (i < cols.length - 1) {
+        const room = Math.max(-(cols[i] - 12), Math.min(d, cols[i + 1] - 12))
+        cols[i] += room
+        cols[i + 1] -= room
+      } else cols[i] = Math.max(12, cols[i] + d)
+      return cols
+    }
+    const move = (ev: PointerEvent) => {
+      const cols = widths(ev.clientX - x0)
+      tbl.querySelectorAll('col').forEach((c, k) => ((c as HTMLElement).style.width = `${cols[k]}pt`))
+      tbl.style.width = `${cols.reduce((a, b) => a + b, 0)}pt`
+    }
+    const up = (ev: PointerEvent) => {
+      handle.removeEventListener('pointermove', move)
+      handle.removeEventListener('pointerup', up)
+      if (Math.abs(ev.clientX - x0) > 1) resize(Number(pa), widths(ev.clientX - x0))
+    }
+    handle.addEventListener('pointermove', move)
+    handle.addEventListener('pointerup', up)
+  }
+  let edge = 0
+  const handles = resize
+    ? t.cols.map((w, i) => {
+        edge += w
+        return <div key={i} className="de-col-resize" contentEditable={false} style={{ left: `calc(${edge}pt - 3px)` }} onPointerDown={drag(i)} />
+      })
+    : null
+  const table = (
     <table className="de-tbl" style={style}>
       {total > 0 && (
         <colgroup>
@@ -246,6 +288,14 @@ function TableView({ t, ctx, pa }: { t: Table; ctx: RenderCtx; pa?: string }) {
         ))}
       </tbody>
     </table>
+  )
+  if (!handles) return table
+  const off = style.marginLeft && style.marginLeft !== 'auto' ? style.marginLeft : undefined
+  return (
+    <div className="de-tbl-wrap" style={{ marginLeft: off, width: style.width, marginRight: t.align === 'center' ? 'auto' : undefined, ...(t.align === 'center' ? { marginLeft: 'auto' } : t.align === 'right' ? { marginLeft: 'auto' } : {}) }}>
+      {table}
+      {handles}
+    </div>
   )
 }
 

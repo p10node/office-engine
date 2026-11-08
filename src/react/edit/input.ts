@@ -331,7 +331,7 @@ function selPoints(root: HTMLElement): SelPoints | null {
 // ---------------------------------------------------------------- controller
 
 export class RichInput {
-  private root: HTMLElement | null = null
+  root: HTMLElement | null = null
   private composing: Sel | null = null
   private justComposed = ''
   private raf = 0

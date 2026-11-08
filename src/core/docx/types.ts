@@ -174,7 +174,11 @@ export interface CellSpec {
   colSpan: number
   rowSpan: number
   paras: ParaSpec[]
+  /** fill colour; 'none' writes "no fill" (over the table style) */
   shd?: string
+  /** CSS lines set by the user, per side ('none' for no line) */
+  borders?: CellBorders
+  vAlign?: 'top' | 'middle' | 'bottom'
 }
 
 export interface TableSpec {
@@ -276,6 +280,8 @@ export interface TableCell {
   vAlign?: 'top' | 'middle' | 'bottom'
   borders: CellBorders
   pad: [number, number, number, number]
+  /** properties changed by the user, written back as the cell's own */
+  set?: { shd?: boolean; borders?: boolean; vAlign?: boolean }
 }
 
 export interface TableRow {

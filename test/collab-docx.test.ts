@@ -411,3 +411,37 @@ describe('collab docx', () => {
     for (const x of [a, b, c]) x.collab.close()
   })
 })
+
+describe('collab docx table formatting', () => {
+  test('merged cells, fill, borders and column widths reach the other editor and its saved file', async () => {
+    const hub = new CollabHub()
+    const a = await open(hub, 'Ann', () => 3)
+    const b = await open(hub, 'Bob', () => 5)
+    await settle([a.collab, b.collab])
+    const ti = a.st.blocks.findIndex((x) => x.t === 'tbl')
+    a.editor.input.lastSel = { a: { pa: `${ti}.1.0.0`, o: 0 }, f: { pa: `${ti}.1.2.0`, o: 0 } }
+    expect(a.editor.mergeCells()).toBe(true)
+    await settle([a.collab, b.collab])
+    a.editor.input.lastSel = { a: { pa: `${ti}.2.0.0`, o: 0 }, f: { pa: `${ti}.2.1.0`, o: 0 } }
+    a.editor.setCellShade('#ffcc00')
+    a.editor.setCellBorders('outer', '1.5pt solid #ff0000')
+    await settle([a.collab, b.collab])
+    const ta = a.st.blocks[ti] as import('../src/core/docx/types').Table
+    b.editor.setColumnWidths(ti, ta.cols.map((w, i) => (i === 0 ? w + 30 : i === 1 ? w - 30 : w)))
+    await settle([a.collab, b.collab])
+
+    for (const who of [a, b]) {
+      const t = who.st.blocks[ti] as import('../src/core/docx/types').Table
+      expect(t.rows[1].cells[0].colSpan).toBe(3)
+      expect(t.rows[2].cells.slice(0, 2).map((c) => c.shd)).toEqual(['#ffcc00', '#ffcc00'])
+      expect(t.rows[2].cells[0].borders.l).toBe('1.5pt solid #ff0000')
+      expect(t.cols[0]).toBeCloseTo(ta.cols[0] + 30, 1)
+    }
+    const saved = await load((await b.client.call('save')) as Blob)
+    const t = saved.st.blocks.find((x) => x.t === 'tbl') as import('../src/core/docx/types').Table
+    expect(t.rows[1].cells[0].colSpan).toBe(3)
+    expect(t.rows[2].cells[1].shd).toBe('#ffcc00')
+    expect(t.rows[2].cells[1].borders.r).toBe('1.5pt solid #ff0000')
+    for (const x of [a, b, saved]) x.client.destroy()
+  })
+})

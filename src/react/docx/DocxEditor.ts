@@ -2,15 +2,15 @@
  * Main-thread DOCX editing host: owns undo history and paragraph mutations,
  * mirrors every change to the worker (which regenerates the XML).
  */
-import { paraSpec } from '../../core/docx/spec'
+import { paraSpec, tableSpec } from '../../core/docx/spec'
 import type {
-  Block, CanonStyle, EditOp, EditResult, HeaderFooters, Inline, Paragraph, ParaDirty, ParaStyle, RunSet, RunStyle, StyleInfo, StyleLook, Table, TableSpec,
+  Block, CanonStyle, EditOp, EditResult, HeaderFooters, Inline, Paragraph, ParaDirty, ParaStyle, RunSet, RunStyle, StyleInfo, StyleLook, Table,
 } from '../../core/docx/types'
 import { cssFont } from '../../core/fonts'
 import type { DocumentClient } from '../../core/worker/client'
 import { opInsert, opInsertRuns, ordered, RichInput, type ReplaceOpts, type RichHost } from '../edit/input'
 import { htmlToParas } from './html'
-import { deleteCol, deleteRow, gridOf, insertCol, insertRow, newTable } from './tables'
+import { cellsIn, deleteCol, deleteRow, distributeCols, gridOf, insertCol, insertRow, mergeCells, newTable, patchCells, rectOf, setBorders, unmergeCell, type BorderPreset, type CellRect } from './tables'
 import { collapsed, formatRange, markRange, normalize, plen, rlen, runAt, runsText, shiftPa, splitRuns, type Pos, type RRun, type Sel } from '../edit/rich'
 
 /** a place in a paragraph that survives edits elsewhere: paragraph id, page-break part, offset */
@@ -86,6 +86,8 @@ export interface FormatState {
   link?: string
   /** caret inside a table cell */
   inTable: boolean
+  /** table cells the selection covers (more than one: they can be merged); the caret's cell is merged */
+  cells?: { n: number; merged: boolean; shd?: string; vAlign?: string }
   /** a single image is selected */
   img?: { w: number; h: number; alt?: string; target: string; pa: string; o: number }
   canUndo: boolean
@@ -900,27 +902,10 @@ export class DocxEditor implements RichHost<Paragraph> {
     return undefined
   }
 
-  private tableSpec(t: Table): TableSpec {
-    return {
-      tid: t.tid!,
-      item: t.item,
-      cols: t.cols,
-      rows: t.rows.map((r) => ({
-        src: r.src,
-        cells: r.cells.map((c) => ({
-          src: c.src,
-          colSpan: c.colSpan,
-          rowSpan: c.rowSpan,
-          paras: c.blocks.filter((b): b is Paragraph => b.t === 'p' && b.pid !== undefined).map((p) => paraSpec([p])),
-        })),
-      })),
-    }
-  }
-
   private commitTable(bi: number) {
     const t = this.st.blocks[bi] as Table
     if (t?.t !== 'tbl' || t.tid === undefined) return
-    this.send('docx.table', { tid: t.tid, item: t.item, anchor: t.item === undefined ? this.prevParaPid(bi) : undefined, spec: this.tableSpec(t) })
+    this.send('docx.table', { tid: t.tid, item: t.item, anchor: t.item === undefined ? this.prevParaPid(bi) : undefined, spec: tableSpec(t) })
   }
 
   private send(method: 'docx.table' | 'docx.edit', op: unknown) {
@@ -1041,6 +1026,81 @@ export class DocxEditor implements RichHost<Paragraph> {
     }
     next = { ...next, tid: t.tid ?? this.nextPid++ }
     this.replaceBlocks(bi, 1, [next], { a: { pa: caret, o: 0 }, f: { pa: caret, o: 0 } })
+  }
+
+  /** The cells the selection covers (a caret in a cell: that cell), grown to whole merged cells. */
+  cellRange(sel: Sel | null = this.input.sel()): { bi: number; t: Table; rect: CellRect; cells: number } | null {
+    if (!sel) return null
+    const a = path(sel.a.pa)
+    const f = path(sel.f.pa)
+    if (a.length < 4 || f.length < 4 || a[0] !== f[0]) return null
+    const t = this.st.blocks[a[0]]
+    if (t?.t !== 'tbl') return null
+    const rect = rectOf(t, [a[1], a[2]], [f[1], f[2]])
+    return rect ? { bi: a[0], t, rect, cells: cellsIn(t, rect).length } : null
+  }
+
+  /** replaces the table of a cell range, caret in the range's top-left cell */
+  private putTable(bi: number, t: Table, next: Table, r0: number, g0: number) {
+    const gc = gridOf(next).at(r0, g0)
+    const caret = `${bi}.${gc?.ri ?? r0}.${gc?.ci ?? 0}.0`
+    this.replaceBlocks(bi, 1, [{ ...next, tid: t.tid ?? this.nextPid++ }], { a: { pa: caret, o: 0 }, f: { pa: caret, o: 0 } })
+  }
+
+  /** Merges the selected cells, or splits the merged cell at the caret. */
+  mergeCells(): boolean {
+    const r = this.cellRange()
+    if (!r) return false
+    const next = mergeCells(r.t, r.rect)
+    if (!next) return false
+    this.putTable(r.bi, r.t, next, r.rect.r0, r.rect.g0)
+    return true
+  }
+
+  unmergeCell(): boolean {
+    const sel = this.input.sel()
+    if (!sel || !sel.f.pa.includes('.')) return false
+    const [bi, ri, ci] = path(sel.f.pa)
+    const t = this.st.blocks[bi]
+    if (t?.t !== 'tbl') return false
+    const g = gridOf(t).cells.find((c) => c.ri === ri && c.ci === ci)?.g ?? 0
+    const next = unmergeCell(t, ri, ci, (tpl) => {
+      const p = tpl.blocks.find((b): b is Paragraph => b.t === 'p') ?? (this.st.blocks.find((b) => b.t === 'p' && b.pid !== undefined) as Paragraph)
+      return { ...this.emptyPara(p), pd: {}, ps: p.ps, sid: p.sid }
+    })
+    if (!next) return false
+    this.putTable(bi, t, next, ri, g)
+    return true
+  }
+
+  /** Borders of the selected cells; `css` is the line drawn ('0.5pt solid #000000'). */
+  setCellBorders(preset: BorderPreset, css = '0.5pt solid #000000') {
+    const r = this.cellRange()
+    if (r) this.putTable(r.bi, r.t, setBorders(r.t, r.rect, preset, css), r.rect.r0, r.rect.g0)
+  }
+
+  /** Fill of the selected cells (null: no fill). */
+  setCellShade(color: string | null) {
+    const r = this.cellRange()
+    if (r) this.putTable(r.bi, r.t, patchCells(r.t, r.rect, (c) => ({ ...c, shd: color ?? undefined, set: { ...c.set, shd: true } })), r.rect.r0, r.rect.g0)
+  }
+
+  setCellVAlign(v: 'top' | 'middle' | 'bottom') {
+    const r = this.cellRange()
+    if (r) this.putTable(r.bi, r.t, patchCells(r.t, r.rect, (c) => ({ ...c, vAlign: v === 'top' ? undefined : v, set: { ...c.set, vAlign: true } })), r.rect.r0, r.rect.g0)
+  }
+
+  /** Makes the selected columns (one cell selected: every column) the same width. */
+  distributeColumns() {
+    const r = this.cellRange()
+    if (r) this.putTable(r.bi, r.t, distributeCols(r.t, r.cells > 1 ? r.rect : undefined), r.rect.r0, r.rect.g0)
+  }
+
+  /** Column widths of a table (pt), e.g. after dragging a column edge. */
+  setColumnWidths(bi: number, cols: number[]) {
+    const t = this.st.blocks[bi]
+    if (t?.t !== 'tbl' || cols.length !== t.cols.length || cols.some((w) => !(w > 0))) return
+    this.replaceBlocks(bi, 1, [{ ...t, cols: cols.map((w) => +w.toFixed(2)), tid: t.tid ?? this.nextPid++ }], this.input.lastSel)
   }
 
   // ---------------------------------------------------------------- inserts
@@ -1543,6 +1603,7 @@ export class DocxEditor implements RichHost<Paragraph> {
       va: rs.va,
       link: (run as { href?: string } | undefined)?.href,
       inTable: s.pa.includes('.'),
+      cells: this.cellState(sel),
       img,
       b: !!rs.b,
       i: !!rs.i,
@@ -1560,6 +1621,14 @@ export class DocxEditor implements RichHost<Paragraph> {
     }
   }
 
+  private cellState(sel: Sel): FormatState['cells'] {
+    const r = this.cellRange(sel)
+    if (!r) return undefined
+    const [bi, ri, ci] = path(sel.f.pa)
+    const cell = (this.st.blocks[bi] as Table).rows[ri]?.cells[ci]
+    return { n: r.cells, merged: !!cell && (cell.colSpan > 1 || cell.rowSpan > 1), shd: cell?.shd, vAlign: cell?.vAlign ?? 'top' }
+  }
+
   private emitState(sel: Sel | null) {
     const st = sel ? this.state(sel) : null
     this.onState?.(st)
@@ -1568,7 +1637,18 @@ export class DocxEditor implements RichHost<Paragraph> {
 
   onSelection(sel: Sel | null) {
     if (sel && this.pend && (sel.a.pa !== this.pend.at.pa || sel.a.o !== this.pend.at.o)) this.pend = null
+    this.markCells(sel)
     this.emitState(sel)
+  }
+
+  /** table cells covered by a selection that spans more than one cell get a tint */
+  private markCells(sel: Sel | null) {
+    const root = this.input.root
+    if (!root) return
+    root.querySelectorAll('.de-cell-sel').forEach((el) => el.classList.remove('de-cell-sel'))
+    const r = sel ? this.cellRange(sel) : null
+    if (!r || r.cells < 2) return
+    for (const c of cellsIn(r.t, r.rect)) root.querySelector(`[data-pa^="${r.bi}.${c.ri}.${c.ci}."]`)?.closest('td')?.classList.add('de-cell-sel')
   }
 }
 
