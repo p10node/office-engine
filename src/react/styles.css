@@ -1116,7 +1116,7 @@
 .de-ps-radio { display: inline-flex; align-items: center; gap: 4px; font-size: 13px; cursor: pointer; }
 .de-ps-radio input { width: auto; padding: 0; margin: 0; }
 .de-ps-preset { font-weight: 400; font-size: 12px; }
-.de-ps select { padding: 6px 8px; border: 1px solid var(--de-input-border); border-radius: 6px; background: var(--de-input-bg); color: var(--de-text); font: inherit; }
+.de-ps select, .de-hfd select { padding: 6px 8px; border: 1px solid var(--de-input-border); border-radius: 6px; background: var(--de-input-bg); color: var(--de-text); font: inherit; }
 .de-page-cols > * { break-inside: avoid; }
 .de-ps-bad { color: #c5221f; }
 .de-dialog-btns .de-btn:disabled { opacity: 0.5; cursor: default; }
