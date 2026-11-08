@@ -445,3 +445,35 @@ describe('collab docx table formatting', () => {
     for (const x of [a, b, saved]) x.client.destroy()
   })
 })
+
+describe('collab docx page setup', () => {
+  test('a page setup change reaches the other editor, its file and a late joiner; undo goes back for everyone', async () => {
+    const hub = new CollabHub()
+    const a = await open(hub, 'Ann', () => 3)
+    const b = await open(hub, 'Bob', () => 5)
+    await settle([a.collab, b.collab])
+    const seen: number[] = []
+    b.editor.onPage = (p) => seen.push(p.w)
+    await a.editor.setPage({ w: 841.9, h: 595.3, cols: 2 })
+    await settle([a.collab, b.collab])
+    expect(seen.at(-1)).toBeCloseTo(841.9, 1)
+    const saved = (await b.client.call('save')) as Blob
+    const re = await DocumentClient.open(saved, { worker: false })
+    const meta = await new Promise<any>((r) => {
+      re.on('docx:meta', (m) => m.final && r(m))
+      void re.call('docx.start')
+    })
+    expect(meta.page.cols).toBe(2)
+    expect(meta.page.w).toBeCloseTo(841.9, 1)
+
+    const c = await open(hub, 'Cid', () => 0)
+    await settle([a.collab, b.collab, c.collab])
+    expect(c.editor.pageNow?.cols).toBe(2)
+
+    a.editor.undo()
+    await settle([a.collab, b.collab, c.collab])
+    expect(seen.at(-1)).toBe(612)
+    for (const x of [a, b, c]) x.client.destroy()
+    re.destroy()
+  })
+})

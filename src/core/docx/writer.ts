@@ -17,7 +17,7 @@ import type { DocxDocument, GenRun } from './parser'
 import { fontName, HIGHLIGHT, readPPr, readRPr } from './styles'
 import type {
   Block, CanonStyle, CellSpec, EditOp, EditResult, ParaDirty, ParaSpec, ParaStyle, Paragraph, RunSet, RunStyle, SpecRun, SrcRef, StyleInfo, StyleLook, StyleSetResult,
-  TableOp, TableSpec,
+  TableOp, TableSpec, PageSet, PageSetResult, PageSetup,
 } from './types'
 
 export const DOCX_MIME = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
@@ -906,6 +906,90 @@ export async function applyTable(doc: DocxDocument, op: TableOp): Promise<void> 
   doc.genXml.set(op.tid, xml)
 }
 
+// ---------------------------------------------------------------- page setup
+
+const SECT_ORDER = [
+  'headerReference', 'footerReference', 'footnotePr', 'endnotePr', 'type', 'pgSz', 'pgMar', 'paperSrc', 'pgBorders', 'lnNumType', 'pgNumType', 'cols',
+  'formProt', 'vAlign', 'noEndnote', 'titlePg', 'textDirection', 'bidi', 'rtlGutter', 'docGrid', 'printerSettings', 'sectPrChange',
+]
+
+/** Changes the page setup ("whole document"): resolves to the new setup and the change that undoes it. */
+export async function setPage(doc: DocxDocument, set: PageSet): Promise<PageSetResult> {
+  if (!doc.ready) throw new Error('Document is still loading')
+  const ok = (v: number | undefined, min: number, max: number) => v === undefined || (Number.isFinite(v) && v >= min && v <= max)
+  if (!ok(set.w, 72, 1584) || !ok(set.h, 72, 1584) || ![set.mt, set.mr, set.mb, set.ml].every((m) => ok(m, 0, 432)) || !ok(set.cols, 1, 12) || !ok(set.colGap, 0, 288))
+    throw new Error('Invalid page setup')
+  const cur: PageSetup = { ...doc.page, ...doc.pageSet }
+  const undo: PageSet = {}
+  for (const k of Object.keys(set) as (keyof PageSet)[]) undo[k] = k === 'cols' ? (cur.cols ?? 1) : k === 'colGap' ? (cur.colGap ?? 36) : cur[k]
+  doc.pageSet = { ...doc.pageSet, ...set }
+  doc.markEdited()
+  const page: PageSetup = { ...doc.page, ...doc.pageSet }
+  if (!page.cols || page.cols <= 1) delete page.cols
+  if (page.cols && page.colGap === undefined) page.colGap = 36
+  if (!page.cols) delete page.colGap
+  return { page, undo }
+}
+
+/** every sectPr element (outermost only) of `xml`, rewritten by `fn` */
+function rewriteSects(xml: string, fn: (sect: RNode) => void): string {
+  const open = /<([\w.-]+:)?sectPr\b/g
+  let out = ''
+  let from = 0
+  for (let m = open.exec(xml); m; m = open.exec(xml)) {
+    const q = `${m[1] ?? ''}sectPr`
+    // matching end tag, nested sectPr (inside sectPrChange) counted
+    let depth = 0
+    let end = -1
+    const tag = new RegExp(`<(/?)${q.replace('.', '\\.')}\\b[^>]*?(/?)>`, 'g')
+    tag.lastIndex = m.index
+    for (let t = tag.exec(xml); t; t = tag.exec(xml)) {
+      if (t[1]) depth--
+      else if (!t[2]) depth++
+      if (depth === 0) {
+        end = t.index + t[0].length
+        break
+      }
+    }
+    if (end < 0) break
+    const node = rootEl(parseRaw(xml.slice(m.index, end)))
+    if (!node) continue
+    fn(node)
+    out += xml.slice(from, m.index) + serialize(node)
+    from = end
+    open.lastIndex = end
+  }
+  return out + xml.slice(from)
+}
+
+function applyPageSet(sect: RNode, set: PageSet, page: PageSetup) {
+  const W = prefixOf(sect.q)
+  const tw = (v: number) => String(Math.round(v * 20))
+  if (set.w !== undefined || set.h !== undefined) {
+    const sz = kidOf(sect, 'pgSz') ?? el(W + 'pgSz')
+    setAttr(sz, W + 'w', tw(page.w))
+    setAttr(sz, W + 'h', tw(page.h))
+    setAttr(sz, W + 'orient', page.w > page.h ? 'landscape' : undefined)
+    setOrdered(sect, sz, 'pgSz', SECT_ORDER)
+  }
+  if (set.mt !== undefined || set.mr !== undefined || set.mb !== undefined || set.ml !== undefined) {
+    const mar = kidOf(sect, 'pgMar') ?? el(W + 'pgMar', { [W + 'header']: tw(page.header), [W + 'footer']: tw(page.footer), [W + 'gutter']: '0' })
+    for (const [k, v] of [['top', set.mt], ['right', set.mr], ['bottom', set.mb], ['left', set.ml]] as const) if (v !== undefined) setAttr(mar, W + k, tw(v))
+    setOrdered(sect, mar, 'pgMar', SECT_ORDER)
+  }
+  if (set.cols !== undefined || set.colGap !== undefined) {
+    const cols = kidOf(sect, 'cols') ?? el(W + 'cols')
+    const n = set.cols ?? page.cols ?? 1
+    setAttr(cols, W + 'num', n > 1 ? String(n) : undefined)
+    setAttr(cols, W + 'space', tw(set.colGap ?? page.colGap ?? 36))
+    // column widths of unequal columns no longer fit: equal columns
+    setAttr(cols, W + 'equalWidth', undefined)
+    cols.c = []
+    cols.self = true
+    setOrdered(sect, cols, 'cols', SECT_ORDER)
+  }
+}
+
 export async function saveDocx(doc: DocxDocument): Promise<Blob> {
   if (!doc.ready) throw new Error('Document is still loading')
   const comments = doc.comments
@@ -945,6 +1029,11 @@ export async function saveDocx(doc: DocxDocument): Promise<Blob> {
     body = fixed.xml
     const lost = [...comments.inBody].some((id) => !fixed.found.has(id))
     if (comments.dirty || lost) await writeDocxComments(doc.pkg, doc.mainPath, comments, num, fixed.found)
+  }
+  if (doc.pageSet) {
+    const set = doc.pageSet
+    const page: PageSetup = { ...doc.page, ...set }
+    body = rewriteSects(body ?? (await doc.pkg.text(doc.mainPath)), (sect) => applyPageSet(sect, set, page))
   }
   if (body !== undefined) doc.pkg.setPart(doc.mainPath, body)
   return doc.pkg.save(DOCX_MIME)

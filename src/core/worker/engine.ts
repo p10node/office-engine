@@ -1,6 +1,6 @@
 import { DocxDocument } from '../docx/parser'
-import { addImage, addLink, applyEdit, applyTable, convertParas, ensureStyle, saveDocx, setStyleLook } from '../docx/writer'
-import type { CanonStyle, EditOp, ParaSpec, StyleLook, TableOp } from '../docx/types'
+import { addImage, addLink, applyEdit, applyTable, convertParas, ensureStyle, saveDocx, setPage, setStyleLook } from '../docx/writer'
+import type { CanonStyle, EditOp, PageSet, ParaSpec, StyleLook, TableOp } from '../docx/types'
 import { OpcPackage, type DocKind } from '../opc'
 import { PptxPresentation } from '../pptx/parser'
 import { openSource, type DocSource } from '../source'
@@ -21,7 +21,7 @@ import { checkedComment, type CommentStore } from '../comments'
 const WRITES = new Set<string>([
   'comments.set',
   // `docx.convert` only reads, but what it reads (styles, lists) is what the writes before it set
-  'docx.edit', 'docx.table', 'docx.image', 'docx.link', 'docx.style', 'docx.styleSet', 'docx.convert', 'save',
+  'docx.edit', 'docx.table', 'docx.image', 'docx.link', 'docx.style', 'docx.styleSet', 'docx.page', 'docx.convert', 'save',
   'xlsx.set', 'xlsx.format', 'xlsx.sheetOp', 'xlsx.bookOp', 'xlsx.replace', 'xlsx.undo', 'xlsx.redo', 'collab.xlsx.apply', 'collab.xlsx.revert',
   'pptx.setText', 'pptx.shapes', 'pptx.slides', 'pptx.image', 'pptx.undo', 'collab.pptx.apply', 'collab.pptx.revert',
 ])
@@ -107,6 +107,8 @@ export class Engine {
         return ensureStyle(this.need(this.docx), args[0] as CanonStyle)
       case 'docx.styleSet':
         return setStyleLook(this.need(this.docx), args[0] as string, args[1] as StyleLook)
+      case 'docx.page':
+        return setPage(this.need(this.docx), args[0] as PageSet)
       case 'docx.convert':
         return convertParas(this.need(this.docx), args[0] as ParaSpec[], args[1] as boolean | undefined)
       case 'comments.list':

@@ -9,7 +9,7 @@ import {
   borderCss, merge, readMargins, readPPr, readRPr, readTableBorders, shading, StyleSheet, type NumPr,
 } from './styles'
 import type {
-  Block, CellBorders, DocxMeta, HeaderFooters, Inline, ListMarker, PageSetup, Paragraph, ParaStyle, RunSet, RunStyle, SrcRef, Table, TableCell, TableRow,
+  Block, CellBorders, DocxMeta, HeaderFooters, Inline, ListMarker, PageSet, PageSetup, Paragraph, ParaStyle, RunSet, RunStyle, SrcRef, Table, TableCell, TableRow,
 } from './types'
 import { DEFAULT_PAGE } from './types'
 
@@ -95,10 +95,13 @@ export function pageSetup(sectPr: XEl | undefined): PageSetup {
   let w = t(sz?.a.w, DEFAULT_PAGE.w)
   let h = t(sz?.a.h, DEFAULT_PAGE.h)
   if (sz?.a.orient === 'landscape' && h > w) [w, h] = [h, w]
+  const cols = kid(sectPr, 'cols')
+  const n = Number(cols?.a.num ?? 1)
   return {
     w, h,
     mt: t(mar?.a.top, 72), mr: t(mar?.a.right ?? mar?.a.end, 72), mb: t(mar?.a.bottom, 72), ml: t(mar?.a.left ?? mar?.a.start, 72),
     header: t(mar?.a.header, 36), footer: t(mar?.a.footer, 36),
+    ...(n > 1 && n <= 12 ? { cols: n, colGap: t(cols?.a.space, 36) } : {}),
   }
 }
 
@@ -742,6 +745,9 @@ export class DocxDocument {
   itemXml = new Map<number, string>()
   /** styles the editor changed → their definition in the file as opened (parsed, and as source) */
   styleOrig = new Map<string, { x: XEl; raw: RNode }>()
+  /** page setup of the final section as opened, and the changes made to it (written to every section on save) */
+  page: PageSetup = { ...DEFAULT_PAGE }
+  pageSet?: PageSet
   private nextPid = 1
   private captured = false
   private edited = false
@@ -893,7 +899,8 @@ export class DocxDocument {
     this.suffix = capture.suffix
     this.captured = true
     const sect = finalSect
-    const meta: DocxMeta = { page: pageSetup(sect), ...baseMeta, final: true }
+    this.page = pageSetup(sect)
+    const meta: DocxMeta = { page: { ...this.page }, ...baseMeta, final: true }
     if (sect) {
       const ref = (tag: string, type: string) => kids(sect, tag).find((r) => (r.a.type ?? 'default') === type)?.a['r:id']
       meta.titlePg = !!kid(sect, 'titlePg') && kid(sect, 'titlePg')?.a.val !== '0'

@@ -4,7 +4,7 @@
  */
 import { paraSpec, tableSpec } from '../../core/docx/spec'
 import type {
-  Block, CanonStyle, EditOp, EditResult, HeaderFooters, Inline, Paragraph, ParaDirty, ParaStyle, RunSet, RunStyle, StyleInfo, StyleLook, Table,
+  Block, CanonStyle, EditOp, EditResult, HeaderFooters, Inline, PageSet, PageSetResult, PageSetup, Paragraph, ParaDirty, ParaStyle, RunSet, RunStyle, StyleInfo, StyleLook, Table,
 } from '../../core/docx/types'
 import { cssFont } from '../../core/fonts'
 import type { DocumentClient } from '../../core/worker/client'
@@ -67,6 +67,8 @@ interface Entry {
   t: number
   /** the paragraph style this entry gave another look ("update style to match"), and the looks to go back and forth */
   style?: { id: string; undo: StyleLook; redo: StyleLook }
+  /** a page setup change, and the changes to go back and forth */
+  page?: { undo: PageSet; redo: PageSet }
 }
 
 export interface FormatState {
@@ -707,6 +709,7 @@ export class DocxEditor implements RichHost<Paragraph> {
     const e = this.history.pop()
     if (!e) return
     if (e.style) this.restyle(e.style.id, e.style.undo)
+    if (e.page) this.repage(e.page.undo)
     if (e.blocks) {
       const bi = this.whereNow(e.blocks.after, String(e.blocks.bi))
       // the blocks were removed by a collaborator: nothing left to undo
@@ -730,6 +733,7 @@ export class DocxEditor implements RichHost<Paragraph> {
     const e = this.future.pop()
     if (!e) return
     if (e.style) this.restyle(e.style.id, e.style.redo)
+    if (e.page) this.repage(e.page.redo)
     if (e.blocks) {
       const bi = this.whereNow(e.blocks.before, String(e.blocks.bi))
       if (bi === undefined) return
@@ -1273,6 +1277,41 @@ export class DocxEditor implements RichHost<Paragraph> {
     for (const id of res.changed) this.changedAt.set(id, this.styleGen)
     this.onDirty?.()
     this.catchUp()
+  }
+
+  // ---------------------------------------------------------------- page setup
+
+  /** the page setup changed (here or by a collaborator) */
+  onPage?: (page: PageSetup) => void
+  /** the page setup as last changed in this session (undefined: as in the file) */
+  pageNow?: PageSetup
+
+  paged(res: PageSetResult) {
+    if (this.taken.has(res)) return
+    this.taken.add(res)
+    this.pageNow = res.page
+    this.onPage?.(res.page)
+    this.onDirty?.()
+  }
+
+  /** Changes the page setup of the whole document (size, orientation, margins, columns); undoable. */
+  async setPage(set: PageSet): Promise<PageSetResult | undefined> {
+    if (!Object.keys(set).length) return
+    const res = await this.client.call('docx.page', set)
+    if (!res) return
+    this.paged(res)
+    const sel = this.input.lastSel ?? { a: { pa: '0', o: 0 }, f: { pa: '0', o: 0 } }
+    this.history.push({ pas: [], before: [], after: [], selBefore: sel, selAfter: sel, label: 'page', t: Date.now(), page: { undo: res.undo, redo: set } })
+    this.future = []
+    this.emitState(this.input.sel() ?? sel)
+    return res
+  }
+
+  private repage(set: PageSet) {
+    this.client
+      .call('docx.page', set)
+      .then((res) => res && this.paged(res))
+      .catch((e) => console.error('[office-engine] page setup failed', e))
   }
 
   private async setStyle(id: string, look: StyleLook) {

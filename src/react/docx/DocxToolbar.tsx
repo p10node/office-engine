@@ -104,6 +104,8 @@ export function DocxToolbar(props: {
   painter: boolean
   onLink: () => void
   image: ImageActions
+  /** opens the page setup dialog */
+  onPageSetup?: () => void
 }) {
   const { editor, styles, image } = props
   const [st, setSt] = useState<FormatState | null>(null)
@@ -232,6 +234,7 @@ export function DocxToolbar(props: {
       <Pop icon="table" title="Insert table" disabled={dis || st?.inTable}>
         {(close) => <GridPicker onPick={(r, c) => (close(), editor.insertTable(r, c))} />}
       </Pop>
+      <Btn icon="pageSetup" title="Page setup (size, orientation, margins, columns)" disabled={!props.onPageSetup} onClick={() => props.onPageSetup?.()} />
       <Pop icon="omega" title="Special characters" disabled={dis}>
         {(close) => (
           <div className="de-symbols">

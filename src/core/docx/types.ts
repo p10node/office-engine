@@ -315,6 +315,27 @@ export interface PageSetup {
   ml: number
   header: number
   footer: number
+  /** text columns (absent: one) and the gap between them, in pt */
+  cols?: number
+  colGap?: number
+}
+
+/** a change of the page setup, applied to every section (Word's "whole document"); only the keys present change */
+export interface PageSet {
+  w?: number
+  h?: number
+  mt?: number
+  mr?: number
+  mb?: number
+  ml?: number
+  cols?: number
+  colGap?: number
+}
+
+export interface PageSetResult {
+  page: PageSetup
+  /** the change that puts the page setup back */
+  undo: PageSet
 }
 
 export interface SectionBreak {
