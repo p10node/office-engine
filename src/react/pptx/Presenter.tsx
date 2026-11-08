@@ -10,13 +10,17 @@ export function Presenter({ client, meta, start, onClose }: { client: DocumentCl
   const order = visible.length ? visible : meta.slides.map((s) => s.index)
   const [pos, setPos] = useState(Math.max(0, order.findIndex((i) => i >= start)))
   const [vw, setVw] = useState({ w: window.innerWidth, h: window.innerHeight })
+  // Parents usually pass an inline onClose; keep it in a ref so a parent re-render (entering
+  // fullscreen resizes the page) doesn't re-run the effect, exit fullscreen and close the show.
+  const closeRef = useRef(onClose)
+  closeRef.current = onClose
 
   useEffect(() => {
     const el = ref.current
     el?.focus()
-    el?.requestFullscreen?.().catch(() => {})
+    if (el && document.fullscreenElement !== el) el.requestFullscreen?.().catch(() => {})
     const resize = () => setVw({ w: window.innerWidth, h: window.innerHeight })
-    const exitFs = () => !document.fullscreenElement && onClose()
+    const exitFs = () => !document.fullscreenElement && closeRef.current()
     window.addEventListener('resize', resize)
     document.addEventListener('fullscreenchange', exitFs)
     return () => {
@@ -24,7 +28,7 @@ export function Presenter({ client, meta, start, onClose }: { client: DocumentCl
       document.removeEventListener('fullscreenchange', exitFs)
       if (document.fullscreenElement) document.exitFullscreen().catch(() => {})
     }
-  }, [onClose])
+  }, [])
 
   const go = (d: number) => setPos((p) => Math.max(0, Math.min(order.length - 1, p + d)))
   const scale = Math.min(vw.w / meta.w, vw.h / meta.h)

@@ -168,6 +168,21 @@ describe('pptx editing', () => {
     await v.page.keyboard.press('Escape')
     await v.page.locator('.de-present').waitFor({ state: 'detached' })
   })
+
+  test('presenting stays full screen when the viewer re-renders', async () => {
+    const v = await open()
+    await v.pick('Present', 'From beginning')
+    await v.page.waitForFunction(() => document.fullscreenElement?.classList.contains('de-present'))
+    // entering full screen resizes the window (headless: screen = viewport, so shrink the viewer instead)
+    await v.page.evaluate(() => {
+      ;(document.querySelector('.de-scroll') as HTMLElement).style.maxWidth = '600px'
+    })
+    await v.page.waitForTimeout(300)
+    await v.page.locator('.de-present').click()
+    await v.page.waitForTimeout(500)
+    expect(await v.page.evaluate(() => document.fullscreenElement?.className)).toBe('de-present')
+    expect(await v.page.locator('.de-present-n').innerText()).toMatch(/^2\s*\//)
+  })
 })
 
 describe('pptx thumbnails', () => {
