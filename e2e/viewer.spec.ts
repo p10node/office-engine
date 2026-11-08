@@ -106,6 +106,52 @@ describe('viewing', () => {
     expect(v.errors).toEqual([])
   })
 
+  test('csv: opens as a workbook, editable, downloads as Excel', async () => {
+    const v = await viewer({ src: 'samples/sample.csv' })
+    const { page } = v
+    expect(await v.title()).toBe('sample.csv')
+    expect(await page.locator('.de-badge').innerText()).toBe('CSV')
+    expect(await page.locator('.de-tab[role=tab]').allInnerTexts()).toEqual(['sample'])
+    expect(await v.shown('A1')).toBe('Region')
+    expect(await v.shown('B3')).toBe('Hai Phong, port')
+    expect(await v.shown('B4')).toBe('Huế')
+    expect(await v.shown('D2')).toBe('1280')
+    expect(await v.shown('F3')).toBe('FALSE')
+    // unlike Pages / Keynote / Numbers files, editable
+    expect(await v.barButton('Edit').count()).toBe(1)
+    await v.edit()
+    await v.typeCell('A2', 'West')
+    expect(await v.shown('A2')).toBe('West')
+
+    const dl = await v.downloadAs('Excel workbook')
+    expect(dl.name).toBe('sample.xlsx')
+    expect(dl.bytes.subarray(0, 2).toString()).toBe('PK')
+    expect(v.errors).toEqual([])
+  })
+
+  test('markdown: opens as a document', async () => {
+    const v = await viewer({ src: 'samples/sample.md' })
+    expect(await v.title()).toBe('sample.md')
+    expect(await v.page.locator('.de-badge').innerText()).toBe('MD')
+    const text = await v.pagesText()
+    for (const t of ['Field notes', 'Checklist', 'Survey the northern sites', 'Export the readings as CSV', 'Numbers are preliminary']) expect(text).toContain(t)
+    expect(text).not.toContain('**')
+    expect(v.errors).toEqual([])
+  })
+
+  test('a Blob without a name: its type, else its content, tells the format', async () => {
+    const v = await viewer({ src: 'samples/sample.docx' })
+    const { page } = v
+    await page.evaluate(() => window.__setProps({ src: new Blob(['city,pop\nHanoi,8.4\nHue,0.65\n'], { type: 'text/csv' }) }))
+    await page.locator('.de-grid').waitFor()
+    expect(await v.shown('A2')).toBe('Hanoi')
+    await page.evaluate(() => window.__setProps({ src: new Blob(['<h1>Hello</h1><p>from <b>HTML</b></p>']) }))
+    await page.waitForFunction(() => document.querySelector('.de-badge')?.textContent === 'html')
+    await page.locator('.de-page-inner').first().waitFor()
+    expect(await v.pagesText()).toContain('from HTML')
+    expect(v.errors).toEqual([])
+  })
+
   test('pptx: slides, thumbnails, slideshow', async () => {
     const v = await viewer({ src: 'samples/sample.pptx' })
     const { page } = v

@@ -1,0 +1,11 @@
+Region,City,Quarter,Units,Revenue,On target
+North,Hanoi,Q1,1280,25600.5,TRUE
+North,"Hai Phong, port",Q1,940,18800,FALSE
+Central,Huế,Q1,610,12200.75,TRUE
+South,Ho Chi Minh City,Q1,2150,43000,TRUE
+South,Cần Thơ,Q1,480,9600,FALSE
+North,Hanoi,Q2,1395,27900,TRUE
+North,"Hai Phong, port",Q2,1010,20200,TRUE
+Central,Huế,Q2,655,13100,FALSE
+South,Ho Chi Minh City,Q2,2290,45800,TRUE
+South,Cần Thơ,Q2,530,10600,TRUE

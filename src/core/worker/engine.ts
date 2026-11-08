@@ -3,7 +3,8 @@ import { addImage, addLink, applyEdit, applyTable, convertParas, ensureStyle, sa
 import type { CanonStyle, EditOp, HFSet, PageSet, ParaSpec, StyleLook, TableOp } from '../docx/types'
 import { OpcPackage, type DocKind } from '../opc'
 import { PptxPresentation } from '../pptx/parser'
-import { openSource, type DocSource } from '../source'
+import { BlobSource, openSource, type DocSource } from '../source'
+import { decodeText, mayBePlain, plainFormat, plainToOffice } from '../plain'
 import { XlsxWorkbook } from '../xlsx/workbook'
 import { XlsxEditor } from '../xlsx/editor'
 import type { BookOp, CellInput, FindOptions, FmtPatch, Range, SheetOp } from '../xlsx/types'
@@ -46,7 +47,12 @@ export class Engine {
       signal: this.abort.signal,
       onProgress: (loaded, total) => this.emit('progress', { phase: 'download', loaded, total }),
     })
-    let zip = await ZipArchive.open(source)
+    const name = params.name ?? source.name
+    // CSV / TSV / text / Markdown / HTML: converted to a workbook / document (an Office or iWork name skips the look)
+    const imported = mayBePlain(name) ? plainFormat(name, source.type, await source.read(0, Math.min(source.size, 4096)), source.size <= 4096) : null
+    let zip = imported
+      ? await ZipArchive.open(new BlobSource(await plainToOffice(decodeText(await source.read(0, source.size), source.type), imported, name)))
+      : await ZipArchive.open(source)
     let from: OpenResult['from']
     // Apple Pages / Keynote / Numbers: converted to a Word document / PowerPoint presentation / Excel workbook, shown read-only
     if (isIworkZip(zip)) ({ zip, from } = await openIwork(zip))
@@ -54,7 +60,7 @@ export class Engine {
     const pkg = (this.pkg = new OpcPackage(zip))
     const main = await pkg.mainPart()
     this.kind = main.kind
-    const res: OpenResult = { kind: main.kind, name: params.name ?? source.name, size: source.size, ...(from ? { from } : {}) }
+    const res: OpenResult = { kind: main.kind, name, size: source.size, ...(from ? { from } : {}), ...(imported ? { imported } : {}) }
     if (main.kind === 'docx') this.docx = await DocxDocument.open(pkg, main.path)
     else if (main.kind === 'xlsx') res.xlsx = (this.xlsx = await XlsxWorkbook.open(pkg, main.path)).meta()
     else res.pptx = (this.pptx = await PptxPresentation.open(pkg, main.path)).meta

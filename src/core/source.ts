@@ -5,6 +5,8 @@
 export interface ByteSource {
   readonly size: number
   readonly name?: string
+  /** MIME type, when known (a Blob's type, the server's Content-Type) */
+  readonly type?: string
   read(offset: number, length: number): Promise<Uint8Array>
   stream(offset: number, length: number): ReadableStream<Uint8Array>
   /** Zero-copy sub-Blob when available (used when re-zipping unchanged entries). */
@@ -15,8 +17,10 @@ export type ProgressFn = (loaded: number, total: number) => void
 
 export class BlobSource implements ByteSource {
   readonly size: number
+  readonly type?: string
   constructor(private blob: Blob, readonly name?: string) {
     this.size = blob.size
+    this.type = blob.type || undefined
   }
   async read(offset: number, length: number): Promise<Uint8Array> {
     return new Uint8Array(await this.blob.slice(offset, offset + length).arrayBuffer())
@@ -81,6 +85,7 @@ export class HttpRangeSource implements ByteSource {
     readonly size: number,
     private opts: HttpSourceOptions,
     readonly name?: string,
+    readonly type?: string,
   ) {
     this.blockSize = opts.blockSize ?? 256 * 1024
     this.maxBlocks = opts.maxBlocks ?? 128
@@ -102,7 +107,7 @@ export class HttpRangeSource implements ByteSource {
           const len = head.headers.get('Content-Length')
           if (head.ok && len) size = Number(len)
         }
-        if (size > 0) return new HttpRangeSource(url, size, opts, name)
+        if (size > 0) return new HttpRangeSource(url, size, opts, name, res.headers.get('Content-Type') || undefined)
       } else if (res.ok) {
         // Server ignored the Range header and is sending the whole file: just use it.
         return new BlobSource(await readWithProgress(res, opts.onProgress), name)
@@ -232,6 +237,7 @@ export class HttpRangeSource implements ByteSource {
 async function readWithProgress(res: Response, onProgress?: ProgressFn): Promise<Blob> {
   const total = Number(res.headers.get('Content-Length') || 0)
   if (!res.body || !onProgress) return res.blob()
+  const type = res.headers.get('Content-Type') ?? ''
   const reader = res.body.getReader()
   const parts: Uint8Array[] = []
   let loaded = 0
@@ -242,7 +248,7 @@ async function readWithProgress(res: Response, onProgress?: ProgressFn): Promise
     loaded += value.length
     onProgress(loaded, total)
   }
-  return new Blob(parts as BlobPart[])
+  return new Blob(parts as BlobPart[], { type })
 }
 
 export type DocSource = Blob | File | ArrayBuffer | Uint8Array | string | URL

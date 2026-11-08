@@ -12,6 +12,7 @@ import { FileMenu, KIND_LABEL, useFileActions, type FileMenuItem } from './file/
 import { importFile, type Imported } from './file/importFile'
 import { blankPptx, parasToDocx, rowsToXlsx } from '../core/convert'
 import type { DocKind } from '../core/opc'
+import type { PlainFormat } from '../core/plain'
 import { injectStyles } from './injectStyles'
 import { isTextEntry, useDarkTheme, type Theme } from './common/hooks'
 import { PptxView } from './pptx/PptxView'
@@ -23,9 +24,12 @@ import { CommentsContext, CommentsCtl, useCommentsState, type CommentOptions } f
 import { COMMENT_KEYS, CommentsPanel } from './comments/CommentsPanel'
 
 export interface DocViewerProps {
-  /** File, Blob, ArrayBuffer, Uint8Array or URL (HTTP Range requests are used when the server supports them). */
+  /**
+   * File, Blob, ArrayBuffer, Uint8Array or URL (HTTP Range requests are used when the server supports them): an Office file,
+   * an Apple Pages / Keynote / Numbers file (view only), or CSV / TSV / text / Markdown / HTML (opened as a workbook / document).
+   */
   src: DocSource | null | undefined
-  /** Display name (defaults to File.name or the URL's last segment). */
+  /** Display name (defaults to File.name or the URL's last segment); its extension also tells the format of a source without one. */
   name?: string
   className?: string
   style?: CSSProperties
@@ -94,6 +98,8 @@ export interface DocViewerProps {
 
 const EXT: Record<string, string> = { docx: '.docx', xlsx: '.xlsx', pptx: '.pptx' }
 const FROM_LABEL: Record<'pages' | 'keynote' | 'numbers', string> = { pages: 'Apple Pages document', keynote: 'Apple Keynote presentation', numbers: 'Apple Numbers spreadsheet' }
+const IMPORTED_BADGE: Record<PlainFormat, string> = { csv: 'csv', tsv: 'tsv', text: 'txt', markdown: 'md', html: 'html' }
+const IMPORTED_LABEL: Record<PlainFormat, string> = { csv: 'CSV file', tsv: 'Tab-separated values', text: 'Plain text', markdown: 'Markdown', html: 'HTML page' }
 const UNTITLED: Record<DocKind, string> = { docx: 'Untitled document', xlsx: 'Untitled spreadsheet', pptx: 'Untitled presentation' }
 
 function fmtBytes(n: number) {
@@ -341,7 +347,7 @@ export function DocViewer(props: DocViewerProps) {
     <div ref={rootRef} className={'de-root' + (dark ? ' de-dark' : '') + (className ? ` ${className}` : '')} style={style} onKeyDown={onKeyDown}>
       {toolbar && (
         <div className="de-bar">
-          {client && <span className={`de-badge de-badge-${client.kind}`}>{client.info?.from ?? client.kind}</span>}
+          {client && <span className={`de-badge de-badge-${client.kind}`}>{client.info?.from ?? (client.info?.imported ? IMPORTED_BADGE[client.info.imported] : client.kind)}</span>}
           {fileMenu && <FileMenu actions={fileActions} />}
           <span className="de-title" title={title}>
             {title}
@@ -413,7 +419,14 @@ export function DocViewer(props: DocViewerProps) {
           client={client}
           file={[
             ['Name', fileName],
-            ['Type', client.info?.from ? `${FROM_LABEL[client.info.from]} (view only)` : KIND_LABEL[client.kind]],
+            [
+              'Type',
+              client.info?.from
+                ? `${FROM_LABEL[client.info.from]} (view only)`
+                : client.info?.imported
+                  ? `${IMPORTED_LABEL[client.info.imported]}, opened as ${KIND_LABEL[client.kind]}`
+                  : KIND_LABEL[client.kind],
+            ],
             ...(client.size > 0 ? [['File size', fmtBytes(client.size)] as [string, string]] : []),
             ...(dirty ? [['Status', 'Unsaved changes'] as [string, string]] : []),
           ]}

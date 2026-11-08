@@ -43,6 +43,22 @@ Cell values in Pages and Keynote tables use the same formats.
 
 **Not supported**: password-protected files and the iWork '09 and older XML format: each gives an error saying so.
 
+### CSV, text, Markdown and HTML
+
+A `src` (file, Blob, buffer or URL) that is not an Office package opens too, converted in the worker and **editable**:
+
+| File                      | Opens as                                                                                                |
+|---------------------------|---------------------------------------------------------------------------------------------------------|
+| `.csv`, `.tsv` / `.tab`   | workbook, one sheet named after the file; numbers and booleans typed, codes like `007` kept as text     |
+| `.txt`, `.text`, `.log`   | document, one paragraph per line                                                                        |
+| `.md`, `.markdown`        | document: headings, lists, bold / italic / strike, links, code, quotes, tables (as tab-separated lines) |
+| `.html`, `.htm`, `.xhtml` | document: headings, paragraphs, lists, inline formatting and links; scripts and styles are dropped      |
+
+- **Format**: the extension (of `name`, the File or the URL), else the MIME type (Blob type, `Content-Type`), else the content (HTML, delimited rows, or text). A file named `.docx` / `.xlsx` / … is always read as a package, so an HTML error page served for a missing file still fails
+- **CSV**: comma, semicolon (then `12,5` is a number) or tab, detected from the first line; quoted fields, newlines inside quotes
+- **Encoding**: byte order mark (UTF-8, UTF-16), the declared `charset`, UTF-8, else Windows-1252 (Excel's CSV on Windows)
+- The bar shows a `CSV` / `TSV` / `TXT` / `MD` / `HTML` badge; saving writes the workbook / document (`.xlsx` / `.docx`); *Download as* CSV / text / Markdown gives the plain format back
+
 ## Editing
 
 ### DOCX

@@ -50,8 +50,8 @@ CSS is auto-injected, no import needed. Container must have a height.
 
 | Prop               | Type                                           | Default   | Notes                                                                                                |
 |--------------------|------------------------------------------------|-----------|------------------------------------------------------------------------------------------------------|
-| `src`              | `File \| Blob \| ArrayBuffer \| string \| URL` | –         | Document source                                                                                      |
-| `name`             | `string`                                       | auto      | Display name                                                                                         |
+| `src`              | `File \| Blob \| ArrayBuffer \| string \| URL` | –         | Document: Office; Pages / Keynote / Numbers; CSV / TSV, text, Markdown, HTML (as xlsx / docx)        |
+| `name`             | `string`                                       | auto      | Display name; its extension also tells the format of a `Blob` / `ArrayBuffer`                        |
 | `toolbar`          | `boolean`                                      | `true`    | Top bar (name, status, progress)                                                                     |
 | `toolbarExtra`     | `ReactNode`                                    | –         | Extra buttons on the right of the toolbar                                                            |
 | `zoom`             | `number \| 'fit'`                              | `'fit'`   | Initial zoom (docx/pptx)                                                                             |
@@ -153,6 +153,7 @@ import { DocumentClient } from '@p10node/office-engine/core'
 const doc = await DocumentClient.open(fileOrUrl, { onProgress: console.log })
 doc.kind                                   // 'docx' | 'xlsx' | 'pptx'
 doc.info.from                              // 'pages' / 'keynote' / 'numbers': an Apple file, converted to docx / pptx / xlsx (view only)
+doc.info.imported                          // 'csv' / 'tsv' / 'text' / 'markdown' / 'html': a plain file, built as xlsx / docx (editable)
 doc.on('docx:blocks', (blocks) => {})      // docx: streamed blocks
 await doc.call('docx.start')
 doc.call('xlsx.load', 0)                   // xlsx: stream sheet
