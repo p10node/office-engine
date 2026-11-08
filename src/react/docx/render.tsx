@@ -1,5 +1,5 @@
-import { memo, type CSSProperties, type ReactNode } from 'react'
-import type { Block, Inline, Paragraph, ParaStyle, RunStyle, Table } from '../../core/docx/types'
+import { memo, type CSSProperties, type PointerEvent as RPointerEvent, type ReactNode } from 'react'
+import type { Block, Inline, Paragraph, ParaStyle, RunStyle, Table, TrackMark } from '../../core/docx/types'
 import type { DocumentClient } from '../../core/worker/client'
 import { useMediaUrl } from '../common/hooks'
 
@@ -10,6 +10,8 @@ export interface RenderCtx {
   pages: number
   measuring: boolean
   editable: boolean
+  /** editing: a column edge of the top-level table `bi` was dragged */
+  colResize?: (bi: number, cols: number[]) => void
 }
 
 const pt = (v: number | undefined) => (v ? `${+v.toFixed(2)}pt` : undefined)
@@ -17,6 +19,26 @@ const pt = (v: number | undefined) => (v ? `${+v.toFixed(2)}pt` : undefined)
 const UNDERLINE_STYLE: Record<string, CSSProperties['textDecorationStyle']> = {
   double: 'double', dotted: 'dotted', dottedHeavy: 'dotted', dash: 'dashed', dashedHeavy: 'dashed', dashLong: 'dashed',
   wave: 'wavy', wavyHeavy: 'wavy', wavyDouble: 'wavy',
+}
+
+const TRACK_COLORS = ['#c0392b', '#1a73e8', '#188038', '#a142f4', '#e37400', '#00838f', '#d01884', '#5f6368']
+
+const authorSlot = new Map<string, number>()
+
+/** one colour per author of tracked changes, given in the order authors are met (as Word does): the first 8 differ */
+export function authorColor(author: string | undefined): string {
+  const k = author ?? ''
+  let i = authorSlot.get(k)
+  if (i === undefined) authorSlot.set(k, (i = authorSlot.size))
+  return TRACK_COLORS[i % TRACK_COLORS.length]
+}
+
+/** inserted text underlined, deleted text struck through, in the author's colour */
+function trackCss(tc: TrackMark): CSSProperties {
+  const color = authorColor(tc.author)
+  return tc.k === 'ins'
+    ? { color, textDecoration: 'underline', textDecorationColor: color }
+    : { color, textDecoration: 'line-through', textDecorationColor: color }
 }
 
 export function runCss(s: RunStyle | undefined): CSSProperties {
@@ -94,11 +116,25 @@ function Img({ ctx, target, w, h, alt }: { ctx: RenderCtx; target: string; w: nu
 }
 
 function InlineView({ x, ctx, o }: { x: Inline; ctx: RenderCtx; o: number }): ReactNode {
-  const obj = { 'data-o': o, 'data-obj': '', contentEditable: ctx.editable ? false : undefined } as const
+  // an object inside a tracked change: outlined in the author's colour (dimmed when deleted)
+  const objTc = x.t !== 'text' ? x.tc : undefined
+  const obj = {
+    'data-o': o,
+    'data-obj': '',
+    contentEditable: ctx.editable ? false : undefined,
+    ...(objTc ? { 'data-tc': objTc.k, title: `${objTc.k === 'ins' ? 'Inserted' : 'Deleted'}${objTc.author ? ` by ${objTc.author}` : ''}` } : {}),
+  } as const
   switch (x.t) {
     case 'text': {
+      const tc = x.tc
       const span = (
-        <span data-o={o} style={runCss(x.s)} data-cm={x.cm?.join(' ')}>
+        <span
+          data-o={o}
+          style={tc ? { ...runCss(x.s), ...trackCss(tc) } : runCss(x.s)}
+          data-cm={x.cm?.join(' ')}
+          data-tc={tc?.k}
+          title={tc ? `${tc.k === 'ins' ? 'Inserted' : 'Deleted'}${tc.author ? ` by ${tc.author}` : ''}${tc.date ? ` · ${new Date(tc.date).toLocaleString()}` : ''}` : undefined}
+        >
           {x.text}
         </span>
       )
@@ -203,7 +239,47 @@ function TableView({ t, ctx, pa }: { t: Table; ctx: RenderCtx; pa?: string }) {
   if (t.align === 'center') style.margin = '0 auto'
   else if (t.align === 'right') style.marginLeft = 'auto'
   else if (t.indL) style.marginLeft = `${t.indL}pt`
-  return (
+  const resize = ctx.colResize && pa !== undefined && !pa.includes('.') && total > 0 ? ctx.colResize : undefined
+  const drag = (i: number) => (e: RPointerEvent<HTMLDivElement>) => {
+    const tbl = (e.currentTarget.parentElement as HTMLElement).querySelector('table')
+    if (!tbl || !resize) return
+    e.preventDefault()
+    e.stopPropagation()
+    const ptPerPx = total / tbl.getBoundingClientRect().width
+    const x0 = e.clientX
+    const handle = e.currentTarget
+    handle.setPointerCapture(e.pointerId)
+    const widths = (dx: number) => {
+      const cols = [...t.cols]
+      const d = dx * ptPerPx
+      if (i < cols.length - 1) {
+        const room = Math.max(-(cols[i] - 12), Math.min(d, cols[i + 1] - 12))
+        cols[i] += room
+        cols[i + 1] -= room
+      } else cols[i] = Math.max(12, cols[i] + d)
+      return cols
+    }
+    const move = (ev: PointerEvent) => {
+      const cols = widths(ev.clientX - x0)
+      tbl.querySelectorAll('col').forEach((c, k) => ((c as HTMLElement).style.width = `${cols[k]}pt`))
+      tbl.style.width = `${cols.reduce((a, b) => a + b, 0)}pt`
+    }
+    const up = (ev: PointerEvent) => {
+      handle.removeEventListener('pointermove', move)
+      handle.removeEventListener('pointerup', up)
+      if (Math.abs(ev.clientX - x0) > 1) resize(Number(pa), widths(ev.clientX - x0))
+    }
+    handle.addEventListener('pointermove', move)
+    handle.addEventListener('pointerup', up)
+  }
+  let edge = 0
+  const handles = resize
+    ? t.cols.map((w, i) => {
+        edge += w
+        return <div key={i} className="de-col-resize" contentEditable={false} style={{ left: `calc(${edge}pt - 3px)` }} onPointerDown={drag(i)} />
+      })
+    : null
+  const table = (
     <table className="de-tbl" style={style}>
       {total > 0 && (
         <colgroup>
@@ -246,6 +322,14 @@ function TableView({ t, ctx, pa }: { t: Table; ctx: RenderCtx; pa?: string }) {
         ))}
       </tbody>
     </table>
+  )
+  if (!handles) return table
+  const off = style.marginLeft && style.marginLeft !== 'auto' ? style.marginLeft : undefined
+  return (
+    <div className="de-tbl-wrap" style={{ marginLeft: off, width: style.width, marginRight: t.align === 'center' ? 'auto' : undefined, ...(t.align === 'center' ? { marginLeft: 'auto' } : t.align === 'right' ? { marginLeft: 'auto' } : {}) }}>
+      {table}
+      {handles}
+    </div>
   )
 }
 

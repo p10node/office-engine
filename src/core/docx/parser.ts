@@ -9,7 +9,7 @@ import {
   borderCss, merge, readMargins, readPPr, readRPr, readTableBorders, shading, StyleSheet, type NumPr,
 } from './styles'
 import type {
-  Block, CellBorders, DocxMeta, HeaderFooters, Inline, ListMarker, PageSetup, Paragraph, ParaStyle, RunSet, RunStyle, SrcRef, Table, TableCell, TableRow,
+  Block, CellBorders, DocxMeta, HeaderFooters, Inline, ListMarker, PageSet, PageSetup, Paragraph, ParaStyle, RunSet, RunStyle, SrcRef, Table, TrackMark, TableCell, TableRow,
 } from './types'
 import { DEFAULT_PAGE } from './types'
 
@@ -95,14 +95,18 @@ export function pageSetup(sectPr: XEl | undefined): PageSetup {
   let w = t(sz?.a.w, DEFAULT_PAGE.w)
   let h = t(sz?.a.h, DEFAULT_PAGE.h)
   if (sz?.a.orient === 'landscape' && h > w) [w, h] = [h, w]
+  const cols = kid(sectPr, 'cols')
+  const n = Number(cols?.a.num ?? 1)
   return {
     w, h,
     mt: t(mar?.a.top, 72), mr: t(mar?.a.right ?? mar?.a.end, 72), mb: t(mar?.a.bottom, 72), ml: t(mar?.a.left ?? mar?.a.start, 72),
     header: t(mar?.a.header, 36), footer: t(mar?.a.footer, 36),
+    ...(n > 1 && n <= 12 ? { cols: n, colGap: t(cols?.a.space, 36) } : {}),
   }
 }
 
-const RUN_STOP = new Set(['p', 'del', 'moveFrom', 'oMath', 'oMathPara', 'pPr', 'rPr', 'r'])
+// runs inside w:del / w:moveFrom count: deleted text is shown (tracked changes) and written back
+const RUN_STOP = new Set(['p', 'oMath', 'oMathPara', 'pPr', 'rPr', 'r'])
 
 /** Runs of a paragraph in preorder (the ordinal is the run's identity for write-back). */
 export function collectRuns(p: XEl): Map<XEl, number> {
@@ -142,6 +146,8 @@ export function markerOf(numbering: Numbering, num: NumPr, markRs: RunStyle): { 
 export class Converter {
   private fields: FieldState[] = []
   private tableLayer?: Layer
+  /** the tracked change (w:ins / w:del) the runs being read belong to */
+  private tc?: TrackMark
   private boxDepth = 0
   private tableDepth = 0
   private cur?: { pid?: number; runs: Map<XEl, number>; forced?: ConvHooks['forced'] }
@@ -246,10 +252,16 @@ export class Converter {
     const parts: Paragraph[] = [cur]
     const sink: Sink = {
       push: (x) => {
+        // pictures, boxes, fields, note references inside w:ins / w:del belong to the change too
+        if (this.tc && x.t !== 'text' && !x.tc) x = { ...x, tc: this.tc } as Inline
         const runs = cur.runs
         const last = runs[runs.length - 1]
         if (x.t === 'text' && !x.cm) delete x.cm
-        if (x.t === 'text' && last?.t === 'text' && last.href === x.href && last.lk === x.lk && sameRecord(last.s, x.s) && sameRecord(last.d, x.d) && sameMarks(last.cm, x.cm)) last.text += x.text
+        if (
+          x.t === 'text' && last?.t === 'text' && last.href === x.href && last.lk === x.lk &&
+          sameRecord(last.s, x.s) && sameRecord(last.d, x.d) && sameMarks(last.cm, x.cm) && sameRecord(last.tc, x.tc)
+        )
+          last.text += x.text
         else runs.push(x)
       },
       markLast: (id) => {
@@ -312,11 +324,19 @@ export class Converter {
           break
         }
         case 'ins':
+        case 'moveTo':
+        case 'del':
+        case 'moveFrom': {
+          const prev = this.tc
+          this.tc = { k: c.n === 'ins' || c.n === 'moveTo' ? 'ins' : 'del', id: c.a.id, author: c.a.author, date: c.a.date }
+          this.inlines(c.c, base, href, lk, sink)
+          this.tc = prev
+          break
+        }
         case 'smartTag':
         case 'customXml':
         case 'bdo':
         case 'dir':
-        case 'moveTo':
           this.inlines(c.c, base, href, lk, sink)
           break
         case 'sdt':
@@ -341,7 +361,8 @@ export class Converter {
     const s = merge<RunStyle>(base, this.styles.char(kid(rPr, 'rStyle')?.a.val), readRPr(rPr, this.theme))
     if (s.vanish) return
     const { src, d, cm } = this.srcOf(r)
-    const text = (t: string, style = s, link = href) => sink.push({ t: 'text', text: t, s: style, href: link, lk: link === href ? lk : undefined, src, d, cm })
+    const tc = this.tc
+    const text = (t: string, style = s, link = href) => sink.push({ t: 'text', text: t, s: style, href: link, lk: link === href ? lk : undefined, src, d, cm, ...(tc ? { tc } : {}) })
     for (const c of r.c) {
       const f = this.fields[this.fields.length - 1]
       switch (c.n) {
@@ -367,6 +388,7 @@ export class Converter {
           if (f) f.instr += c.t
           break
         case 't':
+        case 'delText':
           if (f && (f.phase === 'instr' || f.kind)) break
           if (c.t) text(c.t, s, f?.href ?? href)
           break
@@ -742,6 +764,11 @@ export class DocxDocument {
   itemXml = new Map<number, string>()
   /** styles the editor changed → their definition in the file as opened (parsed, and as source) */
   styleOrig = new Map<string, { x: XEl; raw: RNode }>()
+  /** page setup of the final section as opened, and the changes made to it (written to every section on save) */
+  page: PageSetup = { ...DEFAULT_PAGE }
+  pageSet?: PageSet
+  /** w:id of the next tracked change written (high: clear of the file's own ids) */
+  nextTrackId = 900_000
   private nextPid = 1
   private captured = false
   private edited = false
@@ -780,7 +807,15 @@ export class DocxDocument {
   }
 
   /** relationship ids of the headers / footers shown (final section) */
-  private hfRefs?: Record<keyof HeaderFooters, string | undefined>
+  hfRefs?: Record<keyof HeaderFooters, string | undefined>
+  /** headers / footers created by the editor: referenced from the sections on save */
+  hfNew = new Map<keyof HeaderFooters, string>()
+  /** "different first page" as set by the editor (undefined: as in the file) */
+  titlePgSet?: boolean
+  /** "different first page" in the file */
+  titlePg = false
+  /** page setup or header / footer references were changed in this session (sections rebuilt on save) */
+  sectTouched = false
 
   /** the headers / footers, converted with the styles as they are now; undefined when the document has none */
   async headers(): Promise<HeaderFooters | undefined> {
@@ -891,13 +926,20 @@ export class DocxDocument {
     this.items = capture.items
     this.prefix = capture.prefix
     this.suffix = capture.suffix
+    // tracked changes written later get ids above every annotation id of the file (one saved here before included)
+    let maxId = 0
+    for (const x of this.items) for (const m of x.matchAll(/:id="(\d{1,9})"/g)) maxId = Math.max(maxId, Number(m[1]))
+    this.nextTrackId = Math.max(this.nextTrackId, maxId + 1)
     this.captured = true
     const sect = finalSect
-    const meta: DocxMeta = { page: pageSetup(sect), ...baseMeta, final: true }
+    this.page = pageSetup(sect)
+    const meta: DocxMeta = { page: { ...this.page }, ...baseMeta, final: true }
     if (sect) {
       const ref = (tag: string, type: string) => kids(sect, tag).find((r) => (r.a.type ?? 'default') === type)?.a['r:id']
-      meta.titlePg = !!kid(sect, 'titlePg') && kid(sect, 'titlePg')?.a.val !== '0'
-      const first = (tag: string) => (meta.titlePg ? ref(tag, 'first') : undefined)
+      meta.titlePg = !!kid(sect, 'titlePg') && kid(sect, 'titlePg')?.a.val !== '0' && kid(sect, 'titlePg')?.a.val !== 'false'
+      this.titlePg = meta.titlePg
+      // first-page parts are known even when "different first page" is off (turning it on shows them)
+      const first = (tag: string) => ref(tag, 'first')
       this.hfRefs = { header: ref('headerReference', 'default'), footer: ref('footerReference', 'default'), firstHeader: first('headerReference'), firstFooter: first('footerReference') }
       Object.assign(meta, await this.headers())
     }

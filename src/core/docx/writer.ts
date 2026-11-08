@@ -17,7 +17,7 @@ import type { DocxDocument, GenRun } from './parser'
 import { fontName, HIGHLIGHT, readPPr, readRPr } from './styles'
 import type {
   Block, CanonStyle, CellSpec, EditOp, EditResult, ParaDirty, ParaSpec, ParaStyle, Paragraph, RunSet, RunStyle, SpecRun, SrcRef, StyleInfo, StyleLook, StyleSetResult,
-  TableOp, TableSpec,
+  TableOp, TableSpec, PageSet, PageSetResult, PageSetup, HFKind, HFLine, HFSet, HFSetResult, TrackMark,
 } from './types'
 
 export const DOCX_MIME = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
@@ -35,9 +35,10 @@ const RPR_ORDER = [
   'noProof', 'snapToGrid', 'vanish', 'webHidden', 'color', 'spacing', 'w', 'kern', 'position', 'sz', 'szCs', 'highlight', 'u',
   'effect', 'bdr', 'shd', 'fitText', 'vertAlign', 'rtl', 'cs', 'em', 'lang', 'eastAsianLayout', 'specVanish', 'oMath',
 ]
-const START_MARKS = new Set(['bookmarkStart', 'commentRangeStart', 'permStart', 'moveFromRangeStart', 'moveToRangeStart'])
-const END_MARKS = new Set(['bookmarkEnd', 'commentRangeEnd', 'permEnd', 'moveFromRangeEnd', 'moveToRangeEnd'])
-const RUN_STOP = new Set(['p', 'del', 'moveFrom', 'oMath', 'oMathPara', 'pPr', 'rPr', 'r'])
+// move ranges are dropped: a regenerated paragraph writes moved text back as plain w:ins / w:del
+const START_MARKS = new Set(['bookmarkStart', 'commentRangeStart', 'permStart'])
+const END_MARKS = new Set(['bookmarkEnd', 'commentRangeEnd', 'permEnd'])
+const RUN_STOP = new Set(['p', 'oMath', 'oMathPara', 'pPr', 'rPr', 'r'])
 const HL_NAME: Record<string, string> = Object.fromEntries(Object.entries(HIGHLIGHT).map(([k, v]) => [v, k]))
 
 interface ParaLoc {
@@ -462,6 +463,20 @@ function readStyle(pPr: RNode): string | undefined {
   return ps ? /="([^"]*)"/.exec(ps.a)?.[1] : undefined
 }
 
+/** deleted text: w:delText instead of w:t */
+function delTextXml(text: string, W: string): string {
+  return textContentXml(text, W)
+    .replace(new RegExp(`<${W}t([ >])`, 'g'), `<${W}delText$1`)
+    .replace(new RegExp(`</${W}t>`, 'g'), `</${W}delText>`)
+}
+
+/** a run wrapped in its tracked change (fresh ids: a change split by editing must not repeat one) */
+function trackXml(doc: DocxDocument, W: string, tc: TrackMark, run: string): string {
+  const tag = tc.k === 'ins' ? 'ins' : 'del'
+  const attrs = ` ${W}id="${doc.nextTrackId++}"` + (tc.author ? ` ${W}author="${escText(tc.author).replace(/"/g, '&quot;')}"` : '') + (tc.date ? ` ${W}date="${escText(tc.date)}"` : '')
+  return `<${W}${tag}${attrs}>${run}</${W}${tag}>`
+}
+
 export async function genParagraph(doc: DocxDocument, spec: ParaSpec): Promise<{ xml: string; map: GenRun[] }> {
   const tpl = origPara(doc, spec.from)
   const pq = tpl?.q ?? 'w:p'
@@ -550,8 +565,8 @@ export async function genParagraph(doc: DocxDocument, spec: ParaSpec): Promise<{
                   setAttr(n, m ? `${m[1]}:embed` : 'r:embed', run.rid)
                 }
               })
-              body += serialize(r)
-            } else body += serialize(src)
+              body += run.tc ? trackXml(doc, W, run.tc, serialize(r)) : serialize(r)
+            } else body += run.tc ? trackXml(doc, W, run.tc, serialize(src)) : serialize(src)
             map.push({ src: run.src, cm: run.cm })
           }
         }
@@ -570,7 +585,7 @@ export async function genParagraph(doc: DocxDocument, spec: ParaSpec): Promise<{
       if (run.set && Object.keys(run.set).length) applyRunSet((rPr ??= el(W + 'rPr')), run.set, W)
       if (!run.text) continue
       openMarks(run)
-      body += runXml(rPr, textContentXml(run.text, W))
+      body += run.tc ? trackXml(doc, W, run.tc, runXml(rPr, run.tc.k === 'del' ? delTextXml(run.text, W) : textContentXml(run.text, W))) : runXml(rPr, textContentXml(run.text, W))
       map.push({ src: run.src, d: run.set, cm: run.cm })
       closeMarks(run)
     }
@@ -761,6 +776,17 @@ export async function addLink(doc: DocxDocument, url: string): Promise<string> {
 
 // ---------------------------------------------------------------- tables
 
+const CSS_TO_LINE: Record<string, string> = { solid: 'single', dashed: 'dashed', dotted: 'dotted', double: 'double' }
+
+/** a border element from a CSS line ('0.5pt solid #000000', 'none') */
+export function borderXml(W: string, side: string, css: string): string {
+  const m = /^([\d.]+)pt\s+(\w+)\s+(#[0-9a-fA-F]{6}|\w+)/.exec(css.trim())
+  if (!m || css.trim() === 'none') return `<${W}${side} ${W}val="nil"/>`
+  const sz = Math.max(2, Math.min(96, Math.round(Number(m[1]) * 8)))
+  const color = m[3].startsWith('#') ? m[3].slice(1).toUpperCase() : 'auto'
+  return `<${W}${side} ${W}val="${CSS_TO_LINE[m[2]] ?? 'single'}" ${W}sz="${sz}" ${W}space="0" ${W}color="${color}"/>`
+}
+
 const TCPR_ORDER = ['cnfStyle', 'tcW', 'gridSpan', 'hMerge', 'vMerge', 'tcBorders', 'shd', 'noWrap', 'tcMar', 'textDirection', 'tcFitText', 'vAlign', 'hideMark']
 
 function rawRows(tbl: RNode): RNode[] {
@@ -817,9 +843,9 @@ export async function genTable(doc: DocxDocument, spec: TableSpec): Promise<stri
   const grid = `<${W}tblGrid>${spec.cols.map((w) => `<${W}gridCol ${W}w="${Math.round(w * 20)}"/>`).join('')}</${W}tblGrid>`
   const firstTcPr = rows.length ? kidOf(rawCells(rows[0])[0], 'tcPr') : undefined
   const nCols = spec.cols.length
-  const cont: ({ left: number; span: number; tcPr?: RNode } | undefined)[] = []
+  const cont: ({ left: number; span: number; src?: [number, number]; cell?: CellSpec } | undefined)[] = []
   let out = `<${W}tbl${orig?.a ?? ''}>${serialize(tblPr)}${grid}`
-  const tcPrFor = (src: [number, number] | undefined, g: number, span: number, vm?: 'restart' | 'continue', shd?: string) => {
+  const tcPrFor = (src: [number, number] | undefined, g: number, span: number, vm?: 'restart' | 'continue', shd?: string, cell?: CellSpec) => {
     const tpl = src ? kidOf(rawCells(rows[src[0]] ?? ({ c: [] } as unknown as RNode))[src[1]], 'tcPr') : undefined
     const pr = clone(tpl ?? firstTcPr ?? el(W + 'tcPr'))
     pr.q = W + 'tcPr'
@@ -828,7 +854,13 @@ export async function genTable(doc: DocxDocument, spec: TableSpec): Promise<stri
     setOrdered(pr, el(W + 'tcW', { [W + 'w']: String(Math.round(w * 20)), [W + 'type']: 'dxa' }), 'tcW', TCPR_ORDER)
     if (span > 1) setOrdered(pr, el(W + 'gridSpan', { [val]: String(span) }), 'gridSpan', TCPR_ORDER)
     if (vm) setOrdered(pr, el(W + 'vMerge', vm === 'restart' ? { [val]: 'restart' } : {}), 'vMerge', TCPR_ORDER)
-    if (shd !== undefined) setOrdered(pr, shd ? el(W + 'shd', { [val]: 'clear', [W + 'color']: 'auto', [W + 'fill']: shd.replace('#', '').toUpperCase() }) : undefined, 'shd', TCPR_ORDER)
+    if (shd !== undefined) setOrdered(pr, shd ? el(W + 'shd', { [val]: 'clear', [W + 'color']: 'auto', [W + 'fill']: shd === 'none' ? 'auto' : shd.replace('#', '').toUpperCase() }) : undefined, 'shd', TCPR_ORDER)
+    if (cell?.borders) {
+      const lines = (['t', 'l', 'b', 'r'] as const).map((k) => [{ t: 'top', l: 'left', b: 'bottom', r: 'right' }[k], cell.borders![k]] as const)
+      const xml = lines.filter(([, css]) => css !== undefined).map(([side, css]) => borderXml(W, side, css!)).join('')
+      setOrdered(pr, xml ? (parseRaw(`<${W}tcBorders>${xml}</${W}tcBorders>`)[0] as RNode) : undefined, 'tcBorders', TCPR_ORDER)
+    }
+    if (cell?.vAlign) setOrdered(pr, el(W + 'vAlign', { [val]: cell.vAlign === 'middle' ? 'center' : cell.vAlign }), 'vAlign', TCPR_ORDER)
     return serialize(pr)
   }
   for (const row of spec.rows) {
@@ -841,7 +873,8 @@ export async function genTable(doc: DocxDocument, spec: TableSpec): Promise<stri
     while (g < nCols && (k < cells.length || cont[g])) {
       const c = cont[g]
       if (c && c.left > 0) {
-        out += `<${W}tc>${c.tcPr ? '' : ''}${tcPrFor(undefined, g, c.span, 'continue')}<${W}p/></${W}tc>`
+        // the merged cell's properties (Word draws its sides and bottom from the continuation cells)
+        out += `<${W}tc>${tcPrFor(c.src, g, c.span, 'continue', c.cell?.shd, c.cell)}<${W}p/></${W}tc>`
         c.left--
         if (!c.left) cont[g] = undefined
         g += c.span
@@ -855,8 +888,8 @@ export async function genTable(doc: DocxDocument, spec: TableSpec): Promise<stri
         const orig = p.pristine && p.pid === p.from ? origPara(doc, p.pid) : undefined
         paras += orig ? serialize(orig) : (await genParagraph(doc, p)).xml
       }
-      out += `<${W}tc>${tcPrFor(cell.src, g, span, cell.rowSpan > 1 ? 'restart' : undefined, cell.shd)}${paras || `<${W}p/>`}</${W}tc>`
-      if (cell.rowSpan > 1) cont[g] = { left: cell.rowSpan - 1, span }
+      out += `<${W}tc>${tcPrFor(cell.src, g, span, cell.rowSpan > 1 ? 'restart' : undefined, cell.shd, cell)}${paras || `<${W}p/>`}</${W}tc>`
+      if (cell.rowSpan > 1) cont[g] = { left: cell.rowSpan - 1, span, src: cell.src, cell }
       g += span
     }
     out += `</${W}tr>`
@@ -887,6 +920,202 @@ export async function applyTable(doc: DocxDocument, op: TableOp): Promise<void> 
     g.splice(g.indexOf(op.anchor) + 1, 0, op.tid)
   }
   doc.genXml.set(op.tid, xml)
+}
+
+// ---------------------------------------------------------------- page setup
+
+const SECT_ORDER = [
+  'headerReference', 'footerReference', 'footnotePr', 'endnotePr', 'type', 'pgSz', 'pgMar', 'paperSrc', 'pgBorders', 'lnNumType', 'pgNumType', 'cols',
+  'formProt', 'vAlign', 'noEndnote', 'titlePg', 'textDirection', 'bidi', 'rtlGutter', 'docGrid', 'printerSettings', 'sectPrChange',
+]
+
+/** Changes the page setup ("whole document"): resolves to the new setup and the change that undoes it. */
+export async function setPage(doc: DocxDocument, set: PageSet): Promise<PageSetResult> {
+  if (!doc.ready) throw new Error('Document is still loading')
+  const ok = (v: number | undefined, min: number, max: number) => v === undefined || (Number.isFinite(v) && v >= min && v <= max)
+  if (!ok(set.w, 72, 1584) || !ok(set.h, 72, 1584) || ![set.mt, set.mr, set.mb, set.ml].every((m) => ok(m, 0, 432)) || !ok(set.cols, 1, 12) || !ok(set.colGap, 0, 288))
+    throw new Error('Invalid page setup')
+  const cur: PageSetup = { ...doc.page, ...doc.pageSet }
+  const undo: PageSet = {}
+  for (const k of Object.keys(set) as (keyof PageSet)[]) undo[k] = k === 'cols' ? (cur.cols ?? 1) : k === 'colGap' ? (cur.colGap ?? 36) : cur[k]
+  const merged: PageSet = { ...doc.pageSet, ...set }
+  // a value back to what the file had (undo) is no change: the sections keep their own values on save
+  const orig: Required<PageSet> = { w: doc.page.w, h: doc.page.h, mt: doc.page.mt, mr: doc.page.mr, mb: doc.page.mb, ml: doc.page.ml, cols: doc.page.cols ?? 1, colGap: doc.page.colGap ?? 36 }
+  for (const k of Object.keys(merged) as (keyof PageSet)[]) if (Math.abs((merged[k] as number) - orig[k]) < 0.01) delete merged[k]
+  doc.pageSet = Object.keys(merged).length ? merged : undefined
+  doc.sectTouched = true
+  doc.markEdited()
+  const page: PageSetup = { ...doc.page, ...doc.pageSet }
+  if (!page.cols || page.cols <= 1) delete page.cols
+  if (page.cols && page.colGap === undefined) page.colGap = 36
+  if (!page.cols) delete page.colGap
+  return { page, undo }
+}
+
+/** every sectPr element (outermost only) of `xml`, rewritten by `fn` */
+function rewriteSects(xml: string, fn: (sect: RNode) => void): string {
+  const open = /<([\w.-]+:)?sectPr\b/g
+  let out = ''
+  let from = 0
+  for (let m = open.exec(xml); m; m = open.exec(xml)) {
+    const q = `${m[1] ?? ''}sectPr`
+    // matching end tag, nested sectPr (inside sectPrChange) counted
+    let depth = 0
+    let end = -1
+    const tag = new RegExp(`<(/?)${q.replace('.', '\\.')}\\b[^>]*?(/?)>`, 'g')
+    tag.lastIndex = m.index
+    for (let t = tag.exec(xml); t; t = tag.exec(xml)) {
+      if (t[1]) depth--
+      else if (!t[2]) depth++
+      if (depth === 0) {
+        end = t.index + t[0].length
+        break
+      }
+    }
+    if (end < 0) break
+    const node = rootEl(parseRaw(xml.slice(m.index, end)))
+    if (!node) continue
+    fn(node)
+    out += xml.slice(from, m.index) + serialize(node)
+    from = end
+    open.lastIndex = end
+  }
+  return out + xml.slice(from)
+}
+
+/** the document with a final (body-level) sectPr: an empty one is added before </w:body> when it has none */
+function withBodySect(xml: string): string {
+  const end = /<\/([\w.-]+:)?body>/.exec(xml)
+  if (!end) return xml
+  const before = xml.slice(0, end.index).trimEnd()
+  const W = end[1] ?? ''
+  if (new RegExp(`(</${W}sectPr>|<${W}sectPr\\b[^>]*/>)$`).test(before)) return xml
+  return xml.slice(0, end.index) + `<${W}sectPr/>` + xml.slice(end.index)
+}
+
+function applyPageSet(sect: RNode, set: PageSet, page: PageSetup) {
+  const W = prefixOf(sect.q)
+  const tw = (v: number) => String(Math.round(v * 20))
+  if (set.w !== undefined || set.h !== undefined) {
+    const sz = kidOf(sect, 'pgSz') ?? el(W + 'pgSz')
+    setAttr(sz, W + 'w', tw(page.w))
+    setAttr(sz, W + 'h', tw(page.h))
+    setAttr(sz, W + 'orient', page.w > page.h ? 'landscape' : undefined)
+    setOrdered(sect, sz, 'pgSz', SECT_ORDER)
+  }
+  if (set.mt !== undefined || set.mr !== undefined || set.mb !== undefined || set.ml !== undefined) {
+    const mar = kidOf(sect, 'pgMar') ?? el(W + 'pgMar', { [W + 'header']: tw(page.header), [W + 'footer']: tw(page.footer), [W + 'gutter']: '0' })
+    for (const [k, v] of [['top', set.mt], ['right', set.mr], ['bottom', set.mb], ['left', set.ml]] as const) if (v !== undefined) setAttr(mar, W + k, tw(v))
+    setOrdered(sect, mar, 'pgMar', SECT_ORDER)
+  }
+  if (set.cols !== undefined || set.colGap !== undefined) {
+    const cols = kidOf(sect, 'cols') ?? el(W + 'cols')
+    const n = set.cols ?? page.cols ?? 1
+    setAttr(cols, W + 'num', n > 1 ? String(n) : undefined)
+    setAttr(cols, W + 'space', tw(set.colGap ?? page.colGap ?? 36))
+    // column widths of unequal columns no longer fit: equal columns
+    setAttr(cols, W + 'equalWidth', undefined)
+    cols.c = []
+    cols.self = true
+    setOrdered(sect, cols, 'cols', SECT_ORDER)
+  }
+}
+
+// ---------------------------------------------------------------- headers / footers
+
+const HF_REL = { header: 'http://schemas.openxmlformats.org/officeDocument/2006/relationships/header', footer: 'http://schemas.openxmlformats.org/officeDocument/2006/relationships/footer' }
+const HF_CT = {
+  header: 'application/vnd.openxmlformats-officedocument.wordprocessingml.header+xml',
+  footer: 'application/vnd.openxmlformats-officedocument.wordprocessingml.footer+xml',
+}
+const HF_NS = 'xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"'
+const isFooter = (k: HFKind) => k === 'footer' || k === 'firstFooter'
+const hfType = (k: HFKind) => (k === 'firstHeader' || k === 'firstFooter' ? 'first' : 'default')
+
+/** a header / footer paragraph; {PAGE} / {NUMPAGES} become fields Word updates */
+function hfParaXml(doc: DocxDocument, k: HFKind, line: HFLine): string {
+  const style = isFooter(k) ? 'Footer' : 'Header'
+  const ppr = (doc.styles.has(style) ? `<w:pStyle w:val="${style}"/>` : '') + (line.align && line.align !== 'left' ? `<w:jc w:val="${line.align}"/>` : '')
+  const rpr = (line.b ? '<w:b/>' : '') + (line.sz ? `<w:sz w:val="${Math.round(line.sz * 2)}"/><w:szCs w:val="${Math.round(line.sz * 2)}"/>` : '')
+  const R = rpr ? `<w:rPr>${rpr}</w:rPr>` : ''
+  let runs = ''
+  for (const part of line.text.split(/(\{PAGE\}|\{NUMPAGES\})/)) {
+    if (!part) continue
+    if (part === '{PAGE}' || part === '{NUMPAGES}') runs += `<w:fldSimple w:instr=" ${part.slice(1, -1)} "><w:r>${R}<w:t>1</w:t></w:r></w:fldSimple>`
+    else runs += `<w:r>${R}${textContentXml(part, 'w:')}</w:r>`
+  }
+  return `<w:p>${ppr ? `<w:pPr>${ppr}</w:pPr>` : ''}${runs}</w:p>`
+}
+
+/** the whole part: the original root element (namespaces) kept when there is one */
+function hfXml(doc: DocxDocument, k: HFKind, lines: HFLine[], was?: string): string {
+  const tag = isFooter(k) ? 'w:ftr' : 'w:hdr'
+  // an empty part may be a self-closing root: reopen it
+  const head = was ? (/^[\s\S]*?<w:(hdr|ftr)\b[^>]*>/.exec(was)?.[0] ?? '').replace(/\s*\/>$/, '>') : ''
+  const open = head || `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n<${tag} ${HF_NS}>`
+  const end = head ? `</w:${/<w:(hdr|ftr)\b/.exec(head)![1]}>` : `</${tag}>`
+  return open + (lines.length ? lines.map((l) => hfParaXml(doc, k, l)).join('') : '<w:p/>') + end
+}
+
+/** Changes the headers / footers ("different first page" too); resolves to them converted again and the undo. */
+export async function setHeaderFooter(doc: DocxDocument, set: HFSet): Promise<HFSetResult> {
+  if (!doc.ready) throw new Error('Document is still loading')
+  const kinds = new Set<HFKind>([...(Object.keys(set.parts ?? {}) as HFKind[]), ...(Object.keys(set.raw ?? {}) as HFKind[])])
+  for (const k of kinds) if (!['header', 'footer', 'firstHeader', 'firstFooter'].includes(k)) throw new Error('Invalid header / footer')
+  for (const lines of Object.values(set.parts ?? {}))
+    if (!Array.isArray(lines) || lines.length > 20 || lines.some((l) => typeof l?.text !== 'string' || l.text.length > 2000 || (l.sz !== undefined && !(l.sz >= 4 && l.sz <= 96))))
+      throw new Error('Invalid header / footer')
+  doc.hfRefs ??= { header: undefined, footer: undefined, firstHeader: undefined, firstFooter: undefined }
+  const undo: HFSet = {}
+  for (const k of kinds) {
+    let rid = doc.hfRefs[k]
+    const rel = rid ? doc.rels.get(rid) : undefined
+    const was = rel ? await doc.pkg.text(rel.target) : undefined
+    if (was !== undefined) (undo.raw ??= {})[k] = was
+    else (undo.parts ??= {})[k] = []
+    const raw = set.raw?.[k]
+    const xml = raw !== undefined ? raw : hfXml(doc, k, set.parts![k]!, was)
+    if (rel) {
+      doc.pkg.setPart(rel.target, xml)
+      continue
+    }
+    const f = isFooter(k) ? 'footer' : 'header'
+    const path = doc.pkg.freeName('word', f, 'xml')
+    doc.pkg.setPart(path, xml)
+    await doc.pkg.setContentType(path, HF_CT[f])
+    rid = await doc.pkg.addRel(doc.mainPath, HF_REL[f], path)
+    doc.rels = await doc.pkg.rels(doc.mainPath)
+    doc.hfRefs[k] = rid
+    doc.hfNew.set(k, rid)
+  }
+  const titleWas = doc.titlePgSet ?? doc.titlePg
+  if (set.titlePg !== undefined) {
+    undo.titlePg = titleWas
+    // back to the file's own setting: left as it is in every section
+    doc.titlePgSet = set.titlePg === doc.titlePg ? undefined : set.titlePg
+  }
+  doc.sectTouched = true
+  doc.markEdited()
+  const headers = (await doc.headers()) ?? {}
+  return { headers, titlePg: doc.titlePgSet ?? doc.titlePg, undo }
+}
+
+/** references to the headers / footers the editor created, and "different first page", in every section */
+function applyHF(sect: RNode, doc: DocxDocument) {
+  const W = prefixOf(sect.q)
+  for (const [k, rid] of doc.hfNew) {
+    const tag = isFooter(k) ? 'footerReference' : 'headerReference'
+    const type = hfType(k)
+    const refs = sect.c.filter((c): c is RNode => isNode(c) && local(c.q) === tag)
+    if (refs.some((r) => (getAttr(r, W + 'type') ?? 'default') === type)) continue
+    const node = el(W + tag, { [W + 'type']: type, 'r:id': rid })
+    // references come first, headers before footers
+    const at = sect.c.findIndex((c) => isNode(c) && (tag === 'headerReference' ? local(c.q) !== 'headerReference' : !['headerReference', 'footerReference'].includes(local(c.q))))
+    if (at < 0) sect.c.push(node)
+    else sect.c.splice(at, 0, node)
+    sect.self = false
+  }
+  if (doc.titlePgSet !== undefined) setOrdered(sect, doc.titlePgSet ? el(W + 'titlePg') : undefined, 'titlePg', SECT_ORDER)
 }
 
 export async function saveDocx(doc: DocxDocument): Promise<Blob> {
@@ -928,6 +1157,17 @@ export async function saveDocx(doc: DocxDocument): Promise<Blob> {
     body = fixed.xml
     const lost = [...comments.inBody].some((id) => !fixed.found.has(id))
     if (comments.dirty || lost) await writeDocxComments(doc.pkg, doc.mainPath, comments, num, fixed.found)
+  }
+  // section properties are rebuilt from the file as opened on every save: the package's main part may hold a
+  // previous save's, and a change undone since must not stay in it
+  if (doc.sectTouched) body ??= doc.prefix + doc.items.join('') + doc.suffix
+  // a body without a final sectPr (allowed: Word's defaults apply) gets one, or the changes below would be lost
+  if (doc.hfNew.size || doc.titlePgSet !== undefined || doc.pageSet) body = withBodySect(body!)
+  if (doc.hfNew.size || doc.titlePgSet !== undefined) body = rewriteSects(body!, (sect) => applyHF(sect, doc))
+  if (doc.pageSet) {
+    const set = doc.pageSet
+    const page: PageSetup = { ...doc.page, ...set }
+    body = rewriteSects(body!, (sect) => applyPageSet(sect, set, page))
   }
   if (body !== undefined) doc.pkg.setPart(doc.mainPath, body)
   return doc.pkg.save(DOCX_MIME)

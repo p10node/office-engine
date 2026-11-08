@@ -113,7 +113,9 @@ export function opInsertRuns(host: RichHost, sel: Sel, lines: RRun[][], opts: Re
   const p = plan.paras[0]
   const o = plan.at.o
   const [left, right] = splitRuns(p.runs, o)
-  const fallback = runAt(p.runs, o) ?? (host.defaultRun?.(p) as RRun | undefined)
+  const near = runAt(p.runs, o) ?? (host.defaultRun?.(p) as RRun | undefined)
+  // the look of the neighbouring run, not its tracked change
+  const fallback = near?.tc ? (({ tc: _tc, ...rest }) => rest as RRun)(near) : near
   // pasted runs join the comment threads covering both sides of the paste, nothing else
   const cm = marksAt(p.runs, o)
   const fill = (runs: RRun[]) => runs.map((r) => withMarks(r.t === 'text' && !r.s && fallback ? { ...fallback, ...r, s: fallback.s, src: fallback.src } : r, cm))
@@ -331,7 +333,7 @@ function selPoints(root: HTMLElement): SelPoints | null {
 // ---------------------------------------------------------------- controller
 
 export class RichInput {
-  private root: HTMLElement | null = null
+  root: HTMLElement | null = null
   private composing: Sel | null = null
   private justComposed = ''
   private raf = 0

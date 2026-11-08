@@ -66,13 +66,23 @@ export interface RunSet {
   va?: 'sup' | 'sub' | null
 }
 
+/** a tracked change on a run: inserted or deleted text, by whom and when (Word's w:ins / w:del) */
+export interface TrackMark {
+  k: 'ins' | 'del'
+  /** the change's w:id in the file */
+  id?: string
+  author?: string
+  /** ISO date */
+  date?: string
+}
+
 /**
  * Inline content. Tabs and line breaks are carried as '\t' / '\n' inside text.
  * Everything that isn't 'text' counts as one character when editing.
  * `cm`: the comment threads (root ids) whose range covers the run.
  */
 export type Inline =
-  | { t: 'text'; text: string; s: RunStyle; href?: string; lk?: string; src?: SrcRef; d?: RunSet; cm?: string[] }
+  | { t: 'text'; text: string; s: RunStyle; href?: string; lk?: string; src?: SrcRef; d?: RunSet; cm?: string[]; tc?: TrackMark }
   | {
       t: 'img'
       cm?: string[]
@@ -88,11 +98,12 @@ export type Inline =
       altSet?: boolean
       /** picture replaced (rid points to the new image part) */
       repl?: boolean
+      tc?: TrackMark
     }
-  | { t: 'field'; kind: 'PAGE' | 'NUMPAGES'; s: RunStyle; src?: SrcRef }
-  | { t: 'box'; w: number; h: number; blocks: Block[]; fill?: string; border?: string; src?: SrcRef }
-  | { t: 'shape'; w: number; h: number; label?: string; src?: SrcRef }
-  | { t: 'ref'; text: string; s: RunStyle; src?: SrcRef }
+  | { t: 'field'; kind: 'PAGE' | 'NUMPAGES'; s: RunStyle; src?: SrcRef; tc?: TrackMark }
+  | { t: 'box'; w: number; h: number; blocks: Block[]; fill?: string; border?: string; src?: SrcRef; tc?: TrackMark }
+  | { t: 'shape'; w: number; h: number; label?: string; src?: SrcRef; tc?: TrackMark }
+  | { t: 'ref'; text: string; s: RunStyle; src?: SrcRef; tc?: TrackMark }
 
 export interface ListMarker {
   text: string
@@ -153,8 +164,8 @@ export interface ParaDirty {
 }
 
 export type SpecRun =
-  | { text: string; src?: SrcRef; set?: RunSet; lk?: string; cm?: string[] }
-  | { obj: 'copy'; src: SrcRef; size?: [number, number]; alt?: string; rid?: string; cm?: string[] }
+  | { text: string; src?: SrcRef; set?: RunSet; lk?: string; cm?: string[]; tc?: TrackMark }
+  | { obj: 'copy'; src: SrcRef; size?: [number, number]; alt?: string; rid?: string; cm?: string[]; tc?: TrackMark }
   | { obj: 'image'; rid: string; w: number; h: number; name?: string; alt?: string; cm?: string[] }
   | { obj: 'field'; kind: 'PAGE' | 'NUMPAGES'; set?: RunSet; cm?: string[] }
 
@@ -174,7 +185,11 @@ export interface CellSpec {
   colSpan: number
   rowSpan: number
   paras: ParaSpec[]
+  /** fill colour; 'none' writes "no fill" (over the table style) */
   shd?: string
+  /** CSS lines set by the user, per side ('none' for no line) */
+  borders?: CellBorders
+  vAlign?: 'top' | 'middle' | 'bottom'
 }
 
 export interface TableSpec {
@@ -246,6 +261,34 @@ export interface StyleLook {
 
 export type HeaderFooters = Pick<DocxMeta, 'header' | 'footer' | 'firstHeader' | 'firstFooter'>
 
+export type HFKind = 'header' | 'footer' | 'firstHeader' | 'firstFooter'
+
+/** one paragraph of a header / footer; `text` may hold {PAGE} and {NUMPAGES} (page number, page count) */
+export interface HFLine {
+  text: string
+  align?: 'left' | 'center' | 'right'
+  b?: boolean
+  /** font size, pt */
+  sz?: number
+}
+
+/** a change of the headers / footers of the document (the final section's, used by every page) */
+export interface HFSet {
+  /** new content per kind; [] empties it */
+  parts?: Partial<Record<HFKind, HFLine[]>>
+  /** a part's XML as it was (undo) */
+  raw?: Partial<Record<HFKind, string>>
+  /** different first page */
+  titlePg?: boolean
+}
+
+export interface HFSetResult {
+  headers: HeaderFooters
+  titlePg: boolean
+  /** the change that puts the headers / footers back */
+  undo: HFSet
+}
+
 export interface StyleSetResult {
   styles: StyleInfo[]
   /** paragraph styles that look different now (the style and those based on it); empty when nothing changed */
@@ -276,6 +319,8 @@ export interface TableCell {
   vAlign?: 'top' | 'middle' | 'bottom'
   borders: CellBorders
   pad: [number, number, number, number]
+  /** properties changed by the user, written back as the cell's own */
+  set?: { shd?: boolean; borders?: boolean; vAlign?: boolean }
 }
 
 export interface TableRow {
@@ -309,6 +354,27 @@ export interface PageSetup {
   ml: number
   header: number
   footer: number
+  /** text columns (absent: one) and the gap between them, in pt */
+  cols?: number
+  colGap?: number
+}
+
+/** a change of the page setup, applied to every section (Word's "whole document"); only the keys present change */
+export interface PageSet {
+  w?: number
+  h?: number
+  mt?: number
+  mr?: number
+  mb?: number
+  ml?: number
+  cols?: number
+  colGap?: number
+}
+
+export interface PageSetResult {
+  page: PageSetup
+  /** the change that puts the page setup back */
+  undo: PageSet
 }
 
 export interface SectionBreak {

@@ -2,10 +2,36 @@ import { useEffect, useState, type CSSProperties } from 'react'
 import type { CanonStyle, StyleInfo } from '../../core/docx/types'
 import { MOD } from '../common/ContextMenu'
 import { EditorBar } from '../common/Slots'
-import { Btn, ColorBtn, Dropdown, fontName, fontOptions, GridPicker, Menu, pickFiles, Pop, Select, Sep, SizeBox, type DropOption } from '../edit/Toolbar'
+import { Btn, ColorBtn, Dropdown, fontName, fontOptions, GridPicker, Icon, Menu, pickFiles, Pop, Select, Sep, SizeBox, type DropOption } from '../edit/Toolbar'
+import type { BorderPreset } from './tables'
 import type { DocxEditor, FormatState } from './DocxEditor'
 
 const HIGHLIGHTS = ['#ffff00', '#00ff00', '#00ffff', '#ff00ff', '#0000ff', '#ff0000', '#000080', '#008080', '#008000', '#800080', '#800000', '#808000', '#808080', '#c0c0c0', '#000000']
+
+const CELL_BORDERS: { k: BorderPreset; icon: string; title: string }[] = [
+  { k: 'all', icon: 'bAll', title: 'All borders' },
+  { k: 'inner', icon: 'bInner', title: 'Inner borders' },
+  { k: 'outer', icon: 'bOuter', title: 'Outer borders' },
+  { k: 'none', icon: 'bNone', title: 'No borders' },
+  { k: 'top', icon: 'bTop', title: 'Top border' },
+  { k: 'bottom', icon: 'bBottom', title: 'Bottom border' },
+  { k: 'left', icon: 'bLeft', title: 'Left border' },
+  { k: 'right', icon: 'bRight', title: 'Right border' },
+]
+/** cell border lines: value is the CSS width + style */
+export const CELL_LINES = [
+  { value: '0.5pt solid', label: 'Thin', hint: '───' },
+  { value: '1.5pt solid', label: 'Medium', hint: '━━━' },
+  { value: '3pt solid', label: 'Thick', hint: '▬▬▬' },
+  { value: '0.5pt dashed', label: 'Dashed', hint: '- - -' },
+  { value: '0.5pt dotted', label: 'Dotted', hint: '·····' },
+  { value: '2.25pt double', label: 'Double', hint: '═══' },
+]
+const VALIGN = [
+  { value: 'top', label: 'Top', icon: 'vTop' },
+  { value: 'middle', label: 'Middle', icon: 'vMiddle' },
+  { value: 'bottom', label: 'Bottom', icon: 'vBottom' },
+]
 
 const LINE_SPACING = [
   { value: 1, label: 'Single' },
@@ -78,9 +104,17 @@ export function DocxToolbar(props: {
   painter: boolean
   onLink: () => void
   image: ImageActions
+  /** opens the page setup dialog */
+  onPageSetup?: () => void
+  /** opens the header / footer dialog */
+  onHeaderFooter?: () => void
+  /** a short message for the user (toast) */
+  onNotice?: (text: string) => void
 }) {
   const { editor, styles, image } = props
   const [st, setSt] = useState<FormatState | null>(null)
+  const [bColor, setBColor] = useState('#000000')
+  const [bLine, setBLine] = useState('0.5pt solid')
   useEffect(() => {
     editor.onState = setSt
     return () => {
@@ -120,8 +154,43 @@ export function DocxToolbar(props: {
               { value: 'delRow', label: 'Delete row', icon: 'delRow', sep: true },
               { value: 'delCol', label: 'Delete column', icon: 'delCol' },
               { value: 'delTable', label: 'Delete table', icon: 'trash' },
+              { value: 'distribute', label: 'Distribute columns evenly', icon: 'colAdd', sep: true },
             ]}
-            onPick={(v) => editor.tableOp(v as Parameters<DocxEditor['tableOp']>[0])}
+            onPick={(v) => (v === 'distribute' ? editor.distributeColumns() : editor.tableOp(v as Parameters<DocxEditor['tableOp']>[0]))}
+          />
+          <Btn
+            icon="merge"
+            title={st.cells?.merged && (st.cells?.n ?? 0) < 2 ? 'Unmerge cells' : 'Merge cells'}
+            active={st.cells?.merged && (st.cells?.n ?? 0) < 2}
+            disabled={!st.cells || (st.cells.n < 2 && !st.cells.merged)}
+            onClick={() => ((st.cells?.n ?? 0) > 1 ? editor.mergeCells() : editor.unmergeCell())}
+          />
+          <ColorBtn icon="fill" title="Cell color" value={st.cells?.shd} onPick={(c) => editor.setCellShade(c)} noneLabel="No fill" />
+          <Pop icon="borders" title="Cell borders" chevron>
+            {(close) => (
+              <div className="de-borders-pop">
+                <div className="de-borders" role="group" aria-label="Cell borders">
+                  {CELL_BORDERS.map((x) => (
+                    <button key={x.k} type="button" className="de-tb" title={x.title} aria-label={x.title} onClick={() => (close(), editor.setCellBorders(x.k, `${bLine} ${bColor}`))}>
+                      <Icon name={x.icon} />
+                    </button>
+                  ))}
+                </div>
+                <div className="de-borders-side">
+                  <ColorBtn icon="color" title="Border color" value={bColor} onPick={(c) => setBColor(c ?? '#000000')} noneLabel="Black" />
+                  <Dropdown title="Border style" icon="lineStyle" label={null} menuWidth={150} value={bLine} options={CELL_LINES} onChange={(v) => setBLine(v)} />
+                </div>
+              </div>
+            )}
+          </Pop>
+          <Dropdown
+            title="Vertical align"
+            icon={VALIGN.find((x) => x.value === st.cells?.vAlign)?.icon ?? 'vTop'}
+            label={null}
+            menuWidth={130}
+            value={st.cells?.vAlign ?? 'top'}
+            options={VALIGN}
+            onChange={(v) => editor.setCellVAlign(v as 'top' | 'middle' | 'bottom')}
           />
         </>
       )}
@@ -169,6 +238,30 @@ export function DocxToolbar(props: {
       <Pop icon="table" title="Insert table" disabled={dis || st?.inTable}>
         {(close) => <GridPicker onPick={(r, c) => (close(), editor.insertTable(r, c))} />}
       </Pop>
+      <Btn icon="pageSetup" title="Page setup (size, orientation, margins, columns)" disabled={!props.onPageSetup} onClick={() => props.onPageSetup?.()} />
+      <Btn icon="track" title="Track changes (suggest edits)" active={!!st?.tracking} disabled={dis} onClick={() => editor.setTracking(!editor.tracking)} />
+      <Menu
+        title="Review changes"
+        label="Review"
+        icon="review"
+        items={[
+          { value: 'next', label: 'Next change', icon: 'down' },
+          { value: 'prev', label: 'Previous change', icon: 'up' },
+          { value: 'accept', label: 'Accept change', icon: 'check', sep: true, disabled: !st?.inChange },
+          { value: 'reject', label: 'Reject change', icon: 'close', disabled: !st?.inChange },
+          { value: 'acceptAll', label: 'Accept all changes', icon: 'check', sep: true },
+          { value: 'rejectAll', label: 'Reject all changes', icon: 'close' },
+        ]}
+        onPick={(v) => {
+          if (v === 'next' || v === 'prev') {
+            if (!editor.gotoChange(v === 'next' ? 1 : -1)) props.onNotice?.(v === 'next' ? 'No more changes after this point' : 'No changes before this point')
+            return
+          }
+          const n = editor.review(v.startsWith('accept'), v.endsWith('All'))
+          props.onNotice?.(n ? `${n} change${n > 1 ? 's' : ''} ${v.startsWith('accept') ? 'accepted' : 'rejected'}` : 'No tracked changes here')
+        }}
+      />
+      <Btn icon="headerFooter" title="Header & footer, page numbers" disabled={!props.onHeaderFooter} onClick={() => props.onHeaderFooter?.()} />
       <Pop icon="omega" title="Special characters" disabled={dis}>
         {(close) => (
           <div className="de-symbols">

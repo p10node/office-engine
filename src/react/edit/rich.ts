@@ -12,6 +12,8 @@ export interface RRun {
   lk?: string
   /** comment threads covering the run (DOCX) */
   cm?: string[]
+  /** tracked change the run belongs to (DOCX) */
+  tc?: object
 }
 
 export interface Pos {
@@ -45,7 +47,8 @@ function shallowEq(a: object | undefined, b: object | undefined): boolean {
 
 export const sameMarks = (a: string[] | undefined, b: string[] | undefined) => (a?.length ?? 0) === (b?.length ?? 0) && (!a || a.every((x, i) => b![i] === x))
 
-const sameText = (a: RRun, b: RRun) => a.t === 'text' && b.t === 'text' && a.href === b.href && a.lk === b.lk && shallowEq(a.s, b.s) && shallowEq(a.d, b.d) && sameMarks(a.cm, b.cm)
+const sameText = (a: RRun, b: RRun) =>
+  a.t === 'text' && b.t === 'text' && a.href === b.href && a.lk === b.lk && shallowEq(a.s, b.s) && shallowEq(a.d, b.d) && sameMarks(a.cm, b.cm) && shallowEq(a.tc, b.tc)
 
 /**
  * Comment threads text inserted at `o` joins: those covering both the character before and the one after (typing at
@@ -124,6 +127,8 @@ export function insertText<R extends RRun>(runs: R[], o: number, text: string, s
   const [l, r] = splitRuns(runs, o)
   const base = runAt(runs, o)
   let run = { t: 'text', ...(base ?? fallback ?? {}), ...(style ?? {}), text } as R
+  // the look of the neighbouring run, not its tracked change: tracking marks new text itself
+  if (!style?.tc) delete run.tc
   if (style?.s && base?.s) run.s = { ...base.s, ...style.s }
   if (style?.d || base?.d) run.d = { ...(base?.d ?? {}), ...(style?.d ?? {}) }
   if (run.d && !Object.keys(run.d).length) delete run.d

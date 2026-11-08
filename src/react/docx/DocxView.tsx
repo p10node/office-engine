@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
-import type { Block, DocxMeta, PageSetup, Paragraph } from '../../core/docx/types'
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
+import type { Block, DocxMeta, HFKind, PageSetup, Paragraph } from '../../core/docx/types'
 import { DEFAULT_PAGE } from '../../core/docx/types'
 import { registerHost } from '../../collab/hosts'
 import type { DocumentClient } from '../../core/worker/client'
@@ -17,6 +17,8 @@ import { markCss, useCommentsCtl, useCommentsState, type CommentHost, type Place
 import { COMMENT_KEYS } from '../comments/CommentsPanel'
 import { DocxToolbar, styleChoices, type ImageActions } from './DocxToolbar'
 import { FindBar, type Match } from './FindBar'
+import { HeaderFooterDialog } from './HeaderFooterDialog'
+import { PageSetupDialog } from './PageSetupDialog'
 import { docxToMarkdown, docxToText } from '../file/text'
 import { BlockView, contextual, type RenderCtx } from './render'
 
@@ -30,27 +32,41 @@ interface PageSlice {
   used: number
 }
 
-function paginate(blocks: Block[], heights: WeakMap<Block, number>, count: number, avail: number): PageSlice[] {
+/**
+ * Cuts the blocks into pages. With text columns (`cols` > 1) a page holds `cols` columns of `avail`: a block that does
+ * not fit what is left of a column starts the next one (blocks are never split, as for pages), and `used` is the
+ * tallest column.
+ */
+function paginate(blocks: Block[], heights: WeakMap<Block, number>, count: number, avail: number, cols = 1): PageSlice[] {
   const pages: PageSlice[] = []
   let cur: PageSlice = { start: 0, end: 0, used: 0 }
+  let col = 0
+  let inCol = 0
+  const next = (start: number) => {
+    pages.push(cur)
+    cur = { start, end: start, used: 0 }
+    col = 0
+    inCol = 0
+  }
   for (let i = 0; i < count; i++) {
     const b = blocks[i]
     const h = heights.get(b) ?? 0
     if (b.t === 'sect') {
       cur.end = i + 1
-      if (b.kind !== 'continuous') {
-        pages.push(cur)
-        cur = { start: i + 1, end: i + 1, used: 0 }
-      }
+      if (b.kind !== 'continuous') next(i + 1)
       continue
     }
     const forced = b.t === 'p' && b.pb && cur.end > cur.start
-    if (forced || (cur.used > 0 && cur.used + h > avail)) {
-      pages.push(cur)
-      cur = { start: i, end: i, used: 0 }
+    if (forced) next(i)
+    else if (inCol > 0 && inCol + h > avail) {
+      if (col + 1 < cols) {
+        col++
+        inCol = 0
+      } else next(i)
     }
     cur.end = i + 1
-    cur.used += h
+    inCol += h
+    cur.used = Math.max(cur.used, cols > 1 ? Math.min(inCol, avail) : inCol)
   }
   if (cur.end > cur.start || !pages.length) pages.push(cur)
   return pages
@@ -76,6 +92,9 @@ interface Box {
 }
 const HANDLES = ['nw', 'n', 'ne', 'e', 'se', 's', 'sw', 'w'] as const
 
+/** a paragraph's text without its tracked deletions (word count, outline) */
+const shownText = (p: Paragraph) => runsText(p.runs.filter((r) => r.t !== 'text' || r.tc?.k !== 'del') as RRun[])
+
 /** heading entries for the outline panel */
 function outlineOf(blocks: Block[], titleId: string | undefined) {
   const out: { bi: number; lvl: number; text: string }[] = []
@@ -84,7 +103,7 @@ function outlineOf(blocks: Block[], titleId: string | undefined) {
     const title = !!titleId && b.sid === titleId
     const lvl = title ? 0 : b.ps.outline
     if (lvl === undefined || lvl > 5) return
-    const text = runsText(b.runs as RRun[]).trim()
+    const text = shownText(b).trim()
     if (text) out.push({ bi, lvl: title ? 0 : lvl + (titleId ? 1 : 0), text })
   })
   return out
@@ -102,12 +121,17 @@ export function DocxView({ client, onStatus, initialZoom = 'fit' }: DocxViewProp
   const st = useRef<DocState>({ blocks: [], heights: new WeakMap(), dirty: new Set(), frontier: 0 }).current
   const [version, bump] = useForceUpdate()
   const [meta, setMeta] = useState<DocxMeta | null>(null)
+  const [pageDlg, setPageDlg] = useState(false)
+  /** header / footer dialog, opened on that part */
+  const [hfDlg, setHfDlg] = useState<HFKind | null>(null)
+  const openHF = useCallback((k: HFKind) => setHfDlg(k), [])
   const [done, setDone] = useState<{ error?: string } | null>(null)
   const [zoom, setZoom] = useState<Zoom>(initialZoom)
   const [scrollRef, size] = useSize<HTMLDivElement>()
   const scroll = useScroll(scrollRef)
   const pagesRef = useRef<HTMLDivElement>(null)
   const editor = useMemo(() => new DocxEditor(client, st, bump), [client, st, bump])
+  const colResize = useCallback((bi: number, cols: number[]) => editor.setColumnWidths(bi, cols), [editor])
   const isEditing = viewer.editable && !!done && !done.error
   const [find, setFind] = useState<{ open: boolean; q: string; idx: number }>({ open: false, q: '', idx: 0 })
   const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number } | null>(null)
@@ -125,9 +149,11 @@ export function DocxView({ client, onStatus, initialZoom = 'fit' }: DocxViewProp
     editor.onImage = (x) => setImg((p) => (p?.pa === x?.pa && p?.o === x?.o && p?.w === x?.w && p?.h === x?.h && p?.target === x?.target && p?.alt === x?.alt ? p : x))
     editor.onStyles = (styles) => setMeta((m) => (m ? { ...m, styles } : m))
     editor.onHeaders = (h) => setMeta((m) => (m ? { ...m, ...h } : m))
+    editor.onPage = (pg) => setMeta((m) => (m ? { ...m, page: pg } : m))
+    editor.onHF = (r) => setMeta((m) => (m ? { ...m, header: undefined, footer: undefined, firstHeader: undefined, firstFooter: undefined, ...r.headers, titlePg: r.titlePg } : m))
     editor.onPainter = setPainter
     return () => {
-      editor.onImage = editor.onStyles = editor.onHeaders = editor.onPainter = undefined
+      editor.onImage = editor.onStyles = editor.onHeaders = editor.onPainter = editor.onPage = editor.onHF = undefined
     }
   }, [editor])
 
@@ -141,7 +167,10 @@ export function DocxView({ client, onStatus, initialZoom = 'fit' }: DocxViewProp
         bump()
       }),
       client.on('docx:meta', (m) => {
-        setMeta(m)
+        // a page setup made before the file finished loading (a collaborator's, replayed) wins over the file's
+        let next = editor.pageNow ? { ...m, page: editor.pageNow } : m
+        if (editor.hfNow) next = { ...next, header: undefined, footer: undefined, firstHeader: undefined, firstFooter: undefined, ...editor.hfNow.headers, titlePg: editor.hfNow.titlePg }
+        setMeta(next)
         if (m.styles) editor.styles = m.styles
       }),
       client.on('docx:done', setDone),
@@ -154,7 +183,10 @@ export function DocxView({ client, onStatus, initialZoom = 'fit' }: DocxViewProp
   }, [client, bump, st, editor])
 
   const page: PageSetup = meta?.page ?? DEFAULT_PAGE
-  const contentW = page.w - page.ml - page.mr
+  const cols = page.cols && page.cols > 1 ? page.cols : 1
+  const colGap = cols > 1 ? (page.colGap ?? 36) : 0
+  // text is laid out (and measured) one column wide
+  const contentW = (page.w - page.ml - page.mr - colGap * (cols - 1)) / cols
   const availPx = (page.h - page.mt - page.mb) * PX
 
   // ---- measurement: edited blocks first, then the not-yet-measured tail (time-sliced) ----
@@ -199,9 +231,9 @@ export function DocxView({ client, onStatus, initialZoom = 'fit' }: DocxViewProp
   })
 
   const pages = useMemo(
-    () => paginate(st.blocks, st.heights, Math.min(st.frontier, total), availPx),
+    () => paginate(st.blocks, st.heights, Math.min(st.frontier, total), availPx, cols),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [version, availPx, total],
+    [version, availPx, total, cols],
   )
 
   // ---- layout ----
@@ -240,7 +272,7 @@ export function DocxView({ client, onStatus, initialZoom = 'fit' }: DocxViewProp
     const id = setTimeout(() => {
       let n = 0
       const count = (b: Block) => {
-        if (b.t === 'p') n += runsText(b.runs as RRun[]).split(/\s+/).filter((w) => /[\p{L}\p{N}]/u.test(w)).length
+        if (b.t === 'p') n += shownText(b).split(/\s+/).filter((w) => /[\p{L}\p{N}]/u.test(w)).length
         else if (b.t === 'tbl') for (const r of b.rows) for (const c of r.cells) c.blocks.forEach(count)
       }
       st.blocks.forEach(count)
@@ -627,6 +659,9 @@ export function DocxView({ client, onStatus, initialZoom = 'fit' }: DocxViewProp
         { label: 'Delete row', icon: 'delRow', run: op('delRow') },
         { label: 'Delete column', icon: 'delCol', run: op('delCol') },
         { label: 'Delete table', icon: 'trash', run: op('delTable') },
+        ...(s.cells && s.cells.n > 1 ? [{ label: 'Merge cells', icon: 'merge', run: () => editor.mergeCells() } as MenuItem] : []),
+        ...(s.cells?.merged && s.cells.n < 2 ? [{ label: 'Unmerge cells', icon: 'merge', run: () => editor.unmergeCell() } as MenuItem] : []),
+        { label: 'Distribute columns evenly', icon: 'colAdd', run: () => editor.distributeColumns() },
       )
     } else {
       items.push(
@@ -657,6 +692,8 @@ export function DocxView({ client, onStatus, initialZoom = 'fit' }: DocxViewProp
 
   // ---- comments: threads mark their text; the panel asks the editor where they are ----
   const cm = useCommentsCtl()
+  // tracked changes are signed like comments: the collaboration user, else "Me"
+  editor.author = () => cm?.me.name ?? 'Me'
   const cmState = useCommentsState(cm)
   const revealRef = useRef<(id: string) => void>(() => {})
   revealRef.current = (id: string) => {
@@ -817,6 +854,8 @@ export function DocxView({ client, onStatus, initialZoom = 'fit' }: DocxViewProp
                 client={client}
                 docStyle={docStyle}
                 editing={isEditing}
+                colResize={colResize}
+                onHF={isEditing && done ? openHF : undefined}
               />
             ),
           )}
@@ -880,12 +919,19 @@ export function DocxView({ client, onStatus, initialZoom = 'fit' }: DocxViewProp
           painter={painter}
           onLink={askLink}
           image={imageActions}
+          onPageSetup={done ? () => setPageDlg(true) : undefined}
+          onHeaderFooter={done ? () => setHfDlg('header') : undefined}
+          onNotice={setToast}
         />
       )}
       {!isEditing && done && (
         <button type="button" className={outline ? 'de-outline-toggle on' : 'de-outline-toggle'} title="Document outline" onClick={() => setOutline((o) => !o)}>
           ☰
         </button>
+      )}
+      {pageDlg && <PageSetupDialog page={page} onClose={() => setPageDlg(false)} onOk={(set) => void editor.setPage(set).catch((e) => console.error('[office-engine] page setup failed', e))} />}
+      {hfDlg && meta && (
+        <HeaderFooterDialog meta={meta} focus={hfDlg} onClose={() => setHfDlg(null)} onOk={(set) => void editor.setHeaderFooter(set).catch((e) => console.error('[office-engine] header / footer change failed', e))} />
       )}
       {ctxMenu && <ContextMenu x={ctxMenu.x} y={ctxMenu.y} items={ctxItems()} onClose={() => setCtxMenu(null)} />}
       {prompt && <PromptDialog spec={prompt} onClose={() => setPrompt(null)} />}
@@ -911,14 +957,22 @@ interface PageViewProps {
   client: DocumentClient
   docStyle: CSSProperties
   editing: boolean
+  colResize?: RenderCtx['colResize']
+  /** editing: a double click on the header / footer area edits it */
+  onHF?: (k: HFKind) => void
 }
 
-function PageView({ index, count, slice, blocks, meta, page, top, left, height, zoom, client, docStyle, editing }: PageViewProps) {
-  const ctx = useMemo<RenderCtx>(() => ({ client, page: index, pages: count, measuring: false, editable: editing }), [client, index, count, editing])
+function PageView({ index, count, slice, blocks, meta, page, top, left, height, zoom, client, docStyle, editing, colResize, onHF }: PageViewProps) {
+  const ctx = useMemo<RenderCtx>(
+    () => ({ client, page: index, pages: count, measuring: false, editable: editing, colResize: editing ? colResize : undefined }),
+    [client, index, count, editing, colResize],
+  )
   const hfCtx = useMemo<RenderCtx>(() => ({ ...ctx, editable: false }), [ctx])
   const first = index === 0 && meta?.titlePg
   const header = first ? meta?.firstHeader : meta?.header
   const footer = first ? meta?.firstFooter : meta?.footer
+  const hk: HFKind = first ? 'firstHeader' : 'header'
+  const fk: HFKind = first ? 'firstFooter' : 'footer'
   const items = []
   for (let i = slice.start; i < slice.end; i++) {
     const b = blocks[i]
@@ -935,16 +989,33 @@ function PageView({ index, count, slice, blocks, meta, page, top, left, height, 
   return (
     <div className="de-page" style={{ top, left, width: page.w * PX * zoom, height }} data-page={index + 1}>
       <div className="de-page-inner de-doc" style={{ ...docStyle, width: `${page.w}pt`, height: height / zoom, zoom }}>
+        {onHF && (
+          <>
+            <div className="de-hf-zone" contentEditable={false} title="Double-click to edit the header" style={{ top: 0, height: `${page.mt}pt` }} onDoubleClick={() => onHF(hk)} />
+            <div className="de-hf-zone" contentEditable={false} title="Double-click to edit the footer" style={{ bottom: 0, height: `${page.mb}pt` }} onDoubleClick={() => onHF(fk)} />
+          </>
+        )}
         {header && (
-          <div className="de-hf" contentEditable={editing ? false : undefined} style={{ top: `${page.header}pt`, padding: `0 ${page.mr}pt 0 ${page.ml}pt` }}>
+          <div className="de-hf" contentEditable={editing ? false : undefined} style={{ top: `${page.header}pt`, padding: `0 ${page.mr}pt 0 ${page.ml}pt` }} onDoubleClick={onHF && (() => onHF(hk))}>
             {header.map((b, i) => (
               <BlockView key={i} block={b} ctx={hfCtx} />
             ))}
           </div>
         )}
-        <div style={{ position: 'absolute', top: `${page.mt}pt`, left: `${page.ml}pt`, width: `${page.w - page.ml - page.mr}pt` }}>{items}</div>
+        <div
+          className={page.cols && page.cols > 1 ? 'de-page-cols' : undefined}
+          style={{
+            position: 'absolute',
+            top: `${page.mt}pt`,
+            left: `${page.ml}pt`,
+            width: `${page.w - page.ml - page.mr}pt`,
+            ...(page.cols && page.cols > 1 ? { columnCount: page.cols, columnGap: `${page.colGap ?? 36}pt`, columnFill: 'auto', height: `${page.h - page.mt - page.mb}pt` } : {}),
+          }}
+        >
+          {items}
+        </div>
         {footer && (
-          <div className="de-hf" contentEditable={editing ? false : undefined} style={{ bottom: `${page.footer}pt`, padding: `0 ${page.mr}pt 0 ${page.ml}pt` }}>
+          <div className="de-hf" contentEditable={editing ? false : undefined} style={{ bottom: `${page.footer}pt`, padding: `0 ${page.mr}pt 0 ${page.ml}pt` }} onDoubleClick={onHF && (() => onHF(fk))}>
             {footer.map((b, i) => (
               <BlockView key={i} block={b} ctx={hfCtx} />
             ))}

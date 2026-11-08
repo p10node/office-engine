@@ -2,15 +2,16 @@
  * Main-thread DOCX editing host: owns undo history and paragraph mutations,
  * mirrors every change to the worker (which regenerates the XML).
  */
-import { paraSpec } from '../../core/docx/spec'
+import { paraSpec, tableSpec } from '../../core/docx/spec'
 import type {
-  Block, CanonStyle, EditOp, EditResult, HeaderFooters, Inline, Paragraph, ParaDirty, ParaStyle, RunSet, RunStyle, StyleInfo, StyleLook, Table, TableSpec,
+  Block, CanonStyle, EditOp, EditResult, HeaderFooters, HFSet, HFSetResult, Inline, PageSet, PageSetResult, PageSetup, Paragraph, ParaDirty, ParaStyle, RunSet, RunStyle, StyleInfo, StyleLook, Table,
 } from '../../core/docx/types'
 import { cssFont } from '../../core/fonts'
 import type { DocumentClient } from '../../core/worker/client'
 import { opInsert, opInsertRuns, ordered, RichInput, type ReplaceOpts, type RichHost } from '../edit/input'
 import { htmlToParas } from './html'
-import { deleteCol, deleteRow, gridOf, insertCol, insertRow, newTable } from './tables'
+import { cellsIn, deleteCol, deleteRow, distributeCols, gridOf, insertCol, insertRow, mergeCells, newTable, patchCells, rectOf, setBorders, unmergeCell, type BorderPreset, type CellRect } from './tables'
+import { changeSpans, hasChanges, resolveRuns, trackEdit } from './track'
 import { collapsed, formatRange, markRange, normalize, plen, rlen, runAt, runsText, shiftPa, splitRuns, type Pos, type RRun, type Sel } from '../edit/rich'
 
 /** a place in a paragraph that survives edits elsewhere: paragraph id, page-break part, offset */
@@ -67,6 +68,12 @@ interface Entry {
   t: number
   /** the paragraph style this entry gave another look ("update style to match"), and the looks to go back and forth */
   style?: { id: string; undo: StyleLook; redo: StyleLook }
+  /** a page setup change, and the changes to go back and forth */
+  page?: { undo: PageSet; redo: PageSet }
+  /** a header / footer change */
+  hf?: { undo: HFSet; redo: HFSet }
+  /** several entries made by one command (accept / reject all), undone and redone together */
+  group?: Entry[]
 }
 
 export interface FormatState {
@@ -86,6 +93,11 @@ export interface FormatState {
   link?: string
   /** caret inside a table cell */
   inTable: boolean
+  /** edits are tracked; the caret / selection touches a tracked change */
+  tracking?: boolean
+  inChange?: boolean
+  /** table cells the selection covers (more than one: they can be merged); the caret's cell is merged */
+  cells?: { n: number; merged: boolean; shd?: string; vAlign?: string }
   /** a single image is selected */
   img?: { w: number; h: number; alt?: string; target: string; pa: string; o: number }
   canUndo: boolean
@@ -93,6 +105,11 @@ export interface FormatState {
 }
 
 const path = (pa: string) => pa.split('.').map(Number)
+
+/** edits that are not the author's own typing: never turned into tracked changes */
+const UNTRACKED = new Set(['undo', 'redo', 'collab', 'accept', 'reject', 'restore'])
+
+const sliceRunsOf = (p: Paragraph, a: number, b: number) => splitRuns(splitRuns(p.runs as RRun[], b)[0], a)[1] as Inline[]
 
 /** the properties "update style to match" moves from the text into the style */
 const RUN_LOOK = ['b', 'i', 'u', 'strike', 'color', 'sz', 'font'] as const
@@ -359,6 +376,13 @@ export class DocxEditor implements RichHost<Paragraph> {
   replace(pas: string[], next: Paragraph[], sel: Sel, opts: ReplaceOpts & { history?: boolean; want?: boolean } = {}): void {
     const before = pas.map((pa) => this.para(pa)!)
     if (before.some((b) => !b)) return
+    // suggesting: what the edit takes out stays (deleted), what it puts in is marked inserted
+    if (this.tracking && opts.history !== false && !UNTRACKED.has(opts.label ?? '')) {
+      const r = trackEdit(before, next, pas[0], sel, this.input.lastSel, { k: 'ins', author: this.author(), date: new Date().toISOString().replace(/\.\d+Z$/, 'Z') })
+      next = r.next
+      sel = r.sel
+      if (next.length === 1 && before.length === 1 && opts.label === 'type') opts = { ...opts, remount: true }
+    }
     if (opts.remount) next = next.map((p) => ({ ...p, ver: (p.ver ?? 0) + 1 }))
     const c = this.container(pas[0])!
     const at = c.at
@@ -704,7 +728,20 @@ export class DocxEditor implements RichHost<Paragraph> {
   undo() {
     const e = this.history.pop()
     if (!e) return
+    if (e.group) {
+      // its parts, last first, each through the usual path
+      for (const part of [...e.group].reverse()) {
+        this.history.push(part)
+        const n = this.future.length
+        this.undo()
+        if (this.future.length > n) this.future.pop()
+      }
+      this.future.push(e)
+      return
+    }
     if (e.style) this.restyle(e.style.id, e.style.undo)
+    if (e.page) this.repage(e.page.undo)
+    if (e.hf) this.rehf(e.hf.undo)
     if (e.blocks) {
       const bi = this.whereNow(e.blocks.after, String(e.blocks.bi))
       // the blocks were removed by a collaborator: nothing left to undo
@@ -727,7 +764,19 @@ export class DocxEditor implements RichHost<Paragraph> {
   redo() {
     const e = this.future.pop()
     if (!e) return
+    if (e.group) {
+      for (const part of e.group) {
+        this.future.push(part)
+        const n = this.history.length
+        this.redo()
+        if (this.history.length > n) this.history.pop()
+      }
+      this.history.push(e)
+      return
+    }
     if (e.style) this.restyle(e.style.id, e.style.redo)
+    if (e.page) this.repage(e.page.redo)
+    if (e.hf) this.rehf(e.hf.redo)
     if (e.blocks) {
       const bi = this.whereNow(e.blocks.before, String(e.blocks.bi))
       if (bi === undefined) return
@@ -900,27 +949,10 @@ export class DocxEditor implements RichHost<Paragraph> {
     return undefined
   }
 
-  private tableSpec(t: Table): TableSpec {
-    return {
-      tid: t.tid!,
-      item: t.item,
-      cols: t.cols,
-      rows: t.rows.map((r) => ({
-        src: r.src,
-        cells: r.cells.map((c) => ({
-          src: c.src,
-          colSpan: c.colSpan,
-          rowSpan: c.rowSpan,
-          paras: c.blocks.filter((b): b is Paragraph => b.t === 'p' && b.pid !== undefined).map((p) => paraSpec([p])),
-        })),
-      })),
-    }
-  }
-
   private commitTable(bi: number) {
     const t = this.st.blocks[bi] as Table
     if (t?.t !== 'tbl' || t.tid === undefined) return
-    this.send('docx.table', { tid: t.tid, item: t.item, anchor: t.item === undefined ? this.prevParaPid(bi) : undefined, spec: this.tableSpec(t) })
+    this.send('docx.table', { tid: t.tid, item: t.item, anchor: t.item === undefined ? this.prevParaPid(bi) : undefined, spec: tableSpec(t) })
   }
 
   private send(method: 'docx.table' | 'docx.edit', op: unknown) {
@@ -1041,6 +1073,81 @@ export class DocxEditor implements RichHost<Paragraph> {
     }
     next = { ...next, tid: t.tid ?? this.nextPid++ }
     this.replaceBlocks(bi, 1, [next], { a: { pa: caret, o: 0 }, f: { pa: caret, o: 0 } })
+  }
+
+  /** The cells the selection covers (a caret in a cell: that cell), grown to whole merged cells. */
+  cellRange(sel: Sel | null = this.input.sel()): { bi: number; t: Table; rect: CellRect; cells: number } | null {
+    if (!sel) return null
+    const a = path(sel.a.pa)
+    const f = path(sel.f.pa)
+    if (a.length < 4 || f.length < 4 || a[0] !== f[0]) return null
+    const t = this.st.blocks[a[0]]
+    if (t?.t !== 'tbl') return null
+    const rect = rectOf(t, [a[1], a[2]], [f[1], f[2]])
+    return rect ? { bi: a[0], t, rect, cells: cellsIn(t, rect).length } : null
+  }
+
+  /** replaces the table of a cell range, caret in the range's top-left cell */
+  private putTable(bi: number, t: Table, next: Table, r0: number, g0: number) {
+    const gc = gridOf(next).at(r0, g0)
+    const caret = `${bi}.${gc?.ri ?? r0}.${gc?.ci ?? 0}.0`
+    this.replaceBlocks(bi, 1, [{ ...next, tid: t.tid ?? this.nextPid++ }], { a: { pa: caret, o: 0 }, f: { pa: caret, o: 0 } })
+  }
+
+  /** Merges the selected cells, or splits the merged cell at the caret. */
+  mergeCells(): boolean {
+    const r = this.cellRange()
+    if (!r) return false
+    const next = mergeCells(r.t, r.rect)
+    if (!next) return false
+    this.putTable(r.bi, r.t, next, r.rect.r0, r.rect.g0)
+    return true
+  }
+
+  unmergeCell(): boolean {
+    const sel = this.input.sel()
+    if (!sel || !sel.f.pa.includes('.')) return false
+    const [bi, ri, ci] = path(sel.f.pa)
+    const t = this.st.blocks[bi]
+    if (t?.t !== 'tbl') return false
+    const g = gridOf(t).cells.find((c) => c.ri === ri && c.ci === ci)?.g ?? 0
+    const next = unmergeCell(t, ri, ci, (tpl) => {
+      const p = tpl.blocks.find((b): b is Paragraph => b.t === 'p') ?? (this.st.blocks.find((b) => b.t === 'p' && b.pid !== undefined) as Paragraph)
+      return { ...this.emptyPara(p), pd: {}, ps: p.ps, sid: p.sid }
+    })
+    if (!next) return false
+    this.putTable(bi, t, next, ri, g)
+    return true
+  }
+
+  /** Borders of the selected cells; `css` is the line drawn ('0.5pt solid #000000'). */
+  setCellBorders(preset: BorderPreset, css = '0.5pt solid #000000') {
+    const r = this.cellRange()
+    if (r) this.putTable(r.bi, r.t, setBorders(r.t, r.rect, preset, css), r.rect.r0, r.rect.g0)
+  }
+
+  /** Fill of the selected cells (null: no fill). */
+  setCellShade(color: string | null) {
+    const r = this.cellRange()
+    if (r) this.putTable(r.bi, r.t, patchCells(r.t, r.rect, (c) => ({ ...c, shd: color ?? undefined, set: { ...c.set, shd: true } })), r.rect.r0, r.rect.g0)
+  }
+
+  setCellVAlign(v: 'top' | 'middle' | 'bottom') {
+    const r = this.cellRange()
+    if (r) this.putTable(r.bi, r.t, patchCells(r.t, r.rect, (c) => ({ ...c, vAlign: v === 'top' ? undefined : v, set: { ...c.set, vAlign: true } })), r.rect.r0, r.rect.g0)
+  }
+
+  /** Makes the selected columns (one cell selected: every column) the same width. */
+  distributeColumns() {
+    const r = this.cellRange()
+    if (r) this.putTable(r.bi, r.t, distributeCols(r.t, r.cells > 1 ? r.rect : undefined), r.rect.r0, r.rect.g0)
+  }
+
+  /** Column widths of a table (pt), e.g. after dragging a column edge. */
+  setColumnWidths(bi: number, cols: number[]) {
+    const t = this.st.blocks[bi]
+    if (t?.t !== 'tbl' || cols.length !== t.cols.length || cols.some((w) => !(w > 0))) return
+    this.replaceBlocks(bi, 1, [{ ...t, cols: cols.map((w) => +w.toFixed(2)), tid: t.tid ?? this.nextPid++ }], this.input.lastSel)
   }
 
   // ---------------------------------------------------------------- inserts
@@ -1213,6 +1320,187 @@ export class DocxEditor implements RichHost<Paragraph> {
     for (const id of res.changed) this.changedAt.set(id, this.styleGen)
     this.onDirty?.()
     this.catchUp()
+  }
+
+  // ---------------------------------------------------------------- page setup
+
+  /** the page setup changed (here or by a collaborator) */
+  onPage?: (page: PageSetup) => void
+  /** the page setup as last changed in this session (undefined: as in the file) */
+  pageNow?: PageSetup
+
+  paged(res: PageSetResult) {
+    if (this.taken.has(res)) return
+    this.taken.add(res)
+    this.pageNow = res.page
+    this.onPage?.(res.page)
+    this.onDirty?.()
+  }
+
+  /** Changes the page setup of the whole document (size, orientation, margins, columns); undoable. */
+  async setPage(set: PageSet): Promise<PageSetResult | undefined> {
+    if (!Object.keys(set).length) return
+    const res = await this.client.call('docx.page', set)
+    if (!res) return
+    this.paged(res)
+    const sel = this.input.lastSel ?? { a: { pa: '0', o: 0 }, f: { pa: '0', o: 0 } }
+    this.history.push({ pas: [], before: [], after: [], selBefore: sel, selAfter: sel, label: 'page', t: Date.now(), page: { undo: res.undo, redo: set } })
+    this.future = []
+    this.emitState(this.input.sel() ?? sel)
+    return res
+  }
+
+  // ---------------------------------------------------------------- tracked changes
+
+  /** edits are recorded as tracked changes ("suggesting") */
+  tracking = false
+  /** the name tracked changes made here are signed with */
+  author: () => string = () => 'Me'
+  onTracking?: (on: boolean) => void
+
+  setTracking(on: boolean) {
+    this.tracking = on
+    this.onTracking?.(on)
+    this.emitState(this.input.sel())
+  }
+
+  /** every editable paragraph, top level and in table cells, with its address */
+  private allParas(): { pa: string; p: Paragraph }[] {
+    const out: { pa: string; p: Paragraph }[] = []
+    this.st.blocks.forEach((b, bi) => {
+      if (b.t === 'p') {
+        if (b.pid !== undefined && !b.ro) out.push({ pa: String(bi), p: b })
+      } else if (b.t === 'tbl')
+        b.rows.forEach((r, ri) =>
+          r.cells.forEach((c, ci) => c.blocks.forEach((x, k) => x.t === 'p' && x.pid !== undefined && !x.ro && out.push({ pa: `${bi}.${ri}.${ci}.${k}`, p: x }))),
+        )
+    })
+    return out
+  }
+
+  /** how many tracked changes the document holds (runs of inserted / deleted text) */
+  changeCount(): number {
+    return this.allParas().reduce((n, x) => n + changeSpans(x.p).length, 0)
+  }
+
+  /**
+   * Accepts (or rejects) the tracked changes in the selection — the change at the caret when nothing is selected —
+   * or all of them. Undoable.
+   */
+  review(accept: boolean, all = false): number {
+    const label = accept ? 'accept' : 'reject'
+    let done = 0
+    if (all) {
+      // one paragraph (or one run of neighbouring top-level paragraphs) at a time
+      const hits = this.allParas().filter((x) => hasChanges(x.p))
+      const groups: { pa: string; p: Paragraph }[][] = []
+      for (const h of hits) {
+        const g = groups[groups.length - 1]
+        const last = g?.[g.length - 1]
+        if (last && !last.pa.includes('.') && !h.pa.includes('.') && Number(h.pa) === Number(last.pa) + 1) g.push(h)
+        else groups.push([h])
+      }
+      const h0 = this.history.length
+      for (const g of groups) {
+        const next = g.map(({ p }) => ({ ...p, runs: resolveRuns(p.runs, 0, plen(p.runs as RRun[]), accept), edited: true }))
+        done += g.reduce((n, x) => n + changeSpans(x.p).length, 0)
+        this.replace(
+          g.map((x) => x.pa),
+          next,
+          { a: { pa: g[0].pa, o: 0 }, f: { pa: g[0].pa, o: 0 } },
+          { label, want: true, remount: true },
+        )
+      }
+      // one undo step for the whole command
+      const parts = this.history.splice(Math.min(h0, this.history.length))
+      if (parts.length) this.history.push(parts.length > 1 ? { ...parts[parts.length - 1], group: parts } : parts[0])
+      return done
+    }
+    const sel = this.input.sel()
+    if (!sel) return 0
+    const [s, e] = ordered(this, sel)
+    const pas = this.span(s.pa, e.pa)
+    if (!pas) return 0
+    const next = pas.map((pa, i) => {
+      const p = this.para(pa)!
+      let a = i === 0 ? s.o : 0
+      let b = i === pas.length - 1 ? e.o : plen(p.runs as RRun[])
+      if (pas.length === 1 && a === b) {
+        // caret: the change it touches
+        const span = changeSpans(p).find((x) => x.a <= a && a <= x.b && (x.a < a || a < x.b || x.b > x.a))
+        if (!span) return p
+        a = span.a
+        b = span.b
+      }
+      done += changeSpans({ ...p, runs: sliceRunsOf(p, a, b) }).length
+      return { ...p, runs: resolveRuns(p.runs, a, b, accept), edited: true }
+    })
+    if (!done) return 0
+    this.replace(pas, next, { a: s, f: s }, { label, want: true, remount: true })
+    return done
+  }
+
+  /** Selects the next (or previous) tracked change after the caret; false when there is none. */
+  gotoChange(dir: 1 | -1): boolean {
+    const all = this.allParas()
+    const sel = this.input.sel()
+    const [s, e] = sel ? ordered(this, sel) : [null, null]
+    const here = (dir > 0 ? e : s) ?? { pa: dir > 0 ? '0' : String(this.st.blocks.length), o: 0 }
+    const spans = all.flatMap((x) => changeSpans(x.p).map((c) => ({ pa: x.pa, ...c })))
+    const after = (x: { pa: string; a: number; b: number }) => {
+      const c = this.cmp(x.pa, here.pa)
+      return dir > 0 ? c > 0 || (c === 0 && x.a >= here.o && !(s && x.pa === s.pa && x.a === s.o && e && x.b === e.o)) : c < 0 || (c === 0 && x.b <= here.o && !(s && x.pa === s.pa && x.a === s.o))
+    }
+    const hit = dir > 0 ? spans.find(after) : [...spans].reverse().find(after)
+    if (!hit) return false
+    const to = { a: { pa: hit.pa, o: hit.a }, f: { pa: hit.pa, o: hit.b } }
+    this.pendingSel = to
+    this.input.lastSel = to
+    this.changed()
+    this.emitState(to)
+    return true
+  }
+
+  // ---------------------------------------------------------------- headers / footers
+
+  /** the headers / footers changed (here or by a collaborator) */
+  onHF?: (r: { headers: HeaderFooters; titlePg: boolean }) => void
+  /** headers / footers as last changed in this session (undefined: as in the file) */
+  hfNow?: { headers: HeaderFooters; titlePg: boolean }
+
+  hfed(res: HFSetResult) {
+    if (this.taken.has(res)) return
+    this.taken.add(res)
+    this.hfNow = { headers: res.headers, titlePg: res.titlePg }
+    this.onHF?.(this.hfNow)
+    this.onDirty?.()
+  }
+
+  /** Changes the headers / footers (text, page numbers, different first page); undoable. */
+  async setHeaderFooter(set: HFSet): Promise<HFSetResult | undefined> {
+    if (!set.parts && !set.raw && set.titlePg === undefined) return
+    const res = await this.client.call('docx.hf', set)
+    if (!res) return
+    this.hfed(res)
+    const sel = this.input.lastSel ?? { a: { pa: '0', o: 0 }, f: { pa: '0', o: 0 } }
+    this.history.push({ pas: [], before: [], after: [], selBefore: sel, selAfter: sel, label: 'header', t: Date.now(), hf: { undo: res.undo, redo: set } })
+    this.future = []
+    this.emitState(this.input.sel() ?? sel)
+    return res
+  }
+
+  private rehf(set: HFSet) {
+    this.client
+      .call('docx.hf', set)
+      .then((res) => res && this.hfed(res))
+      .catch((e) => console.error('[office-engine] header / footer change failed', e))
+  }
+
+  private repage(set: PageSet) {
+    this.client
+      .call('docx.page', set)
+      .then((res) => res && this.paged(res))
+      .catch((e) => console.error('[office-engine] page setup failed', e))
   }
 
   private async setStyle(id: string, look: StyleLook) {
@@ -1543,6 +1831,12 @@ export class DocxEditor implements RichHost<Paragraph> {
       va: rs.va,
       link: (run as { href?: string } | undefined)?.href,
       inTable: s.pa.includes('.'),
+      cells: this.cellState(sel),
+      tracking: this.tracking,
+      inChange: (() => {
+        const [, e2] = ordered(this, sel)
+        return changeSpans(p).some((x) => (s.pa === e2.pa ? x.a <= e2.o && s.o <= x.b : true))
+      })(),
       img,
       b: !!rs.b,
       i: !!rs.i,
@@ -1560,6 +1854,14 @@ export class DocxEditor implements RichHost<Paragraph> {
     }
   }
 
+  private cellState(sel: Sel): FormatState['cells'] {
+    const r = this.cellRange(sel)
+    if (!r) return undefined
+    const [bi, ri, ci] = path(sel.f.pa)
+    const cell = (this.st.blocks[bi] as Table).rows[ri]?.cells[ci]
+    return { n: r.cells, merged: !!cell && (cell.colSpan > 1 || cell.rowSpan > 1), shd: cell?.shd, vAlign: cell?.vAlign ?? 'top' }
+  }
+
   private emitState(sel: Sel | null) {
     const st = sel ? this.state(sel) : null
     this.onState?.(st)
@@ -1568,7 +1870,18 @@ export class DocxEditor implements RichHost<Paragraph> {
 
   onSelection(sel: Sel | null) {
     if (sel && this.pend && (sel.a.pa !== this.pend.at.pa || sel.a.o !== this.pend.at.o)) this.pend = null
+    this.markCells(sel)
     this.emitState(sel)
+  }
+
+  /** table cells covered by a selection that spans more than one cell get a tint */
+  private markCells(sel: Sel | null) {
+    const root = this.input.root
+    if (!root) return
+    root.querySelectorAll('.de-cell-sel').forEach((el) => el.classList.remove('de-cell-sel'))
+    const r = sel ? this.cellRange(sel) : null
+    if (!r || r.cells < 2) return
+    for (const c of cellsIn(r.t, r.rect)) root.querySelector(`[data-pa^="${r.bi}.${c.ri}.${c.ci}."]`)?.closest('td')?.classList.add('de-cell-sel')
   }
 }
 
