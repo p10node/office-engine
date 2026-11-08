@@ -14,7 +14,7 @@
 
 | Format | Supported                                                                                                                                                                         | Not yet                                                                    |
 |--------|-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|----------------------------------------------------------------------------|
-| DOCX   | inherited styles, run formatting, lists/numbering, tables (merge, border, shading, table style), images, hyperlinks, header/footer, PAGE field, text boxes, page/section breaks   | footnote body, charts, exact float wrapping, paragraphs split across pages |
+| DOCX   | inherited styles, run formatting, lists/numbering, tables (merge, border, shading, table style), images, hyperlinks, header/footer, PAGE field, text boxes, page/section breaks, text columns, tracked changes | footnote body, charts, exact float wrapping, paragraphs split across pages |
 | XLSX   | shared strings, number/date formats, font/fill/border/align, merge, freeze, hidden columns/rows, wrap, formula calculation (134 functions, recalculated on edit), multiple sheets | charts, conditional formatting, images                                     |
 | PPTX   | master/layout/theme, placeholder inheritance, ~50 preset shapes, custGeom, images (crop), tables + table style, groups, bullet/autonum, autofit                                   | charts (placeholder), SmartArt, animations, video playback                 |
 
@@ -52,7 +52,10 @@ Cell values in Pages and Keynote tables use the same formats.
 - **Styles**: Normal, Title, Subtitle, Heading 1–6 always available (created in the file when missing; Ctrl/⌘+Alt+0…6), update a style to match the selection (right-click → Update style to match: font, size, color, B/I/U/S, alignment and spacing go into the style, every paragraph of it follows; written to that file's own styles only), document outline panel
 - **Paragraphs**: alignment, line spacing, bullet/number list, indent, page break
 - **Images**: insert (file picker/paste/drag & drop), click to select with 8 resize handles, original size, fit width, replace, alt text, download
-- **Tables**: insert, add/delete rows & columns, delete table, Tab between cells
+- **Tables**: insert, add/delete rows & columns, delete table, Tab between cells; select cells by dragging across them, merge / unmerge (across and down), cell color, cell borders (all / outer / inner / none / one side, color, line style), vertical alignment, distribute columns, drag a column edge to resize
+- **Page setup**: paper size (A4, Letter, Legal, A3, A5, B5), portrait / landscape, margins (cm, presets), 1–3 text columns with spacing; applies to the whole document
+- **Headers & footers**: header, footer and first-page parts (double-click the page's header / footer area, or the toolbar), alignment, bold, size, page number / page count fields with presets ("Page 1 of 5", "Trang 1/5"), different first page
+- **Tracked changes**: insertions and deletions from Word shown in their author's color and kept on save; next / previous change, accept / reject (the change at the caret, the selection, or all); *Track changes* records your own edits as suggestions (typing, deleting, pasting, replacing)
 - **Other**: select all (Ctrl/⌘+A), link (dialog), special characters, right-click context menu (clipboard, link, table, image, insert, styles), find & replace, word count, undo/redo
 
 ### XLSX
@@ -130,7 +133,7 @@ Comment text is plain (lines kept); formatting inside comments read from a file 
 ## Limitations
 
 - Formulas: no defined names, structured refs (`Table1[Col]`), 3-D refs
-- DOCX: header/footer, text boxes and nested tables are read-only; paragraphs with fields spanning multiple paragraphs (TOC) are read-only; "update style to match selection" is not available
+- DOCX: text boxes and nested tables are read-only; paragraphs with fields spanning multiple paragraphs (TOC) are read-only; headers / footers are edited as text lines (pictures, tables and shapes in them are replaced when edited, with a warning); a header taller than the top margin overlaps the text; tracked changes don't cover formatting changes, paragraph marks or pictures; page setup applies to the whole document (not per section)
 - XLSX: no chart/pivot/conditional format/data validation/filter editing; inserting/deleting rows & columns doesn't shift conditional formats/data validation
 - PPTX: can't rotate shapes with the mouse yet, can't edit text inside tables yet, no table insert, no animations/transitions; slide list changes (add/delete/move) are not undoable
 - Comments: plain text only; DOCX comments can't cover text in more than one table cell or across a table; comments in headers, footers and footnotes are kept but not shown; XLSX comments don't move with sorted rows; PPTX comments anchored to a shape are shown at the shape's position when the file is opened and keep that anchor until moved
