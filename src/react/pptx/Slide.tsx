@@ -1,5 +1,6 @@
 import { memo, useId, type CSSProperties, type ReactNode } from 'react'
 import type { Box, Fill, SlideEl, SlideModel, Stroke, TCell, TextBody, TRun } from '../../core/pptx/types'
+import { safeHref } from '../../core/url'
 import type { DocumentClient } from '../../core/worker/client'
 import { useMediaUrl } from '../common/hooks'
 import { geomPath, LINE_GEOMS } from './geometry'
@@ -92,10 +93,11 @@ export function TextView({ text, flow, edit }: { text: TextBody; flow?: boolean;
               </span>
             )
           }
+          const href = safeHref(r.href)
           return r.br ? (
             <br key={k} />
-          ) : r.href ? (
-            <a key={k} href={r.href} target="_blank" rel="noreferrer noopener" style={{ color: 'inherit' }}>
+          ) : href ? (
+            <a key={k} href={href} target="_blank" rel="noreferrer noopener" style={{ color: 'inherit' }}>
               <span style={runStyle(r)}>{r.text}</span>
             </a>
           ) : (

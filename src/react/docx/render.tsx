@@ -1,5 +1,6 @@
 import { memo, type CSSProperties, type PointerEvent as RPointerEvent, type ReactNode } from 'react'
 import type { Block, Inline, Paragraph, ParaStyle, RunStyle, Table, TrackMark } from '../../core/docx/types'
+import { safeHref } from '../../core/url'
 import type { DocumentClient } from '../../core/worker/client'
 import { useMediaUrl } from '../common/hooks'
 
@@ -138,8 +139,9 @@ function InlineView({ x, ctx, o }: { x: Inline; ctx: RenderCtx; o: number }): Re
           {x.text}
         </span>
       )
-      return x.href && !ctx.measuring && !ctx.editable ? (
-        <a href={x.href} target={x.href.startsWith('#') ? undefined : '_blank'} rel="noreferrer noopener">
+      const href = ctx.measuring || ctx.editable ? undefined : safeHref(x.href)
+      return href ? (
+        <a href={href} target={href.startsWith('#') ? undefined : '_blank'} rel="noreferrer noopener">
           {span}
         </a>
       ) : (
@@ -162,10 +164,11 @@ function InlineView({ x, ctx, o }: { x: Inline; ctx: RenderCtx; o: number }): Re
       )
     case 'img': {
       const img = <Img ctx={ctx} target={x.target} w={x.w} h={x.h} alt={x.alt} />
+      const href = ctx.measuring || ctx.editable ? undefined : safeHref(x.href)
       return (
         <span {...obj} data-cm={x.cm?.join(' ')}>
-          {x.href && !ctx.measuring && !ctx.editable ? (
-            <a href={x.href} target="_blank" rel="noreferrer noopener">
+          {href ? (
+            <a href={href} target="_blank" rel="noreferrer noopener">
               {img}
             </a>
           ) : (

@@ -5,6 +5,7 @@
 import { HIGHLIGHT } from './docx/styles'
 import type { RunSet } from './docx/types'
 import { escAttr, escText } from './raw'
+import { safeHref } from './url'
 import { writeZip } from './zipwrite'
 
 // kept local: the writers that also define these are worker-side modules
@@ -174,7 +175,7 @@ function mdInline(s: string): string {
   s = s.replace(/`([^`]+)`/g, (_, c: string) => `\u0000${code.push(c) - 1}\u0000`)
   s = s
     .replace(/!\[([^\]]*)\]\(([^)\s]+)[^)]*\)/g, '$1')
-    .replace(/\[([^\]]+)\]\(([^)\s]+)[^)]*\)/g, (_, t: string, u: string) => (/^\s*javascript:/i.test(u) ? t : `<a href="${u}">${t}</a>`))
+    .replace(/\[([^\]]+)\]\(([^)\s]+)[^)]*\)/g, (_, t: string, u: string) => (safeHref(u) ? `<a href="${u}">${t}</a>` : t))
     .replace(/(\*\*|__)(?=\S)(.+?)(?<=\S)\1/g, '<b>$2</b>')
     .replace(/(^|[^*\w])\*(?=\S)(.+?)(?<=\S)\*(?!\*)/g, '$1<i>$2</i>')
     .replace(/(^|[^_\w])_(?=\S)(.+?)(?<=\S)_(?!\w)/g, '$1<i>$2</i>')
@@ -358,7 +359,7 @@ export function parasToDocx(paras: ImportPara[]): Promise<Blob> {
       }
       let inner = ''
       while (i < p.runs.length && p.runs[i].href === href) inner += runXml(p.runs[i++])
-      if (/^\s*javascript:/i.test(href)) runs += inner
+      if (!safeHref(href)) runs += inner
       else {
         links.push(href)
         runs += `<w:hyperlink r:id="rIdL${links.length}" w:history="1">${inner}</w:hyperlink>`

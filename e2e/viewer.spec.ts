@@ -1,4 +1,8 @@
 import { describe, expect, test } from 'bun:test'
+import { parasToDocx } from '../src/core/convert'
+import { BlobSource } from '../src/core/source'
+import { ZipArchive } from '../src/core/zip'
+import { rebuildZip } from '../src/core/zipwrite'
 import { useBrowser, viewer } from './harness'
 
 useBrowser()
@@ -230,6 +234,39 @@ describe('viewing', () => {
     await page.waitForFunction(() => document.querySelector('.de-root')!.classList.contains('de-dark'))
     await page.emulateMedia({ colorScheme: 'light' })
     await page.waitForFunction(() => !document.querySelector('.de-root')!.classList.contains('de-dark'))
+    expect(v.errors).toEqual([])
+  })
+
+  test('links: a script or data link is shown as text, not followed', async () => {
+    // the builder refuses script links: write safe placeholders, then put the bad targets in the relationships
+    const docx = await parasToDocx([
+      {
+        runs: [
+          { text: 'web', href: 'https://example.org/' },
+          { text: ' ' },
+          { text: 'js', href: 'https://js.invalid/' },
+          { text: ' ' },
+          { text: 'tab', href: 'https://tab.invalid/' },
+          { text: ' ' },
+          { text: 'data', href: 'https://data.invalid/' },
+        ],
+      },
+    ])
+    const zip = await ZipArchive.open(new BlobSource(docx))
+    const rels = (await zip.text('word/_rels/document.xml.rels'))
+      .replace('https://js.invalid/', 'javascript:alert(1)')
+      .replace('https://tab.invalid/', 'java&#9;script:alert(2)')
+      .replace('https://data.invalid/', 'data:text/html,&lt;script&gt;alert(3)&lt;/script&gt;')
+    const bytes = new Uint8Array(await (await rebuildZip(zip, new Map([['word/_rels/document.xml.rels', rels]]))).arrayBuffer())
+
+    const v = await viewer({ src: 'samples/sample.docx' })
+    const { page } = v
+    await page.evaluate((b) => window.__setProps({ src: new Uint8Array(b), name: 'links.docx' }), [...bytes])
+    await page.waitForFunction(() => document.querySelector('.de-pages')?.textContent?.includes('web js tab data'))
+    const links = await page.evaluate(() => [...document.querySelectorAll('.de-pages a')].map((a) => [a.textContent, a.getAttribute('href')]))
+    expect(links).toEqual([['web', 'https://example.org/']])
+    const md = await v.downloadAs('Markdown')
+    expect(md.text).toContain('[web](https://example.org/) js tab data')
     expect(v.errors).toEqual([])
   })
 

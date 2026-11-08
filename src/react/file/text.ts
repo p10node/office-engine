@@ -1,5 +1,6 @@
 import type { Block, Inline, Paragraph, Table } from '../../core/docx/types'
 import type { SlideModel, TextBody } from '../../core/pptx/types'
+import { safeHref } from '../../core/url'
 
 // ---------------------------------------------------------------- DOCX
 
@@ -36,10 +37,11 @@ function mdInline(runs: Inline[], heading = false): string {
       i++
       continue
     }
-    if (r.t === 'text' && r.href) {
+    // a script link is exported as its text
+    if (r.t === 'text' && safeHref(r.href)) {
       // a link spans the consecutive runs with the same target
       let text = ''
-      const href = r.href
+      const href = r.href!
       while (i < runs.length && runs[i].t === 'text' && (runs[i] as { href?: string }).href === href) {
         const x = runs[i++] as Inline & { t: 'text' }
         if (x.tc?.k !== 'del') text += x.text

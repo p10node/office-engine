@@ -4,6 +4,7 @@
  */
 import type { Inline, RunSet, RunStyle } from './docx/types'
 import { cssFont } from './fonts'
+import { safeHref } from './url'
 
 export interface PastedPara {
   runs: Inline[]
@@ -78,9 +79,8 @@ function styleOf(el: HElement, base: Ctx): Ctx {
       s.va = 'sub'
       break
     case 'A': {
-      // browsers drop tabs / newlines inside a URL: "java\tscript:" is a script link too
-      const href = el.getAttribute('href')?.trim()
-      if (href && !/^javascript:/i.test(href.replace(/[\u0000- ]+/g, ''))) {
+      const href = safeHref(el.getAttribute('href')?.trim())
+      if (href) {
         s.href = href
         s.u = 'single'
         s.color = '#0563c1'

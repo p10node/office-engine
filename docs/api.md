@@ -175,3 +175,7 @@ The default worker is an inline blob → requires `worker-src blob:`. If that's 
 ```tsx
 <DocViewer src={src} worker={() => new Worker('/static/office-engine.worker.js', { type: 'module' })} />
 ```
+
+## Links in documents
+
+Links from a document (DOCX text and pictures, PPTX text) are clickable in view mode when they point to `http(s)`, `mailto`, `tel`, `sms`, `ftp(s)`, a relative path or a place in the document (`#bookmark`). Other targets (`javascript:`, `data:`, `vbscript:`, `file:`…) show as plain text, also in the web page and Markdown exports, so a crafted file cannot run script in the host page. The file itself keeps its links unchanged. External links open in a new tab with `rel="noreferrer noopener"`.
