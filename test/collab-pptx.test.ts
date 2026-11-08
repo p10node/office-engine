@@ -47,6 +47,8 @@ describe('collab pptx', () => {
       await settle([a.collab, b.collab])
       const ops: Promise<unknown>[] = []
       const run = (p: Promise<unknown>) => ops.push(p.catch((e) => console.error(e)))
+      // text edits that took effect where they were made (a later shape / slide delete or undo may still drop them all)
+      let texts = 0
       for (let i = 0; i < 50; i++) {
         const who = rand() < 0.5 ? a : b
         const meta = who.client.info.pptx!
@@ -62,8 +64,13 @@ describe('collab pptx', () => {
           const t = ts[Math.floor(rand() * ts.length)]
           if (t?.text) {
             const paras: PParaSpec[] = t.text.paras.map((p, k) => ({ k: p.k ?? k, runs: p.runs.map((r) => ({ text: r.text ?? '', src: r.src })) }))
-            if (paras[0]) paras[0].runs.push({ text: (who === a ? ' a' : ' b') + i })
-            run(who.client.call('pptx.setText', si, t.sid!, paras))
+            const mark = (who === a ? ' a' : ' b') + i
+            if (paras[0]) paras[0].runs.push({ text: mark })
+            run(
+              who.client.call('pptx.setText', si, t.sid!, paras).then((r) => {
+                if (JSON.stringify(r ?? null).includes(mark)) texts++
+              }),
+            )
           }
         } else if (x < 0.55 && el) run(who.client.call('pptx.shapes', si, [{ op: 'xfrm', top: el.top!, box: { ...el.box, x: el.box.x + 5 * i } }]))
         else if (x < 0.65 && el) run(who.client.call('pptx.shapes', si, [{ op: 'fill', top: el.top!, color: who === a ? '#ff0000' : '#00ff00' }]))
@@ -80,7 +87,7 @@ describe('collab pptx', () => {
       await settle([a.collab, b.collab])
       const da = await dump(a.client)
       const db = await dump(b.client)
-      expect(da.join('').match(/ [ab]\d+/g)?.length ?? 0).toBeGreaterThan(0)
+      expect(texts).toBeGreaterThan(0)
       expect(da).toEqual(db)
       const c = await open(hub, 'Cid', () => 0)
       await settle([a.collab, b.collab, c.collab])
