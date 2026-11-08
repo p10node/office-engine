@@ -3,7 +3,7 @@ import type { Inline, Paragraph, ParaSpec, SpecRun, Table, TableSpec } from './t
 export function inlineSpec(x: Inline): SpecRun {
   switch (x.t) {
     case 'text':
-      return { text: x.text, src: x.src, set: x.d && Object.keys(x.d).length ? x.d : undefined, lk: x.lk, cm: x.cm?.length ? x.cm : undefined }
+      return { text: x.text, src: x.src, set: x.d && Object.keys(x.d).length ? x.d : undefined, lk: x.lk, cm: x.cm?.length ? x.cm : undefined, ...(x.tc ? { tc: x.tc } : {}) }
     case 'field':
       return { obj: 'field', kind: x.kind }
     case 'img':

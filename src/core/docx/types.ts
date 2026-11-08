@@ -66,13 +66,23 @@ export interface RunSet {
   va?: 'sup' | 'sub' | null
 }
 
+/** a tracked change on a run: inserted or deleted text, by whom and when (Word's w:ins / w:del) */
+export interface TrackMark {
+  k: 'ins' | 'del'
+  /** the change's w:id in the file */
+  id?: string
+  author?: string
+  /** ISO date */
+  date?: string
+}
+
 /**
  * Inline content. Tabs and line breaks are carried as '\t' / '\n' inside text.
  * Everything that isn't 'text' counts as one character when editing.
  * `cm`: the comment threads (root ids) whose range covers the run.
  */
 export type Inline =
-  | { t: 'text'; text: string; s: RunStyle; href?: string; lk?: string; src?: SrcRef; d?: RunSet; cm?: string[] }
+  | { t: 'text'; text: string; s: RunStyle; href?: string; lk?: string; src?: SrcRef; d?: RunSet; cm?: string[]; tc?: TrackMark }
   | {
       t: 'img'
       cm?: string[]
@@ -153,7 +163,7 @@ export interface ParaDirty {
 }
 
 export type SpecRun =
-  | { text: string; src?: SrcRef; set?: RunSet; lk?: string; cm?: string[] }
+  | { text: string; src?: SrcRef; set?: RunSet; lk?: string; cm?: string[]; tc?: TrackMark }
   | { obj: 'copy'; src: SrcRef; size?: [number, number]; alt?: string; rid?: string; cm?: string[] }
   | { obj: 'image'; rid: string; w: number; h: number; name?: string; alt?: string; cm?: string[] }
   | { obj: 'field'; kind: 'PAGE' | 'NUMPAGES'; set?: RunSet; cm?: string[] }

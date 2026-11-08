@@ -502,3 +502,30 @@ describe('collab docx headers / footers', () => {
     for (const x of [a, b, c]) x.client.destroy()
   })
 })
+
+describe('collab docx tracked changes', () => {
+  test('suggestions typed by one editor arrive marked, with their author; accepting them reaches everyone', async () => {
+    const hub = new CollabHub()
+    const a = await open(hub, 'Ann', () => 3)
+    const b = await open(hub, 'Bob', () => 5)
+    await settle([a.collab, b.collab])
+    a.editor.author = () => 'Ann'
+    a.editor.setTracking(true)
+    const pi = a.st.blocks.findIndex((x) => x.t === 'p' && runsText(x.runs as RRun[]).startsWith('Hire the platform team'))
+    const pa = String(pi)
+    const end = 'Hire the platform team'.length
+    opInsert(a.editor, { a: { pa, o: end }, f: { pa, o: end } }, ' soon')
+    a.editor.input.lastSel = { a: { pa, o: 4 }, f: { pa, o: 4 } }
+    opBackspace(a.editor, { a: { pa, o: 4 }, f: { pa, o: 4 } })
+    await settle([a.collab, b.collab])
+    const marks = (st: DocState) =>
+      (st.blocks[pi] as Paragraph).runs.filter((r) => r.t === 'text' && r.tc).map((r) => `${(r as any).tc.k}:${(r as any).text}:${(r as any).tc.author}`)
+    expect(marks(b.st)).toEqual(['del:e:Ann', 'ins: soon:Ann'])
+    expect(b.editor.changeCount()).toBe(2)
+    b.editor.review(true, true)
+    await settle([a.collab, b.collab])
+    expect(runsText((a.st.blocks[pi] as Paragraph).runs as RRun[])).toBe('Hir the platform team soon')
+    expect(a.editor.changeCount()).toBe(0)
+    for (const x of [a, b]) x.client.destroy()
+  })
+})

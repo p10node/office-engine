@@ -17,7 +17,7 @@ import type { DocxDocument, GenRun } from './parser'
 import { fontName, HIGHLIGHT, readPPr, readRPr } from './styles'
 import type {
   Block, CanonStyle, CellSpec, EditOp, EditResult, ParaDirty, ParaSpec, ParaStyle, Paragraph, RunSet, RunStyle, SpecRun, SrcRef, StyleInfo, StyleLook, StyleSetResult,
-  TableOp, TableSpec, PageSet, PageSetResult, PageSetup, HFKind, HFLine, HFSet, HFSetResult,
+  TableOp, TableSpec, PageSet, PageSetResult, PageSetup, HFKind, HFLine, HFSet, HFSetResult, TrackMark,
 } from './types'
 
 export const DOCX_MIME = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
@@ -37,7 +37,7 @@ const RPR_ORDER = [
 ]
 const START_MARKS = new Set(['bookmarkStart', 'commentRangeStart', 'permStart', 'moveFromRangeStart', 'moveToRangeStart'])
 const END_MARKS = new Set(['bookmarkEnd', 'commentRangeEnd', 'permEnd', 'moveFromRangeEnd', 'moveToRangeEnd'])
-const RUN_STOP = new Set(['p', 'del', 'moveFrom', 'oMath', 'oMathPara', 'pPr', 'rPr', 'r'])
+const RUN_STOP = new Set(['p', 'oMath', 'oMathPara', 'pPr', 'rPr', 'r'])
 const HL_NAME: Record<string, string> = Object.fromEntries(Object.entries(HIGHLIGHT).map(([k, v]) => [v, k]))
 
 interface ParaLoc {
@@ -462,6 +462,20 @@ function readStyle(pPr: RNode): string | undefined {
   return ps ? /="([^"]*)"/.exec(ps.a)?.[1] : undefined
 }
 
+/** deleted text: w:delText instead of w:t */
+function delTextXml(text: string, W: string): string {
+  return textContentXml(text, W)
+    .replace(new RegExp(`<${W}t([ >])`, 'g'), `<${W}delText$1`)
+    .replace(new RegExp(`</${W}t>`, 'g'), `</${W}delText>`)
+}
+
+/** a run wrapped in its tracked change (fresh ids: a change split by editing must not repeat one) */
+function trackXml(doc: DocxDocument, W: string, tc: TrackMark, run: string): string {
+  const tag = tc.k === 'ins' ? 'ins' : 'del'
+  const attrs = ` ${W}id="${doc.nextTrackId++}"` + (tc.author ? ` ${W}author="${escText(tc.author).replace(/"/g, '&quot;')}"` : '') + (tc.date ? ` ${W}date="${escText(tc.date)}"` : '')
+  return `<${W}${tag}${attrs}>${run}</${W}${tag}>`
+}
+
 export async function genParagraph(doc: DocxDocument, spec: ParaSpec): Promise<{ xml: string; map: GenRun[] }> {
   const tpl = origPara(doc, spec.from)
   const pq = tpl?.q ?? 'w:p'
@@ -570,7 +584,7 @@ export async function genParagraph(doc: DocxDocument, spec: ParaSpec): Promise<{
       if (run.set && Object.keys(run.set).length) applyRunSet((rPr ??= el(W + 'rPr')), run.set, W)
       if (!run.text) continue
       openMarks(run)
-      body += runXml(rPr, textContentXml(run.text, W))
+      body += run.tc ? trackXml(doc, W, run.tc, runXml(rPr, run.tc.k === 'del' ? delTextXml(run.text, W) : textContentXml(run.text, W))) : runXml(rPr, textContentXml(run.text, W))
       map.push({ src: run.src, d: run.set, cm: run.cm })
       closeMarks(run)
     }

@@ -108,6 +108,8 @@ export function DocxToolbar(props: {
   onPageSetup?: () => void
   /** opens the header / footer dialog */
   onHeaderFooter?: () => void
+  /** a short message for the user (toast) */
+  onNotice?: (text: string) => void
 }) {
   const { editor, styles, image } = props
   const [st, setSt] = useState<FormatState | null>(null)
@@ -237,6 +239,28 @@ export function DocxToolbar(props: {
         {(close) => <GridPicker onPick={(r, c) => (close(), editor.insertTable(r, c))} />}
       </Pop>
       <Btn icon="pageSetup" title="Page setup (size, orientation, margins, columns)" disabled={!props.onPageSetup} onClick={() => props.onPageSetup?.()} />
+      <Btn icon="track" title="Track changes (suggest edits)" active={!!st?.tracking} disabled={dis} onClick={() => editor.setTracking(!editor.tracking)} />
+      <Menu
+        title="Review changes"
+        label="Review"
+        icon="review"
+        items={[
+          { value: 'next', label: 'Next change', icon: 'down' },
+          { value: 'prev', label: 'Previous change', icon: 'up' },
+          { value: 'accept', label: 'Accept change', icon: 'check', sep: true, disabled: !st?.inChange },
+          { value: 'reject', label: 'Reject change', icon: 'close', disabled: !st?.inChange },
+          { value: 'acceptAll', label: 'Accept all changes', icon: 'check', sep: true },
+          { value: 'rejectAll', label: 'Reject all changes', icon: 'close' },
+        ]}
+        onPick={(v) => {
+          if (v === 'next' || v === 'prev') {
+            if (!editor.gotoChange(v === 'next' ? 1 : -1)) props.onNotice?.(v === 'next' ? 'No more changes after this point' : 'No changes before this point')
+            return
+          }
+          const n = editor.review(v.startsWith('accept'), v.endsWith('All'))
+          props.onNotice?.(n ? `${n} change${n > 1 ? 's' : ''} ${v.startsWith('accept') ? 'accepted' : 'rejected'}` : 'No tracked changes here')
+        }}
+      />
       <Btn icon="headerFooter" title="Header & footer, page numbers" disabled={!props.onHeaderFooter} onClick={() => props.onHeaderFooter?.()} />
       <Pop icon="omega" title="Special characters" disabled={dis}>
         {(close) => (

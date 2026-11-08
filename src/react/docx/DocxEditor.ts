@@ -11,6 +11,7 @@ import type { DocumentClient } from '../../core/worker/client'
 import { opInsert, opInsertRuns, ordered, RichInput, type ReplaceOpts, type RichHost } from '../edit/input'
 import { htmlToParas } from './html'
 import { cellsIn, deleteCol, deleteRow, distributeCols, gridOf, insertCol, insertRow, mergeCells, newTable, patchCells, rectOf, setBorders, unmergeCell, type BorderPreset, type CellRect } from './tables'
+import { changeSpans, hasChanges, resolveRuns, trackEdit } from './track'
 import { collapsed, formatRange, markRange, normalize, plen, rlen, runAt, runsText, shiftPa, splitRuns, type Pos, type RRun, type Sel } from '../edit/rich'
 
 /** a place in a paragraph that survives edits elsewhere: paragraph id, page-break part, offset */
@@ -90,6 +91,9 @@ export interface FormatState {
   link?: string
   /** caret inside a table cell */
   inTable: boolean
+  /** edits are tracked; the caret / selection touches a tracked change */
+  tracking?: boolean
+  inChange?: boolean
   /** table cells the selection covers (more than one: they can be merged); the caret's cell is merged */
   cells?: { n: number; merged: boolean; shd?: string; vAlign?: string }
   /** a single image is selected */
@@ -99,6 +103,11 @@ export interface FormatState {
 }
 
 const path = (pa: string) => pa.split('.').map(Number)
+
+/** edits that are not the author's own typing: never turned into tracked changes */
+const UNTRACKED = new Set(['undo', 'redo', 'collab', 'accept', 'reject', 'restore'])
+
+const sliceRunsOf = (p: Paragraph, a: number, b: number) => splitRuns(splitRuns(p.runs as RRun[], b)[0], a)[1] as Inline[]
 
 /** the properties "update style to match" moves from the text into the style */
 const RUN_LOOK = ['b', 'i', 'u', 'strike', 'color', 'sz', 'font'] as const
@@ -365,6 +374,13 @@ export class DocxEditor implements RichHost<Paragraph> {
   replace(pas: string[], next: Paragraph[], sel: Sel, opts: ReplaceOpts & { history?: boolean; want?: boolean } = {}): void {
     const before = pas.map((pa) => this.para(pa)!)
     if (before.some((b) => !b)) return
+    // suggesting: what the edit takes out stays (deleted), what it puts in is marked inserted
+    if (this.tracking && opts.history !== false && !UNTRACKED.has(opts.label ?? '')) {
+      const r = trackEdit(before, next, pas[0], sel, this.input.lastSel, { k: 'ins', author: this.author(), date: new Date().toISOString().replace(/\.\d+Z$/, 'Z') })
+      next = r.next
+      sel = r.sel
+      if (next.length === 1 && before.length === 1 && opts.label === 'type') opts = { ...opts, remount: true }
+    }
     if (opts.remount) next = next.map((p) => ({ ...p, ver: (p.ver ?? 0) + 1 }))
     const c = this.container(pas[0])!
     const at = c.at
@@ -1311,6 +1327,113 @@ export class DocxEditor implements RichHost<Paragraph> {
     return res
   }
 
+  // ---------------------------------------------------------------- tracked changes
+
+  /** edits are recorded as tracked changes ("suggesting") */
+  tracking = false
+  /** the name tracked changes made here are signed with */
+  author: () => string = () => 'Me'
+  onTracking?: (on: boolean) => void
+
+  setTracking(on: boolean) {
+    this.tracking = on
+    this.onTracking?.(on)
+    this.emitState(this.input.sel())
+  }
+
+  /** every editable paragraph, top level and in table cells, with its address */
+  private allParas(): { pa: string; p: Paragraph }[] {
+    const out: { pa: string; p: Paragraph }[] = []
+    this.st.blocks.forEach((b, bi) => {
+      if (b.t === 'p') {
+        if (b.pid !== undefined && !b.ro) out.push({ pa: String(bi), p: b })
+      } else if (b.t === 'tbl')
+        b.rows.forEach((r, ri) =>
+          r.cells.forEach((c, ci) => c.blocks.forEach((x, k) => x.t === 'p' && x.pid !== undefined && !x.ro && out.push({ pa: `${bi}.${ri}.${ci}.${k}`, p: x }))),
+        )
+    })
+    return out
+  }
+
+  /** how many tracked changes the document holds (runs of inserted / deleted text) */
+  changeCount(): number {
+    return this.allParas().reduce((n, x) => n + changeSpans(x.p).length, 0)
+  }
+
+  /**
+   * Accepts (or rejects) the tracked changes in the selection — the change at the caret when nothing is selected —
+   * or all of them. Undoable.
+   */
+  review(accept: boolean, all = false): number {
+    const label = accept ? 'accept' : 'reject'
+    let done = 0
+    if (all) {
+      // one paragraph (or one run of neighbouring top-level paragraphs) at a time
+      const hits = this.allParas().filter((x) => hasChanges(x.p))
+      const groups: { pa: string; p: Paragraph }[][] = []
+      for (const h of hits) {
+        const g = groups[groups.length - 1]
+        const last = g?.[g.length - 1]
+        if (last && !last.pa.includes('.') && !h.pa.includes('.') && Number(h.pa) === Number(last.pa) + 1) g.push(h)
+        else groups.push([h])
+      }
+      for (const g of groups) {
+        const next = g.map(({ p }) => ({ ...p, runs: resolveRuns(p.runs, 0, plen(p.runs as RRun[]), accept), edited: true }))
+        done += g.reduce((n, x) => n + changeSpans(x.p).length, 0)
+        this.replace(
+          g.map((x) => x.pa),
+          next,
+          { a: { pa: g[0].pa, o: 0 }, f: { pa: g[0].pa, o: 0 } },
+          { label, want: true, remount: true },
+        )
+      }
+      return done
+    }
+    const sel = this.input.sel()
+    if (!sel) return 0
+    const [s, e] = ordered(this, sel)
+    const pas = this.span(s.pa, e.pa)
+    if (!pas) return 0
+    const next = pas.map((pa, i) => {
+      const p = this.para(pa)!
+      let a = i === 0 ? s.o : 0
+      let b = i === pas.length - 1 ? e.o : plen(p.runs as RRun[])
+      if (pas.length === 1 && a === b) {
+        // caret: the change it touches
+        const span = changeSpans(p).find((x) => x.a <= a && a <= x.b && (x.a < a || a < x.b || x.b > x.a))
+        if (!span) return p
+        a = span.a
+        b = span.b
+      }
+      done += changeSpans({ ...p, runs: sliceRunsOf(p, a, b) }).length
+      return { ...p, runs: resolveRuns(p.runs, a, b, accept), edited: true }
+    })
+    if (!done) return 0
+    this.replace(pas, next, { a: s, f: s }, { label, want: true, remount: true })
+    return done
+  }
+
+  /** Selects the next (or previous) tracked change after the caret; false when there is none. */
+  gotoChange(dir: 1 | -1): boolean {
+    const all = this.allParas()
+    const sel = this.input.sel()
+    const [s, e] = sel ? ordered(this, sel) : [null, null]
+    const here = (dir > 0 ? e : s) ?? { pa: dir > 0 ? '0' : String(this.st.blocks.length), o: 0 }
+    const spans = all.flatMap((x) => changeSpans(x.p).map((c) => ({ pa: x.pa, ...c })))
+    const after = (x: { pa: string; a: number; b: number }) => {
+      const c = this.cmp(x.pa, here.pa)
+      return dir > 0 ? c > 0 || (c === 0 && x.a >= here.o && !(s && x.pa === s.pa && x.a === s.o && e && x.b === e.o)) : c < 0 || (c === 0 && x.b <= here.o && !(s && x.pa === s.pa && x.a === s.o))
+    }
+    const hit = dir > 0 ? spans.find(after) : [...spans].reverse().find(after)
+    if (!hit) return false
+    const to = { a: { pa: hit.pa, o: hit.a }, f: { pa: hit.pa, o: hit.b } }
+    this.pendingSel = to
+    this.input.lastSel = to
+    this.changed()
+    this.emitState(to)
+    return true
+  }
+
   // ---------------------------------------------------------------- headers / footers
 
   /** the headers / footers changed (here or by a collaborator) */
@@ -1682,6 +1805,11 @@ export class DocxEditor implements RichHost<Paragraph> {
       link: (run as { href?: string } | undefined)?.href,
       inTable: s.pa.includes('.'),
       cells: this.cellState(sel),
+      tracking: this.tracking,
+      inChange: (() => {
+        const [, e2] = ordered(this, sel)
+        return changeSpans(p).some((x) => (s.pa === e2.pa ? x.a <= e2.o && s.o <= x.b : true))
+      })(),
       img,
       b: !!rs.b,
       i: !!rs.i,

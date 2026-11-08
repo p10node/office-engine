@@ -9,7 +9,7 @@ import {
   borderCss, merge, readMargins, readPPr, readRPr, readTableBorders, shading, StyleSheet, type NumPr,
 } from './styles'
 import type {
-  Block, CellBorders, DocxMeta, HeaderFooters, Inline, ListMarker, PageSet, PageSetup, Paragraph, ParaStyle, RunSet, RunStyle, SrcRef, Table, TableCell, TableRow,
+  Block, CellBorders, DocxMeta, HeaderFooters, Inline, ListMarker, PageSet, PageSetup, Paragraph, ParaStyle, RunSet, RunStyle, SrcRef, Table, TrackMark, TableCell, TableRow,
 } from './types'
 import { DEFAULT_PAGE } from './types'
 
@@ -105,7 +105,8 @@ export function pageSetup(sectPr: XEl | undefined): PageSetup {
   }
 }
 
-const RUN_STOP = new Set(['p', 'del', 'moveFrom', 'oMath', 'oMathPara', 'pPr', 'rPr', 'r'])
+// runs inside w:del / w:moveFrom count: deleted text is shown (tracked changes) and written back
+const RUN_STOP = new Set(['p', 'oMath', 'oMathPara', 'pPr', 'rPr', 'r'])
 
 /** Runs of a paragraph in preorder (the ordinal is the run's identity for write-back). */
 export function collectRuns(p: XEl): Map<XEl, number> {
@@ -145,6 +146,8 @@ export function markerOf(numbering: Numbering, num: NumPr, markRs: RunStyle): { 
 export class Converter {
   private fields: FieldState[] = []
   private tableLayer?: Layer
+  /** the tracked change (w:ins / w:del) the runs being read belong to */
+  private tc?: TrackMark
   private boxDepth = 0
   private tableDepth = 0
   private cur?: { pid?: number; runs: Map<XEl, number>; forced?: ConvHooks['forced'] }
@@ -252,7 +255,11 @@ export class Converter {
         const runs = cur.runs
         const last = runs[runs.length - 1]
         if (x.t === 'text' && !x.cm) delete x.cm
-        if (x.t === 'text' && last?.t === 'text' && last.href === x.href && last.lk === x.lk && sameRecord(last.s, x.s) && sameRecord(last.d, x.d) && sameMarks(last.cm, x.cm)) last.text += x.text
+        if (
+          x.t === 'text' && last?.t === 'text' && last.href === x.href && last.lk === x.lk &&
+          sameRecord(last.s, x.s) && sameRecord(last.d, x.d) && sameMarks(last.cm, x.cm) && sameRecord(last.tc, x.tc)
+        )
+          last.text += x.text
         else runs.push(x)
       },
       markLast: (id) => {
@@ -315,11 +322,19 @@ export class Converter {
           break
         }
         case 'ins':
+        case 'moveTo':
+        case 'del':
+        case 'moveFrom': {
+          const prev = this.tc
+          this.tc = { k: c.n === 'ins' || c.n === 'moveTo' ? 'ins' : 'del', id: c.a.id, author: c.a.author, date: c.a.date }
+          this.inlines(c.c, base, href, lk, sink)
+          this.tc = prev
+          break
+        }
         case 'smartTag':
         case 'customXml':
         case 'bdo':
         case 'dir':
-        case 'moveTo':
           this.inlines(c.c, base, href, lk, sink)
           break
         case 'sdt':
@@ -344,7 +359,8 @@ export class Converter {
     const s = merge<RunStyle>(base, this.styles.char(kid(rPr, 'rStyle')?.a.val), readRPr(rPr, this.theme))
     if (s.vanish) return
     const { src, d, cm } = this.srcOf(r)
-    const text = (t: string, style = s, link = href) => sink.push({ t: 'text', text: t, s: style, href: link, lk: link === href ? lk : undefined, src, d, cm })
+    const tc = this.tc
+    const text = (t: string, style = s, link = href) => sink.push({ t: 'text', text: t, s: style, href: link, lk: link === href ? lk : undefined, src, d, cm, ...(tc ? { tc } : {}) })
     for (const c of r.c) {
       const f = this.fields[this.fields.length - 1]
       switch (c.n) {
@@ -370,6 +386,7 @@ export class Converter {
           if (f) f.instr += c.t
           break
         case 't':
+        case 'delText':
           if (f && (f.phase === 'instr' || f.kind)) break
           if (c.t) text(c.t, s, f?.href ?? href)
           break
@@ -748,6 +765,8 @@ export class DocxDocument {
   /** page setup of the final section as opened, and the changes made to it (written to every section on save) */
   page: PageSetup = { ...DEFAULT_PAGE }
   pageSet?: PageSet
+  /** w:id of the next tracked change written (high: clear of the file's own ids) */
+  nextTrackId = 900_000
   private nextPid = 1
   private captured = false
   private edited = false

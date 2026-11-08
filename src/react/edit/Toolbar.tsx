@@ -44,6 +44,8 @@ const P: Record<string, ReactNode> = {
   table: <path d="M4 5h16v14H4zM4 10h16M4 15h16M10 5v14M15 5v14" />,
   link: <path d="M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1" />,
   headerFooter: <path d="M6 3h12v18H6zM8 6h8M8 18h8M12 16.5v3" strokeDasharray="0" />,
+  track: <path d="M4 20h4L19 9l-4-4L4 16zM13 7l4 4M14 20h6" />,
+  review: <path d="M4 5h16v11H9l-5 4zM8 10l2 2 4-4" />,
   pageSetup: <path d="M6 3h12v18H6zM6 7h12M10 3v18M13 11h3M13 14h3M13 17h2" />,
   pagebreak: <path d="M5 4v5h14V4M5 20v-5h14v5M3 12h2m3 0h2m3 0h2m3 0h3" />,
   sup: <path d="m4 8 8 10m0-10L4 18M16 4h4l-4 5h4" />,

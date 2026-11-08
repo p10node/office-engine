@@ -1,5 +1,5 @@
 import { memo, type CSSProperties, type PointerEvent as RPointerEvent, type ReactNode } from 'react'
-import type { Block, Inline, Paragraph, ParaStyle, RunStyle, Table } from '../../core/docx/types'
+import type { Block, Inline, Paragraph, ParaStyle, RunStyle, Table, TrackMark } from '../../core/docx/types'
 import type { DocumentClient } from '../../core/worker/client'
 import { useMediaUrl } from '../common/hooks'
 
@@ -19,6 +19,26 @@ const pt = (v: number | undefined) => (v ? `${+v.toFixed(2)}pt` : undefined)
 const UNDERLINE_STYLE: Record<string, CSSProperties['textDecorationStyle']> = {
   double: 'double', dotted: 'dotted', dottedHeavy: 'dotted', dash: 'dashed', dashedHeavy: 'dashed', dashLong: 'dashed',
   wave: 'wavy', wavyHeavy: 'wavy', wavyDouble: 'wavy',
+}
+
+const TRACK_COLORS = ['#c0392b', '#1a73e8', '#188038', '#a142f4', '#e37400', '#00838f', '#d01884', '#5f6368']
+
+const authorSlot = new Map<string, number>()
+
+/** one colour per author of tracked changes, given in the order authors are met (as Word does): the first 8 differ */
+export function authorColor(author: string | undefined): string {
+  const k = author ?? ''
+  let i = authorSlot.get(k)
+  if (i === undefined) authorSlot.set(k, (i = authorSlot.size))
+  return TRACK_COLORS[i % TRACK_COLORS.length]
+}
+
+/** inserted text underlined, deleted text struck through, in the author's colour */
+function trackCss(tc: TrackMark): CSSProperties {
+  const color = authorColor(tc.author)
+  return tc.k === 'ins'
+    ? { color, textDecoration: 'underline', textDecorationColor: color }
+    : { color, textDecoration: 'line-through', textDecorationColor: color }
 }
 
 export function runCss(s: RunStyle | undefined): CSSProperties {
@@ -99,8 +119,15 @@ function InlineView({ x, ctx, o }: { x: Inline; ctx: RenderCtx; o: number }): Re
   const obj = { 'data-o': o, 'data-obj': '', contentEditable: ctx.editable ? false : undefined } as const
   switch (x.t) {
     case 'text': {
+      const tc = x.tc
       const span = (
-        <span data-o={o} style={runCss(x.s)} data-cm={x.cm?.join(' ')}>
+        <span
+          data-o={o}
+          style={tc ? { ...runCss(x.s), ...trackCss(tc) } : runCss(x.s)}
+          data-cm={x.cm?.join(' ')}
+          data-tc={tc?.k}
+          title={tc ? `${tc.k === 'ins' ? 'Inserted' : 'Deleted'}${tc.author ? ` by ${tc.author}` : ''}${tc.date ? ` · ${new Date(tc.date).toLocaleString()}` : ''}` : undefined}
+        >
           {x.text}
         </span>
       )

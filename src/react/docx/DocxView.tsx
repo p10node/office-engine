@@ -689,6 +689,8 @@ export function DocxView({ client, onStatus, initialZoom = 'fit' }: DocxViewProp
 
   // ---- comments: threads mark their text; the panel asks the editor where they are ----
   const cm = useCommentsCtl()
+  // tracked changes are signed like comments: the collaboration user, else "Me"
+  editor.author = () => cm?.me.name ?? 'Me'
   const cmState = useCommentsState(cm)
   const revealRef = useRef<(id: string) => void>(() => {})
   revealRef.current = (id: string) => {
@@ -916,6 +918,7 @@ export function DocxView({ client, onStatus, initialZoom = 'fit' }: DocxViewProp
           image={imageActions}
           onPageSetup={done ? () => setPageDlg(true) : undefined}
           onHeaderFooter={done ? () => setHfDlg('header') : undefined}
+          onNotice={setToast}
         />
       )}
       {!isEditing && done && (
