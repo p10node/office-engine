@@ -161,15 +161,16 @@ Comment text is plain (lines kept); formatting inside comments read from a file 
 - PPTX: only `a:p` of edited shapes are regenerated
 - Unchanged ZIP entries are copied as-is (no recompression)
 
-| Operation                            | File                                | Time         |
-|--------------------------------------|-------------------------------------|--------------|
-| Type 1 char (browser)                | DOCX 2073 pages                     | ~7 ms        |
-| Save after edit                      | DOCX 20k paragraphs                 | ~0.5 s       |
-| Save after editing 2 cells           | XLSX 300k rows (25 MB)              | ~3 s         |
-| Open (rows streamed in)              | CSV 1M rows × 10 cols (99 MB)       | ~2.4 s       |
-| Open (rows paged, ~1 GB of memory)   | CSV 25M rows × 10 cols (2.7 GB)     | ~14 s        |
-| Open (rows paged, ~1 GB of memory)   | CSV 100M rows × 10 cols (10.6 GB)   | ~50 s        |
-| Save (every row written)             | CSV 1M rows → XLSX (56 MB)          | ~13 s        |
+| Operation                              | File                                  | Time           |
+|----------------------------------------|---------------------------------------|----------------|
+| Type 1 char (browser)                  | DOCX 2073 pages                       | ~7 ms          |
+| Save after edit                        | DOCX 20k paragraphs                   | ~0.5 s         |
+| Save after editing 2 cells             | XLSX 300k rows (25 MB)                | ~3 s           |
+| Open (rows streamed in)                | CSV 1M rows × 10 cols (99 MB)         | ~2.4 s         |
+| Open (rows paged, ~1 GB of memory)     | CSV 25M rows × 10 cols (2.7 GB)       | ~14 s          |
+| Open (rows paged, ~1 GB of memory)     | CSV 100M rows × 10 cols (10.6 GB)     | ~50 s          |
+| Open (rows paged, <1 GB of memory)     | CSV 500M rows × 10 cols (55 GB)       | ~4.5 min       |
+| Save (every row written)               | CSV 1M rows → XLSX (56 MB)            | ~13 s          |
 
 ## Limitations
 

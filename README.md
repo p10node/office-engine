@@ -9,7 +9,7 @@ View + edit **DOCX / XLSX / PPTX** directly in the browser, view Apple **Pages**
 
 **Zero runtime dependencies, zero servers.** Parsing, layout, formulas, diagrams and ZIP are all in the library, running in a Web Worker: nothing leaves the browser.
 
-**Open a 10 GB CSV in a browser tab.** There is no row limit: the first screen shows in under a second, 12 million cells stay in memory and every other row is read from the file the moment it scrolls into view. 100 million rows × 10 columns (10.6 GB) open in ~50 s in Chrome and the tab stays at ~1 GB of memory, whether the file has one million rows or a hundred. XLSX goes to Excel's full 1,048,576 × 16,384 (300k rows open in ~2 s), DOCX to thousands of pages, PPTX to hundreds of slides.
+**Open a 55 GB CSV in a browser tab.** There is no row limit: the first screen shows in seconds, 12 million cells stay in memory and every other row is read from the file the moment it scrolls into view. 500 million rows × 10 columns (55 GB) open in ~4.5 min in Chrome, 100 million (10.6 GB) in ~50 s, and the tab stays under 1 GB of memory either way, whether the file has one million rows or five hundred. XLSX goes to Excel's full 1,048,576 × 16,384 (300k rows open in ~2 s), DOCX to thousands of pages, PPTX to hundreds of slides.
 
 **[npm](https://www.npmjs.com/package/@p10node/office-engine)** · **[Live demo](https://p10node.github.io/office-engine/demo/)** · **[Docs](https://p10node.github.io/office-engine/)**
 
@@ -79,14 +79,15 @@ Also online at [p10node.github.io/office-engine](https://p10node.github.io/offic
 
 Full list, format coverage and limitations: [Features](docs/features.md).
 
-| File                                    | Size          | First paint       | Fully loaded            |
-|-----------------------------------------|---------------|-------------------|-------------------------|
-| DOCX 20k paragraphs                     | 1.2 MB        | ~180 ms           | 2073 pages in ~2s       |
-| CSV 1M rows × 10 cols                   | 99.1 MB       | ~270 ms           | ~2.4s                   |
-| CSV 25M rows × 10 cols (rows paged)     | 2.67 GB       | ~270 ms           | ~14 s                   |
-| CSV 100M rows × 10 cols (rows paged)    | 10.6 GB       | ~690 ms           | ~50 s                   |
-| XLSX 300k rows × 12 cols                | 24.8 MB       | ~330 ms           | ~2s                     |
-| PPTX 305 slides                         | 0.3 MB        | ~110 ms           | on-demand               |
+| File                                      | Size            | First paint         | Fully loaded              |
+|-------------------------------------------|-----------------|---------------------|---------------------------|
+| DOCX 20k paragraphs                       | 1.2 MB          | ~180 ms             | 2073 pages in ~2s         |
+| CSV 1M rows × 10 cols                     | 99.1 MB         | ~270 ms             | ~2.4s                     |
+| CSV 25M rows × 10 cols (rows paged)       | 2.67 GB         | ~270 ms             | ~14 s                     |
+| CSV 100M rows × 10 cols (rows paged)      | 10.6 GB         | ~690 ms             | ~50 s                     |
+| CSV 500M rows × 10 cols (rows paged)      | 55 GB           | ~2.8 s              | ~4.5 min                  |
+| XLSX 300k rows × 12 cols                  | 24.8 MB         | ~330 ms             | ~2s                       |
+| PPTX 305 slides                           | 0.3 MB          | ~110 ms             | on-demand                 |
 
 Measured in headless Chromium on Apple M-series.
 
