@@ -1,0 +1,19 @@
+---
+title: Order handling
+---
+flowchart TD
+    start([New order]) --> check{In stock?}
+    check -- yes --> pay[Take payment]
+    check -- no --> back[[Back-order]]
+    back -.-> notify>Email the customer]
+    pay --> ok{Paid?}
+    ok -->|yes| ship[(Warehouse queue)]
+    ok -->|no| cancel[Cancel order]
+    ship --> done((Done))
+    cancel --> done
+    subgraph Fulfilment
+        ship
+        done
+    end
+    classDef warn fill:#fdecea,stroke:#c0392b,color:#7b1d14
+    class cancel warn

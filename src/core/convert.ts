@@ -152,11 +152,27 @@ export interface ImportRun {
   href?: string
 }
 
+/** a picture of its own paragraph: an SVG drawing (diagrams) */
+export interface ImportImage {
+  svg: string
+  /** size in px (1/96 in) */
+  w: number
+  h: number
+  alt?: string
+}
+
 export interface ImportPara {
   runs: ImportRun[]
   /** heading level 1-6 */
   heading?: number
   list?: 'bullet' | 'number'
+  align?: 'center'
+  image?: ImportImage
+}
+
+export interface DocxOptions {
+  /** Letter landscape instead of portrait */
+  landscape?: boolean
 }
 
 /** One paragraph per line. */
@@ -334,9 +350,33 @@ function numberingXml(nums: ('bullet' | 'number')[]): string {
   return x + '</w:numbering>'
 }
 
-/** Builds a document (Letter, 1" margins, Calibri 11) from paragraphs of formatted runs. */
-export function parasToDocx(paras: ImportPara[]): Promise<Blob> {
+const EMU_PX = 9525
+
+/** an inline picture scaled down to fit `maxW` × `maxH` px */
+function drawingXml(img: ImportImage, rid: string, id: number, maxW: number, maxH: number): string {
+  const scale = Math.min(1, maxW / img.w, maxH / img.h)
+  const cx = Math.max(1, Math.round(img.w * scale * EMU_PX))
+  const cy = Math.max(1, Math.round(img.h * scale * EMU_PX))
+  const A = 'http://schemas.openxmlformats.org/drawingml/2006/main'
+  const PIC = 'http://schemas.openxmlformats.org/drawingml/2006/picture'
+  const WP = 'http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing'
+  const descr = img.alt ? ` descr="${escAttr(img.alt)}"` : ''
+  return (
+    `<w:r><w:drawing><wp:inline xmlns:wp="${WP}" distT="0" distB="0" distL="0" distR="0"><wp:extent cx="${cx}" cy="${cy}"/><wp:effectExtent l="0" t="0" r="0" b="0"/>` +
+    `<wp:docPr id="${id}" name="Diagram ${id}"${descr}/><wp:cNvGraphicFramePr><a:graphicFrameLocks xmlns:a="${A}" noChangeAspect="1"/></wp:cNvGraphicFramePr>` +
+    `<a:graphic xmlns:a="${A}"><a:graphicData uri="${PIC}"><pic:pic xmlns:pic="${PIC}"><pic:nvPicPr><pic:cNvPr id="${id}" name="diagram${id}.svg"${descr}/><pic:cNvPicPr/></pic:nvPicPr>` +
+    `<pic:blipFill><a:blip r:embed="${rid}"/><a:stretch><a:fillRect/></a:stretch></pic:blipFill><pic:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="${cx}" cy="${cy}"/></a:xfrm>` +
+    `<a:prstGeom prst="rect"><a:avLst/></a:prstGeom></pic:spPr></pic:pic></a:graphicData></a:graphic></wp:inline></w:drawing></w:r>`
+  )
+}
+
+/** Builds a document (Letter, 1" margins, Calibri 11) from paragraphs of formatted runs and pictures. */
+export function parasToDocx(paras: ImportPara[], opts: DocxOptions = {}): Promise<Blob> {
   const W = 'http://schemas.openxmlformats.org/wordprocessingml/2006/main'
+  // the text area in px: 6.5" × 9" (portrait), 9" × 6.5" (landscape)
+  const areaW = opts.landscape ? 864 : 624
+  const areaH = opts.landscape ? 600 : 840
+  const images: string[] = []
   const links: string[] = []
   const nums: ('bullet' | 'number')[] = []
   let prevList: 'bullet' | 'number' | undefined
@@ -350,7 +390,12 @@ export function parasToDocx(paras: ImportPara[]): Promise<Blob> {
       pPr += `<w:numPr><w:ilvl w:val="0"/><w:numId w:val="${nums.length}"/></w:numPr>`
     }
     prevList = p.list
+    if (p.align === 'center') pPr += '<w:jc w:val="center"/>'
     let runs = ''
+    if (p.image) {
+      images.push(p.image.svg)
+      runs += drawingXml(p.image, `rIdM${images.length}`, images.length, areaW, areaH)
+    }
     for (let i = 0; i < p.runs.length; ) {
       const href = p.runs[i].href
       if (!href) {
@@ -368,7 +413,7 @@ export function parasToDocx(paras: ImportPara[]): Promise<Blob> {
     body += `<w:p>${pPr ? `<w:pPr>${pPr}</w:pPr>` : ''}${runs}</w:p>`
   }
   if (!body) body = '<w:p/>'
-  const sect = '<w:sectPr><w:pgSz w:w="12240" w:h="15840"/><w:pgMar w:top="1440" w:right="1440" w:bottom="1440" w:left="1440" w:header="720" w:footer="720" w:gutter="0"/></w:sectPr>'
+  const sect = `<w:sectPr>${opts.landscape ? '<w:pgSz w:w="15840" w:h="12240" w:orient="landscape"/>' : '<w:pgSz w:w="12240" w:h="15840"/>'}<w:pgMar w:top="1440" w:right="1440" w:bottom="1440" w:left="1440" w:header="720" w:footer="720" w:gutter="0"/></w:sectPr>`
   const styles =
     `${XML}<w:styles xmlns:w="${W}"><w:docDefaults><w:rPrDefault><w:rPr><w:rFonts w:ascii="Calibri" w:hAnsi="Calibri" w:eastAsia="Calibri" w:cs="Calibri"/><w:sz w:val="22"/><w:szCs w:val="22"/><w:lang w:val="en-US"/></w:rPr></w:rPrDefault>` +
     '<w:pPrDefault><w:pPr><w:spacing w:after="160" w:line="259" w:lineRule="auto"/></w:pPr></w:pPrDefault></w:docDefaults>' +
@@ -380,11 +425,13 @@ export function parasToDocx(paras: ImportPara[]): Promise<Blob> {
   const rels =
     `${XML}<Relationships xmlns="${PKG_REL}"><Relationship Id="rId1" Type="${REL}/styles" Target="styles.xml"/><Relationship Id="rId2" Type="${REL}/numbering" Target="numbering.xml"/>` +
     links.map((u, k) => `<Relationship Id="rIdL${k + 1}" Type="${REL}/hyperlink" Target="${escAttr(u)}" TargetMode="External"/>`).join('') +
+    images.map((_, k) => `<Relationship Id="rIdM${k + 1}" Type="${REL}/image" Target="media/diagram${k + 1}.svg"/>`).join('') +
     '</Relationships>'
   const parts = new Map<string, string>([
     [
       '[Content_Types].xml',
       `${XML}<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">${CT_RELS}` +
+        (images.length ? '<Default Extension="svg" ContentType="image/svg+xml"/>' : '') +
         '<Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/>' +
         '<Override PartName="/word/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml"/>' +
         '<Override PartName="/word/numbering.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.numbering+xml"/></Types>',
@@ -394,6 +441,7 @@ export function parasToDocx(paras: ImportPara[]): Promise<Blob> {
     ['word/document.xml', `${XML}<w:document xmlns:w="${W}" xmlns:r="${REL}"><w:body>${body}${sect}</w:body></w:document>`],
     ['word/styles.xml', styles],
     ['word/numbering.xml', numberingXml(nums)],
+    ...images.map((svg, k) => [`word/media/diagram${k + 1}.svg`, svg] as [string, string]),
   ])
   return writeZip(parts, DOCX_MIME)
 }

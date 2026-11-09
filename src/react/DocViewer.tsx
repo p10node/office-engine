@@ -12,9 +12,10 @@ import { FileMenu, KIND_LABEL, useFileActions, type FileMenuItem } from './file/
 import { importFile, type Imported } from './file/importFile'
 import { blankPptx, parasToDocx, rowsToXlsx } from '../core/convert'
 import type { DocKind } from '../core/opc'
-import type { PlainFormat } from '../core/plain'
+import { extOf, HAS_SOURCE, PLAIN_EXT, PLAIN_FILE, type PlainFormat } from '../core/plain'
 import { injectStyles } from './injectStyles'
-import { isTextEntry, useDarkTheme, type Theme } from './common/hooks'
+import { isTextEntry, useDarkTheme, useSize, type Theme } from './common/hooks'
+import { SourceEditor } from './source/SourceEditor'
 import { PptxView } from './pptx/PptxView'
 import { useDocument } from './useDocument'
 import { XlsxView } from './xlsx/XlsxView'
@@ -98,9 +99,27 @@ export interface DocViewerProps {
 
 const EXT: Record<string, string> = { docx: '.docx', xlsx: '.xlsx', pptx: '.pptx' }
 const FROM_LABEL: Record<'pages' | 'keynote' | 'numbers', string> = { pages: 'Apple Pages document', keynote: 'Apple Keynote presentation', numbers: 'Apple Numbers spreadsheet' }
-const IMPORTED_BADGE: Record<PlainFormat, string> = { csv: 'csv', tsv: 'tsv', text: 'txt', markdown: 'md', html: 'html' }
-const IMPORTED_LABEL: Record<PlainFormat, string> = { csv: 'CSV file', tsv: 'Tab-separated values', text: 'Plain text', markdown: 'Markdown', html: 'HTML page' }
+const IMPORTED_BADGE: Record<PlainFormat, string> = { csv: 'csv', tsv: 'tsv', text: 'txt', markdown: 'md', html: 'html', mermaid: 'mmd', plantuml: 'puml', graphviz: 'dot' }
+const IMPORTED_LABEL: Record<PlainFormat, string> = {
+  csv: 'CSV file',
+  tsv: 'Tab-separated values',
+  text: 'Plain text',
+  markdown: 'Markdown',
+  html: 'HTML page',
+  mermaid: 'Mermaid diagram',
+  plantuml: 'PlantUML diagram',
+  graphviz: 'Graphviz diagram',
+}
 const UNTITLED: Record<DocKind, string> = { docx: 'Untitled document', xlsx: 'Untitled spreadsheet', pptx: 'Untitled presentation' }
+
+/** a key per opened client: a view is built again for each (the edited source's previews have one name) */
+const clientIds = new WeakMap<object, number>()
+let nextClientId = 0
+const clientKey = (c: object) => {
+  let id = clientIds.get(c)
+  if (id === undefined) clientIds.set(c, (id = ++nextClientId))
+  return id
+}
 
 function fmtBytes(n: number) {
   if (n < 1024) return `${n} B`
@@ -129,7 +148,8 @@ export function DocViewer(props: DocViewerProps) {
   }, [src])
   const loadName = opened ? opened.name : name
   // the name is part of what is loaded: Rename only changes what is shown and saved
-  const { client, error, loading, progress } = useDocument(opened ? opened.src : src, { name: loadName, headers, credentials, worker })
+  // a preview of the edited source keeps the one shown until it is ready
+  const { client, error, loading, progress } = useDocument(opened ? opened.src : src, { name: loadName, headers, credentials, worker }, !!opened?.live)
   const docName = renamed ?? loadName
   const collab = useCollab(client, props.collab)
   // converted from another format (Apple Pages, Keynote, Numbers): view only
@@ -137,6 +157,59 @@ export function DocViewer(props: DocViewerProps) {
   // with collaboration, editing waits for the shared history (offline edits sync on reconnect)
   const canEdit = !readOnly && (!props.collab || collab.status === 'live' || collab.status === 'offline')
   const [statusEl, setStatusEl] = useState<HTMLSpanElement | null>(null)
+
+  // ---- source (Markdown, HTML, diagrams): edited side by side with the document built from it ----
+  const srcFormat = client?.info?.imported
+  const hasSource = !!srcFormat && HAS_SOURCE.has(srcFormat)
+  const [codeOpen, setCodeOpen] = useState(false)
+  const codeShown = codeOpen && hasSource
+  const [code, setCode] = useState<string | null>(null)
+  const sourceEdited = useRef(false)
+  const reloadTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
+  useEffect(() => () => clearTimeout(reloadTimer.current), [])
+  // another document (not a preview of the edited source): its own source
+  useEffect(() => {
+    if (opened?.live) return
+    clearTimeout(reloadTimer.current)
+    setCode(null)
+    sourceEdited.current = false
+  }, [src, opened])
+  useEffect(() => {
+    if (!client || !codeShown || code !== null) return
+    let live = true
+    client.call('plain.source').then(
+      (t) => live && setCode(t ?? ''),
+      () => {},
+    )
+    return () => {
+      live = false
+    }
+  }, [client, codeShown, code])
+  const [bodyRef, bodySize] = useSize<HTMLDivElement>()
+  const mainRef = useRef<HTMLDivElement>(null)
+  const stacked = bodySize.w > 0 && bodySize.w < 720
+  const [split, setSplit] = useState(0.45)
+  // the preview's scroll position, kept across rebuilds
+  const restoreScroll = useRef<number | null>(null)
+  useEffect(() => {
+    const ratio = restoreScroll.current
+    if (ratio === null || !client) return
+    restoreScroll.current = null
+    let raf = 0
+    let frames = 0
+    let lastH = -1
+    const tick = () => {
+      const sc = mainRef.current?.querySelector<HTMLElement>('.de-scroll')
+      if (sc && sc.scrollHeight > sc.clientHeight + 1) {
+        sc.scrollTop = ratio * (sc.scrollHeight - sc.clientHeight)
+        if (sc.scrollHeight === lastH) return
+        lastH = sc.scrollHeight
+      }
+      if (++frames < 40) raf = requestAnimationFrame(tick)
+    }
+    raf = requestAnimationFrame(tick)
+    return () => cancelAnimationFrame(raf)
+  }, [client])
 
   // ---- comments ----
   const cmOn = props.comments !== false
@@ -210,10 +283,48 @@ export function DocViewer(props: DocViewerProps) {
   }, [client, saving, canSave, onSave, fileName, setDirty, onError])
   const fileOps = useRef<FileOps | null>(null)
   const selectAll = useRef<(() => void) | null>(null)
+  // next to its source, the document is a preview: it is edited through the source
+  const docEditable = editing && canEdit && !codeShown
   const api = useMemo<ViewerApi>(
-    () => ({ bar: barEl, editable: editing && canEdit, setDirty, save, canDownload: allowDownload, client, fileOps, selectAll }),
-    [barEl, editing, canEdit, setDirty, save, allowDownload, client],
+    () => ({ bar: barEl, editable: docEditable, setDirty, save, canDownload: allowDownload, client, fileOps, selectAll }),
+    [barEl, docEditable, setDirty, save, allowDownload, client],
   )
+
+  const editSource = (text: string) => {
+    setCode(text)
+    if (!sourceEdited.current) setDirty(true)
+    sourceEdited.current = true
+    clearTimeout(reloadTimer.current)
+    const fmt = srcFormat
+    if (!fmt) return
+    reloadTimer.current = setTimeout(() => {
+      const sc = mainRef.current?.querySelector<HTMLElement>('.de-scroll')
+      restoreScroll.current = sc && sc.scrollHeight > sc.clientHeight ? sc.scrollTop / (sc.scrollHeight - sc.clientHeight) : null
+      // the same name: the same format, title and saved name
+      let n = client?.name || loadName || `document.${PLAIN_FILE[fmt].ext}`
+      if (PLAIN_EXT[extOf(n)] !== fmt) n += `.${PLAIN_FILE[fmt].ext}`
+      openedDirty.current = true
+      setOpened({ src: new Blob([text], { type: PLAIN_FILE[fmt].mime }), name: n, converted: true, live: true })
+    }, 350)
+  }
+  const sourceName = () => `${(renamed ?? client?.name ?? docName ?? 'document').replace(/\.[^.]+$/, '')}.${PLAIN_FILE[srcFormat ?? 'text'].ext}`
+  const dragSplit = (e: React.PointerEvent<HTMLDivElement>) => {
+    const body = bodyRef.current
+    if (!body) return
+    e.preventDefault()
+    const handle = e.currentTarget
+    handle.setPointerCapture(e.pointerId)
+    const r = body.getBoundingClientRect()
+    const move = (ev: PointerEvent) => setSplit(Math.min(0.85, Math.max(0.15, stacked ? (ev.clientY - r.top) / r.height : (ev.clientX - r.left) / r.width)))
+    const up = () => {
+      handle.removeEventListener('pointermove', move)
+      handle.removeEventListener('pointerup', up)
+      handle.removeEventListener('pointercancel', up)
+    }
+    handle.addEventListener('pointermove', move)
+    handle.addEventListener('pointerup', up)
+    handle.addEventListener('pointercancel', up)
+  }
   const rootRef = useRef<HTMLDivElement>(null)
   // captureSelectAll: Ctrl/⌘+A from the rest of the page too (the viewer's own keys are handled in onKeyDown below)
   useEffect(() => {
@@ -300,6 +411,12 @@ export function DocViewer(props: DocViewerProps) {
   const onKeyDown = (e: React.KeyboardEvent) => {
     if (e.defaultPrevented || !(e.metaKey || e.ctrlKey) || e.altKey || e.shiftKey) return
     const k = e.key.toLowerCase()
+    // Ctrl/⌘+S in the source: the viewer's Save
+    if (k === 's' && (e.target as HTMLElement).closest?.('.de-src')) {
+      e.preventDefault()
+      void save()
+      return
+    }
     if (k === 'a') {
       // from the viewer's own chrome: the document, not the whole page (text fields keep their own select-all)
       if (isTextEntry(e.target) || !selectAll.current) return
@@ -339,7 +456,7 @@ export function DocViewer(props: DocViewerProps) {
     ) : (
       <div className="de-center">No document</div>
     )
-  } else if (client.kind === 'docx') body = <DocxView key={String(client.name) + client.size} client={client} initialZoom={zoom} />
+  } else if (client.kind === 'docx') body = <DocxView key={clientKey(client)} client={client} initialZoom={zoom} />
   else if (client.kind === 'xlsx') body = <XlsxView client={client} />
   else body = <PptxView client={client} initialZoom={zoom} thumbnails={thumbnails} />
 
@@ -356,6 +473,19 @@ export function DocViewer(props: DocViewerProps) {
           {client && client.size > 0 && <span className="de-status">{fmtBytes(client.size)}</span>}
           {client && props.collab && <CollabBar client={client} state={collab} />}
           {toolbarExtra}
+          {client && hasSource && (
+            <button
+              type="button"
+              className={'de-mode' + (codeShown ? ' de-mode-on' : '')}
+              onClick={() => setCodeOpen((v) => !v)}
+              aria-pressed={codeShown}
+              title={codeShown ? 'Hide the source' : 'Edit the source side by side with the document'}
+              data-testid="de-code-toggle"
+            >
+              <Icon name="code" size={16} />
+              Code
+            </button>
+          )}
           {cmCtl && (
             <button
               type="button"
@@ -370,7 +500,7 @@ export function DocViewer(props: DocViewerProps) {
               {cmCount > 0 && <span className="de-cm-n">{cmCount}</span>}
             </button>
           )}
-          {client && allowEdit && !readOnly && (
+          {client && allowEdit && !readOnly && !codeShown && (
             <button type="button" className={editing ? 'de-mode de-mode-on' : 'de-mode'} onClick={() => setEditing((v) => !v)} title={editing ? 'Switch to viewing' : 'Edit document'}>
               <Icon name={editing ? 'view' : 'edit'} size={16} />
               {editing ? 'View' : 'Edit'}
@@ -385,13 +515,62 @@ export function DocViewer(props: DocViewerProps) {
           <div className="de-progress" style={{ width: `${busy ? Math.max(pct, 3) : 100}%`, opacity: busy ? 1 : 0 }} />
         </div>
       )}
-      {toolbar && client && editing && canEdit && <div className="de-ebar-host" ref={setBarEl} />}
-      <div className="de-body">
-        <ViewerContext.Provider value={api}>
-          <CommentsContext.Provider value={cmCtl}>
-            <StatusContext.Provider value={statusEl}>{body}</StatusContext.Provider>
-          </CommentsContext.Provider>
-        </ViewerContext.Provider>
+      {toolbar && client && docEditable && <div className="de-ebar-host" ref={setBarEl} />}
+      <div className={'de-body' + (codeShown && stacked ? ' de-body-stacked' : '')} ref={bodyRef}>
+        {codeShown && (
+          <div className="de-src-pane" style={stacked ? { height: `${split * 100}%` } : { width: `${split * 100}%` }}>
+            {code === null ? (
+              <div className="de-center">
+                <div className="de-spinner" />
+              </div>
+            ) : (
+              <SourceEditor
+                text={code}
+                format={srcFormat!}
+                onChange={editSource}
+                readOnly={!allowEdit || !!props.collab}
+                notice={
+                  dirty && !sourceEdited.current
+                    ? 'Changes made in the document are not in this source: editing it builds the document again from the source.'
+                    : undefined
+                }
+                onCopy={() =>
+                  navigator.clipboard?.writeText(code).then(
+                    () => setToast('Source copied'),
+                    () => setToast('Cannot copy here'),
+                  )
+                }
+                onDownload={allowDownload ? () => download(new Blob([code], { type: PLAIN_FILE[srcFormat!].mime }), sourceName()) : undefined}
+              />
+            )}
+          </div>
+        )}
+        {codeShown && (
+          <div
+            className="de-split-handle"
+            role="separator"
+            aria-orientation={stacked ? 'horizontal' : 'vertical'}
+            aria-label="Resize the source"
+            aria-valuenow={Math.round(split * 100)}
+            aria-valuemin={15}
+            aria-valuemax={85}
+            tabIndex={0}
+            onPointerDown={dragSplit}
+            onKeyDown={(e) => {
+              const d = e.key === (stacked ? 'ArrowUp' : 'ArrowLeft') ? -0.05 : e.key === (stacked ? 'ArrowDown' : 'ArrowRight') ? 0.05 : 0
+              if (!d) return
+              e.preventDefault()
+              setSplit((v) => Math.min(0.85, Math.max(0.15, v + d)))
+            }}
+          />
+        )}
+        <div className="de-main" ref={mainRef}>
+          <ViewerContext.Provider value={api}>
+            <CommentsContext.Provider value={cmCtl}>
+              <StatusContext.Provider value={statusEl}>{body}</StatusContext.Provider>
+            </CommentsContext.Provider>
+          </ViewerContext.Provider>
+        </div>
         {client && collab.collab && <PeerOverlay client={client} collab={collab.collab} />}
         {cmCtl && cmState.open && <CommentsPanel ctl={cmCtl} />}
       </div>

@@ -31,7 +31,7 @@ import { DocViewer } from '@p10node/office-engine'
 | Print (`Ctrl+P`)          | ✓                          | ✓                              | ✓                          |
 | Host items, Close         | `fileMenuItems`, `onClose` | `fileMenuItems`, `onClose`     | `fileMenuItems`, `onClose` |
 
-Open converts other formats: `.csv` / `.tsv` → workbook, `.txt` / `.md` / `.html` → document (headings, lists, bold / italic, links). Converted files start unsaved; Save writes the Office file.
+Open converts other formats: `.csv` / `.tsv` → workbook, `.txt` / `.md` / `.html` → document (headings, lists, bold / italic, links), `.mmd` / `.puml` / `.dot` / `.gv` → document with the drawing. Converted files start unsaved; Save writes the Office file.
 New / Open replace the shown document until the host passes another `src` (unsaved changes are confirmed first; both are hidden during collaboration).
 Rename changes the shown name and the name used by Save / Download (`onRename` receives it); it does not reload the document.
 Document details also lists the file's core properties (title, author, created, modified…).
@@ -48,35 +48,35 @@ PDF goes through the browser print dialog ("Save as PDF"), so text stays selecta
 
 CSS is auto-injected, no import needed. Container must have a height.
 
-| Prop               | Type                                           | Default   | Notes                                                                                                |
-|--------------------|------------------------------------------------|-----------|------------------------------------------------------------------------------------------------------|
-| `src`              | `File \| Blob \| ArrayBuffer \| string \| URL` | –         | Document: Office; Pages / Keynote / Numbers; CSV / TSV, text, Markdown, HTML (as xlsx / docx)        |
-| `name`             | `string`                                       | auto      | Display name; its extension also tells the format of a `Blob` / `ArrayBuffer`                        |
-| `toolbar`          | `boolean`                                      | `true`    | Top bar (name, status, progress)                                                                     |
-| `toolbarExtra`     | `ReactNode`                                    | –         | Extra buttons on the right of the toolbar                                                            |
-| `zoom`             | `number \| 'fit'`                              | `'fit'`   | Initial zoom (docx/pptx)                                                                             |
-| `thumbnails`       | `boolean`                                      | `true`    | Thumbnail column for pptx                                                                            |
-| `headers`          | `Record<string,string>`                        | –         | Headers for URL requests                                                                             |
-| `credentials`      | `RequestCredentials`                           | –         | Cross-origin cookies                                                                                 |
-| `worker`           | `() => Worker \| false`                        | inline    | Custom worker (CSP), `false` = main thread                                                           |
-| `styleTarget`      | `Document \| ShadowRoot`                       | document  | Where CSS is injected                                                                                |
-| `theme`            | `'light' \| 'dark' \| 'auto'`                  | `'light'` | Color scheme of the chrome; `'auto'` follows `prefers-color-scheme`. Documents keep their own colors |
-| `editable`         | `boolean`                                      | `false`   | Open in edit mode (Pages, Keynote and Numbers files stay view only)                                  |
-| `allowEdit`        | `boolean`                                      | `true`    | Show Edit/View button                                                                                |
-| `allowSave`        | `boolean`                                      | `true`    | Show Save/Download button, enable Ctrl+S                                                             |
-| `allowDownload`    | `boolean`                                      | `true`    | Allow downloads to device (save without `onSave`, images)                                            |
-| `fileMenu`         | `boolean`                                      | `true`    | File menu: open, download as PDF / HTML / text, print                                                |
-| `allowOpen`        | `boolean`                                      | `true`    | File → New / Open (off during collaboration)                                                         |
-| `captureSelectAll` | `boolean`                                      | `true`    | Ctrl/⌘+A from anywhere on the page selects the document; `false`: from the viewer only               |
-| `fileMenuItems`    | `FileMenuItem[]`                               | –         | Extra File menu entries (`label`, `onClick`, `icon`, `hint`)                                         |
-| `onRename`         | `(name) => void`                               | –         | File → Rename result (extension included)                                                            |
-| `onClose`          | `() => void`                                   | –         | Adds File → Close                                                                                    |
-| `onSave`           | `(blob, name) => void`                         | download  | Receives saved file (downloads by default)                                                           |
-| `onDirtyChange`    | `(dirty) => void`                              | –         | Whether there are unsaved changes                                                                    |
-| `collab`           | `CollabOptions`                                | –         | Real-time collaboration, see [collaboration](collaboration.md)                                       |
-| `comments`         | `CommentOptions \| false`                      | `{}`      | Comments (see below); `false` hides them                                                             |
-| `onLoad`           | `(client) => void`                             | –         |                                                                                                      |
-| `onError`          | `(error) => void`                              | –         |                                                                                                      |
+| Prop               | Type                                           | Default   | Notes                                                                                                   |
+|--------------------|------------------------------------------------|-----------|---------------------------------------------------------------------------------------------------------|
+| `src`              | `File \| Blob \| ArrayBuffer \| string \| URL` | –         | Document: Office; Pages / Keynote / Numbers; CSV / TSV, text, Markdown, HTML, diagrams (as xlsx / docx) |
+| `name`             | `string`                                       | auto      | Display name; its extension also tells the format of a `Blob` / `ArrayBuffer`                           |
+| `toolbar`          | `boolean`                                      | `true`    | Top bar (name, status, progress)                                                                        |
+| `toolbarExtra`     | `ReactNode`                                    | –         | Extra buttons on the right of the toolbar                                                               |
+| `zoom`             | `number \| 'fit'`                              | `'fit'`   | Initial zoom (docx/pptx)                                                                                |
+| `thumbnails`       | `boolean`                                      | `true`    | Thumbnail column for pptx                                                                               |
+| `headers`          | `Record<string,string>`                        | –         | Headers for URL requests                                                                                |
+| `credentials`      | `RequestCredentials`                           | –         | Cross-origin cookies                                                                                    |
+| `worker`           | `() => Worker \| false`                        | inline    | Custom worker (CSP), `false` = main thread                                                              |
+| `styleTarget`      | `Document \| ShadowRoot`                       | document  | Where CSS is injected                                                                                   |
+| `theme`            | `'light' \| 'dark' \| 'auto'`                  | `'light'` | Color scheme of the chrome; `'auto'` follows `prefers-color-scheme`. Documents keep their own colors    |
+| `editable`         | `boolean`                                      | `false`   | Open in edit mode (Pages, Keynote and Numbers files stay view only)                                     |
+| `allowEdit`        | `boolean`                                      | `true`    | Show Edit/View button                                                                                   |
+| `allowSave`        | `boolean`                                      | `true`    | Show Save/Download button, enable Ctrl+S                                                                |
+| `allowDownload`    | `boolean`                                      | `true`    | Allow downloads to device (save without `onSave`, images)                                               |
+| `fileMenu`         | `boolean`                                      | `true`    | File menu: open, download as PDF / HTML / text, print                                                   |
+| `allowOpen`        | `boolean`                                      | `true`    | File → New / Open (off during collaboration)                                                            |
+| `captureSelectAll` | `boolean`                                      | `true`    | Ctrl/⌘+A from anywhere on the page selects the document; `false`: from the viewer only                  |
+| `fileMenuItems`    | `FileMenuItem[]`                               | –         | Extra File menu entries (`label`, `onClick`, `icon`, `hint`)                                            |
+| `onRename`         | `(name) => void`                               | –         | File → Rename result (extension included)                                                               |
+| `onClose`          | `() => void`                                   | –         | Adds File → Close                                                                                       |
+| `onSave`           | `(blob, name) => void`                         | download  | Receives saved file (downloads by default)                                                              |
+| `onDirtyChange`    | `(dirty) => void`                              | –         | Whether there are unsaved changes                                                                       |
+| `collab`           | `CollabOptions`                                | –         | Real-time collaboration, see [collaboration](collaboration.md)                                          |
+| `comments`         | `CommentOptions \| false`                      | `{}`      | Comments (see below); `false` hides them                                                                |
+| `onLoad`           | `(client) => void`                             | –         |                                                                                                         |
+| `onError`          | `(error) => void`                              | –         |                                                                                                         |
 
 ### Comments
 
@@ -153,7 +153,7 @@ import { DocumentClient } from '@p10node/office-engine/core'
 const doc = await DocumentClient.open(fileOrUrl, { onProgress: console.log })
 doc.kind                                   // 'docx' | 'xlsx' | 'pptx'
 doc.info.from                              // 'pages' / 'keynote' / 'numbers': an Apple file, converted to docx / pptx / xlsx (view only)
-doc.info.imported                          // 'csv' / 'tsv' / 'text' / 'markdown' / 'html': a plain file, built as xlsx / docx (editable)
+doc.info.imported                          // 'csv' / 'tsv' / 'text' / 'markdown' / 'html' / 'mermaid' / 'plantuml' / 'graphviz': a plain file, built as xlsx / docx (editable)
 doc.on('docx:blocks', (blocks) => {})      // docx: streamed blocks
 await doc.call('docx.start')
 doc.call('xlsx.load', 0)                   // xlsx: stream sheet
@@ -165,6 +165,7 @@ const comments = await doc.call('comments.list')  // DocComment[]: threads are r
 doc.on('comment', ({ id, c }) => {})       // a comment set / deleted (c null), here or by a collaborator
 await doc.call('comments.set', c.id, { ...c, done: true }) // XLSX / PPTX threads carry their place (`at`)
 const blob = await doc.call('save')        // edited file
+await doc.call('plain.source')             // text of a Markdown / HTML / diagram file (null for other files)
 doc.destroy()
 ```
 

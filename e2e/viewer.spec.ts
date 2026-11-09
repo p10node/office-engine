@@ -3,7 +3,7 @@ import { parasToDocx } from '../src/core/convert'
 import { BlobSource } from '../src/core/source'
 import { ZipArchive } from '../src/core/zip'
 import { rebuildZip } from '../src/core/zipwrite'
-import { useBrowser, viewer } from './harness'
+import { docxParas, useBrowser, viewer } from './harness'
 
 useBrowser()
 
@@ -140,6 +140,118 @@ describe('viewing', () => {
     const text = await v.pagesText()
     for (const t of ['Field notes', 'Checklist', 'Survey the northern sites', 'Export the readings as CSV', 'Numbers are preliminary']) expect(text).toContain(t)
     expect(text).not.toContain('**')
+    // the ```mermaid block is a drawing, not code
+    expect(text).not.toContain('flowchart LR')
+    const img = v.page.locator('.de-page-inner img')
+    await img.first().waitFor()
+    expect(await img.count()).toBe(1)
+    expect(await img.first().evaluate((el: HTMLImageElement) => el.complete && el.naturalWidth > 100)).toBe(true)
+    expect(v.errors).toEqual([])
+  })
+
+  test('diagrams: Mermaid, PlantUML and Graphviz files open as drawings', async () => {
+    const files: [string, string, string, number][] = [
+      ['flowchart.mmd', 'MMD', 'Mermaid diagram', 1],
+      ['sequence.puml', 'PUML', 'PlantUML diagram', 1],
+      ['graph.dot', 'DOT', 'Graphviz diagram', 1],
+    ]
+    for (const [name, badge, , count] of files) {
+      const v = await viewer({ src: `samples/${name}` })
+      const { page } = v
+      expect(await v.title()).toBe(name)
+      expect(await page.locator('.de-badge').innerText()).toBe(badge)
+      const img = page.locator('.de-page-inner img')
+      await img.first().waitFor()
+      expect(await img.count()).toBe(count)
+      await page.waitForFunction(() => {
+        const el = document.querySelector('.de-page-inner img') as HTMLImageElement | null
+        return !!el && el.complete && el.naturalWidth > 0
+      })
+      const box = await img.first().boundingBox()
+      expect(box!.width).toBeGreaterThan(150)
+      expect(box!.height).toBeGreaterThan(100)
+      // the picture is a self-contained SVG
+      const src = await img.first().getAttribute('src')
+      const svg = await page.evaluate(async (u) => (await fetch(u!)).text(), src)
+      expect(svg.startsWith('<svg')).toBe(true)
+      expect(svg).not.toContain('<script')
+      if (process.env.DIAGRAM_SHOTS) await page.screenshot({ path: `${process.env.DIAGRAM_SHOTS}/${name}.png` })
+      const dl = await v.downloadAs('Word document')
+      expect(dl.name).toBe(name.replace(/\.\w+$/, '.docx'))
+      expect(dl.bytes.subarray(0, 2).toString()).toBe('PK')
+      expect(v.errors).toEqual([])
+    }
+  })
+
+  test('source side by side: Markdown edited, the document follows', async () => {
+    const v = await viewer({ src: 'samples/sample.md', onSave: true })
+    const { page } = v
+    await page.locator('.de-page-inner').first().waitFor()
+    await page.getByTestId('de-code-toggle').click()
+    const input = page.getByTestId('de-source-input')
+    await input.waitFor()
+    expect(await input.inputValue()).toContain('# Field notes')
+    // the document is a preview while its source is shown
+    expect(await v.barButton('Edit').count()).toBe(0)
+    if (process.env.DIAGRAM_SHOTS) await page.screenshot({ path: `${process.env.DIAGRAM_SHOTS}/split-md.png` })
+    await input.click()
+    await page.keyboard.press(process.platform === 'darwin' ? 'Meta+ArrowUp' : 'Control+Home')
+    await page.keyboard.type('# Edited title\n\n')
+    await page.waitForFunction(() => document.querySelector('.de-page-inner')?.textContent?.includes('Edited title'))
+    // the source keeps what was typed; the bar keeps the name
+    expect(await input.inputValue()).toMatch(/^# Edited title\n\n# Field notes/)
+    expect(await v.title()).toBe('sample.md')
+    expect(await page.locator('.de-badge').innerText()).toBe('MD')
+    const saved = await v.save()
+    expect(saved.name).toBe('sample.docx')
+    expect((await docxParas(saved.bytes)).map((p) => p.runs.map((r) => (r.t === 'text' ? r.text : '')).join(''))[0]).toBe('Edited title')
+    // closing the source: the document can be edited again
+    await page.getByTestId('de-code-toggle').click()
+    await input.waitFor({ state: 'detached' })
+    expect(await v.barButton('Edit').count()).toBe(1)
+    expect(v.errors).toEqual([])
+  })
+
+  test('source side by side: a diagram redrawn as its code changes; stacked when narrow', async () => {
+    const v = await viewer({ src: 'samples/flowchart.mmd' }, { viewport: { width: 600, height: 900 } })
+    const { page } = v
+    await page.locator('.de-page-inner img').first().waitFor()
+    await page.getByTestId('de-code-toggle').click()
+    const input = page.getByTestId('de-source-input')
+    await input.waitFor()
+    // narrow: the source above the drawing
+    const a = (await page.getByTestId('de-source').boundingBox())!
+    const b = (await page.locator('.de-main').boundingBox())!
+    expect(a.y + a.height).toBeLessThanOrEqual(b.y + 1)
+    const svgText = () => page.evaluate(async () => {
+      const img = document.querySelector('.de-page-inner img') as HTMLImageElement
+      return img ? (await fetch(img.src)).text() : ''
+    })
+    expect(await svgText()).toContain('>Take payment<')
+    const before = await page.locator('.de-page-inner img').first().getAttribute('src')
+    await input.fill((await input.inputValue()).replace('Take payment', 'Charge the card'))
+    // a new picture, drawn from the new code
+    await page.waitForFunction((was) => {
+      const img = document.querySelector('.de-page-inner img') as HTMLImageElement | null
+      return !!img && img.src !== was && img.complete && img.naturalWidth > 0
+    }, before)
+    expect(await svgText()).toContain('>Charge the card<')
+    expect(await page.locator('.de-badge').innerText()).toBe('MMD')
+    if (process.env.DIAGRAM_SHOTS) await page.screenshot({ path: `${process.env.DIAGRAM_SHOTS}/split-mmd.png` })
+    // a broken diagram: why, and the source, in the document
+    await input.fill('flowchart TD\n  A --> B\ngitGraph')
+    await page.waitForFunction(() => document.querySelector('.de-page-inner img') !== null)
+    await input.fill('gitGraph\n  commit')
+    await page.waitForFunction(() => document.querySelector('.de-page-inner')?.textContent?.includes('not drawn'))
+    expect(v.errors).toEqual([])
+  })
+
+  test('a diagram without a name: told by its content', async () => {
+    const v = await viewer({ src: 'samples/sample.docx' })
+    const { page } = v
+    await page.evaluate(() => window.__setProps({ src: new Blob(['sequenceDiagram\n  Alice->>Bob: Hello\n  Bob-->>Alice: Hi'], { type: 'text/plain' }) }))
+    await page.waitForFunction(() => document.querySelector('.de-badge')?.textContent === 'mmd')
+    await page.locator('.de-page-inner img').first().waitFor()
     expect(v.errors).toEqual([])
   })
 

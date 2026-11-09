@@ -1,0 +1,20 @@
+@startuml
+title Sign in
+actor User
+participant "Web app" as App
+participant "Auth service" as Auth
+database Users
+
+User -> App ++ : open /login
+App -> Auth ++ : verify(email, password)
+Auth -> Users : find user
+Users --> Auth : record
+alt password matches
+  Auth --> App : token
+  App --> User : dashboard
+else wrong password
+  Auth --> App -- : 401
+  App --> User -- : "Try again"
+end
+note over User, App : The token is kept for 30 days
+@enduml

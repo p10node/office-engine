@@ -4,7 +4,7 @@ import type { CanonStyle, EditOp, HFSet, PageSet, ParaSpec, StyleLook, TableOp }
 import { OpcPackage, type DocKind } from '../opc'
 import { PptxPresentation } from '../pptx/parser'
 import { BlobSource, openSource, type DocSource } from '../source'
-import { decodeText, mayBePlain, plainFormat, plainToOffice } from '../plain'
+import { decodeText, HAS_SOURCE, mayBePlain, plainFormat, plainToOffice } from '../plain'
 import { XlsxWorkbook } from '../xlsx/workbook'
 import { XlsxEditor } from '../xlsx/editor'
 import type { BookOp, CellInput, FindOptions, FmtPatch, Range, SheetOp } from '../xlsx/types'
@@ -38,6 +38,7 @@ export class Engine {
   private xlsxEd?: XlsxEditor
   private pptx?: PptxPresentation
   private abort = new AbortController()
+  private plainText: string | null = null
 
   constructor(private emit: Emit) {}
 
@@ -50,9 +51,10 @@ export class Engine {
     const name = params.name ?? source.name
     // CSV / TSV / text / Markdown / HTML: converted to a workbook / document (an Office or iWork name skips the look)
     const imported = mayBePlain(name) ? plainFormat(name, source.type, await source.read(0, Math.min(source.size, 4096)), source.size <= 4096) : null
-    let zip = imported
-      ? await ZipArchive.open(new BlobSource(await plainToOffice(decodeText(await source.read(0, source.size), source.type), imported, name)))
-      : await ZipArchive.open(source)
+    const text = imported ? decodeText(await source.read(0, source.size), source.type) : null
+    // kept for the source view: formats whose text is worth reading next to the document
+    this.plainText = imported && HAS_SOURCE.has(imported) ? text : null
+    let zip = imported ? await ZipArchive.open(new BlobSource(await plainToOffice(text!, imported, name))) : await ZipArchive.open(source)
     let from: OpenResult['from']
     // Apple Pages / Keynote / Numbers: converted to a Word document / PowerPoint presentation / Excel workbook, shown read-only
     if (isIworkZip(zip)) ({ zip, from } = await openIwork(zip))
@@ -86,6 +88,8 @@ export class Engine {
         return this.open(args[0] as DocSource, args[1] as OpenParams)
       case 'part':
         return this.need(this.pkg).blob(args[0] as string)
+      case 'plain.source':
+        return this.plainText
       case 'docx.start': {
         const doc = this.need(this.docx)
         try {

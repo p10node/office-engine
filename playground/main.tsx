@@ -12,6 +12,9 @@ const SAMPLES = [
   { label: 'sample.numbers', url: 'samples/sample.numbers' },
   { label: 'sample.csv', url: 'samples/sample.csv' },
   { label: 'sample.md', url: 'samples/sample.md' },
+  { label: 'flowchart.mmd', url: 'samples/flowchart.mmd' },
+  { label: 'sequence.puml', url: 'samples/sequence.puml' },
+  { label: 'graph.dot', url: 'samples/graph.dot' },
   { label: 'large-doc.docx', url: 'samples/large-doc.docx' },
   { label: 'large-sheet.xlsx (300k rows)', url: 'samples/large-sheet.xlsx' },
   { label: 'large-deck.pptx (305 slides)', url: 'samples/large-deck.pptx' },
@@ -162,7 +165,7 @@ function App() {
         ))}
         <label style={{ ...btn, display: 'inline-block' }}>
           Open file…
-          <input type="file" accept=".docx,.xlsx,.pptx,.docm,.xlsm,.pptm,.pages,.key,.numbers,.csv,.tsv,.txt,.md,.html,.htm" hidden onChange={(e) => e.target.files?.[0] && open(e.target.files[0])} />
+          <input type="file" accept=".docx,.xlsx,.pptx,.docm,.xlsm,.pptm,.pages,.key,.numbers,.csv,.tsv,.txt,.md,.html,.htm,.mmd,.mermaid,.puml,.plantuml,.dot,.gv" hidden onChange={(e) => e.target.files?.[0] && open(e.target.files[0])} />
         </label>
         <form onSubmit={(e) => { e.preventDefault(); if (url) open(url) }} style={{ display: 'flex', gap: 6, flex: '1 1 260px' }}>
           <input value={url} onChange={(e) => setUrl(e.target.value)} placeholder="https://…/file.xlsx (Range requests)" style={{ ...btn, flex: 1, cursor: 'text' }} />
@@ -204,7 +207,7 @@ function App() {
         <DocViewer src={src} onLoad={onLoad} editable collab={collab} theme={theme} />
         {drag && (
           <div style={{ position: 'absolute', inset: 12, border: `2px dashed ${c.accent}`, borderRadius: 12, background: 'rgba(26,115,232,.06)', display: 'grid', placeItems: 'center', fontSize: 16, color: c.accent, pointerEvents: 'none' }}>
-            Drop an Office, Pages, Keynote, Numbers, CSV, text, Markdown or HTML file
+            Drop an Office, Pages, Keynote, Numbers, CSV, text, Markdown, HTML, Mermaid, PlantUML or Graphviz file
           </div>
         )}
       </div>

@@ -29,6 +29,8 @@ export interface OpenResult {
 export interface Methods {
   open(src: Blob | ArrayBuffer | string, params: OpenParams): OpenResult
   part(path: string): Blob
+  /** the text of a plain file opened as a document (Markdown, HTML, diagrams), null otherwise */
+  'plain.source'(): string | null
   'docx.start'(): void
   'docx.edit'(op: EditOp): EditResult
   'docx.table'(op: TableOp): void

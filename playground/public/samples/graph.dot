@@ -1,0 +1,22 @@
+// Build pipeline, drawn by the built-in layered layout
+digraph pipeline {
+  rankdir=LR;
+  node [shape=box, style="rounded,filled", fillcolor="#eef3fb", fontname="Helvetica"];
+  edge [color="#4b5563"];
+
+  subgraph cluster_ci {
+    label="CI";
+    style=filled; color="#f3f4f6";
+    lint -> test -> build;
+  }
+  subgraph cluster_cd {
+    label="CD";
+    color="#9aa3b2";
+    staging -> smoke -> prod;
+  }
+  commit [shape=circle, label="push"];
+  commit -> lint;
+  build -> staging [label="artifact"];
+  smoke -> rollback [style=dashed, label="fails"];
+  rollback [shape=octagon, fillcolor="#fdecea"];
+}

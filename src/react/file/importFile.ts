@@ -1,4 +1,4 @@
-import { decodeText, extOf, PLAIN_EXT, PLAIN_KIND, plainToOffice } from '../../core/plain'
+import { extOf, PLAIN_EXT, plainFormat } from '../../core/plain'
 
 // .pages / .key / .numbers (Apple iWork) open as read-only Word / PowerPoint / Excel files
 const OFFICE = new Set(['docx', 'dotx', 'xlsx', 'xltx', 'pptx', 'potx', 'pages', 'key', 'numbers'])
@@ -11,20 +11,23 @@ export interface Imported {
   name: string
   /** built from another format: not saved as an Office file yet */
   converted: boolean
+  /** a preview of the source being edited (the shown document stays until it is ready) */
+  live?: boolean
 }
 
-/** Office and iWork (Pages, Keynote, Numbers) files open as they are; CSV / TSV become a workbook, text / Markdown / HTML a document. */
+/**
+ * Office and iWork (Pages, Keynote, Numbers) files open as they are; CSV / TSV become a workbook, text / Markdown /
+ * HTML and Mermaid / PlantUML / Graphviz diagrams a document.
+ */
 export async function importFile(file: File): Promise<Imported> {
   const ext = extOf(file.name)
-  const base = file.name.replace(/\.[^./\\]+$/, '') || 'document'
   if (OFFICE.has(ext)) return { src: file, name: file.name, converted: false }
-  const format = PLAIN_EXT[ext]
-  if (format) {
-    const text = decodeText(new Uint8Array(await file.arrayBuffer()), file.type)
-    return { src: await plainToOffice(text, format, file.name), name: `${base}.${PLAIN_KIND[format]}`, converted: true }
-  }
+  // by the extension, the bytes deciding (a binary .dot is a Word 97 template, not a Graphviz graph)
+  const format = PLAIN_EXT[ext] && plainFormat(file.name, file.type, new Uint8Array(await file.slice(0, 4096).arrayBuffer()), file.size <= 4096)
+  // converted by the engine, like any src: the document keeps the file's name, format and source
+  if (format) return { src: file, name: file.name, converted: true }
   // no / unknown extension: an Office package is a ZIP
   const sig = new Uint8Array(await file.slice(0, 4).arrayBuffer())
   if (sig[0] === 0x50 && sig[1] === 0x4b) return { src: file, name: file.name, converted: false }
-  throw new Error(`Cannot open “${file.name}”: supported files are Word, Excel, PowerPoint, Pages, Keynote, Numbers, CSV, text, Markdown and HTML`)
+  throw new Error(`Cannot open “${file.name}”: supported files are Word, Excel, PowerPoint, Pages, Keynote, Numbers, CSV, text, Markdown, HTML, Mermaid, PlantUML and Graphviz`)
 }

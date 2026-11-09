@@ -59,6 +59,24 @@ A `src` (file, Blob, buffer or URL) that is not an Office package opens too, con
 - **Encoding**: byte order mark (UTF-8, UTF-16), the declared `charset`, UTF-8, else Windows-1252 (Excel's CSV on Windows)
 - The bar shows a `CSV` / `TSV` / `TXT` / `MD` / `HTML` badge; saving writes the workbook / document (`.xlsx` / `.docx`); *Download as* CSV / text / Markdown gives the plain format back
 
+### Diagrams: Mermaid, PlantUML, Graphviz
+
+Diagram sources open as a document holding the drawing (an SVG picture, editable around it, saved as `.docx`). The drawing is made in the worker by a built-in renderer: no server, no network request, no third-party library.
+
+| File                                         | Draws                                                                                                                |
+|----------------------------------------------|----------------------------------------------------------------------------------------------------------------------|
+| `.mmd`, `.mermaid`                           | Mermaid: flowchart / graph, sequence, class, state, ER, pie, Gantt, mind map                                         |
+| `.puml`, `.plantuml`, `.pu`, `.iuml`, `.wsd` | PlantUML: sequence, class / object, use case, component / deployment, state, activity, mind map, WBS, `@startdot`    |
+| `.dot`, `.gv`                                | Graphviz DOT: graph / digraph, clusters, default attributes, edge chains, `rank=same`, record and HTML labels (text) |
+
+- **In other files**: ` ```mermaid `, ` ```plantuml ` / ` ```puml `, ` ```dot ` / ` ```graphviz ` code blocks in Markdown, and `<pre class="mermaid">`, `<div class="mermaid">`, `<pre><code class="language-…">` blocks in HTML are drawn in place; other code blocks stay code
+- **Format**: the extension, else the MIME type (`text/vnd.graphviz`…), else the content: `@startuml`, `digraph {`, a Mermaid header (`graph TD`, `sequenceDiagram`…), also for a Blob or URL served as `text/plain`. A `.dot` file that is a Word 97 template (binary) is not read as a graph
+- **Layout**: layered, like Mermaid's and Graphviz's `dot` (ranks, fewer crossings, straight long edges, clusters kept apart); `TB` / `LR` / `BT` / `RL`; node shapes, edge labels, arrowheads (UML, crow's foot), colors from `classDef` / `style` / DOT attributes
+- **Page**: the drawing is scaled down to fit the page; a wide one gets a landscape page. Several diagrams in one file (PlantUML blocks, DOT graphs) are drawn one after another
+- **Safe**: the text is escaped, colors are kept only when they are plain colors, and the picture has no scripts, links or external references
+- **Code side by side**: the **Code** button (Markdown, HTML and diagram files) shows the source next to the document, with line numbers and syntax colors; editing it rebuilds the document as you type (the page keeps its scroll position). Meanwhile the document is a preview (the source is what is edited); Save writes the Word file, the source pane copies or downloads the source. In a narrow viewer the source goes above the document; the divider can be dragged (or moved with the arrow keys)
+- **Not drawn**: other Mermaid kinds (git graph, journey, timeline, quadrant, C4, Sankey…), other PlantUML kinds (Gantt, JSON / YAML, salt, timing, network), the Graphviz engines other than `dot` (`neato`, `circo`… are laid out as `dot`), HTML tables in DOT labels (their text is shown). A diagram that cannot be drawn shows why, followed by its source
+
 ## Editing
 
 ### DOCX
@@ -126,7 +144,7 @@ Comment text is plain (lines kept); formatting inside comments read from a file 
 ## File menu
 
 - **New**: blank document, spreadsheet or presentation (16:9, Office theme, title / content / blank layouts)
-- **Open** (`Ctrl/⌘+O`): `.docx` `.xlsx` `.pptx` open as they are; `.csv` / `.tsv` become a workbook (numbers and booleans typed, codes like `007` kept as text); `.txt` / `.md` / `.html` become a document (headings, lists, bold / italic / strike, links, code)
+- **Open** (`Ctrl/⌘+O`): `.docx` `.xlsx` `.pptx` open as they are; `.csv` / `.tsv` become a workbook (numbers and booleans typed, codes like `007` kept as text); `.txt` / `.md` / `.html` become a document (headings, lists, bold / italic / strike, links, code); `.mmd` / `.puml` / `.dot` become a document with the drawing
 - **Download as**: the native format, PDF, web page (`.html`, images embedded), plain text / Markdown (DOCX), CSV / TSV of the current sheet (XLSX), slide text with notes (PPTX)
 - **Import CSV into new sheet** (XLSX): adds a sheet after the current one with the file's rows
 - **Save** (`Ctrl/⌘+S`), **Rename** (shown name and the name used for saving), **Document details** (file, core properties, page / word / slide counts)

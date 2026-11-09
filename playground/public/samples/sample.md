@@ -20,3 +20,15 @@ Opened from a **Markdown** file: headings, lists, *emphasis*, `code` and [links]
 | South | 2150     | open   |
 
 > Numbers are preliminary until the audit closes.
+
+## Process
+
+Diagram code blocks (Mermaid, PlantUML, Graphviz) are drawn:
+
+```mermaid
+flowchart LR
+    survey[Survey sites] --> export[Export CSV]
+    export --> review{Audit done?}
+    review -->|yes| publish[Publish]
+    review -->|no| survey
+```
