@@ -262,7 +262,14 @@ describe('New / Open', () => {
     if (await v.page.locator('.de-dialog').count()) await v.page.locator('.de-dialog button', { hasText: 'Continue' }).click()
     await v.page.locator('.de-page-inner').first().waitFor()
     expect(await v.title()).toBe('notes.md')
-    let paras = await docxParas((await v.save()).bytes)
+    // a Markdown file is not unsaved for being shown as a document: Save (File menu) gives it back as it is
+    let n = (await v.events('save')).length
+    await v.menu('Save')
+    const md = await v.waitEvent('save', n + 1)
+    expect(md.name).toBe('notes.md')
+    expect(Buffer.from(md.b64 as string, 'base64').toString('utf8')).toStartWith('# Notes\n')
+    // the document it became: Download as Word
+    let paras = await docxParas((await v.downloadAs('Word document')).bytes)
     expect(paras[0].ps.outline).toBe(0)
     expect(paras.map((p) => p.marker?.text).filter(Boolean)).toEqual(['•', '•'])
     expect(paras[1].runs.some((r) => r.t === 'text' && r.s.b && r.text === 'bold')).toBe(true)
@@ -270,9 +277,14 @@ describe('New / Open', () => {
     await v.chooseFile(() => v.menu('Open…'), file('page.html', '<h2>Web title</h2><p>Para <i>it</i></p><ol><li>a</li></ol>', 'text/html'))
     await v.page.waitForFunction(() => document.querySelector('.de-bar .de-title')?.textContent === 'page.html')
     await v.page.waitForTimeout(500)
-    paras = await docxParas((await v.save()).bytes)
+    n = (await v.events('save')).length
+    await v.menu('Save')
+    expect((await v.waitEvent('save', n + 1)).name).toBe('page.html')
+    paras = await docxParas((await v.downloadAs('Word document')).bytes)
     expect(paras.map(paraText)).toEqual(['Web title', 'Para it', 'a'])
     expect(paras[0].ps.outline).toBe(1)
+
+    // a text file is saved as a Word document (unsaved until then)
 
     await v.chooseFile(() => v.menu('Open…'), file('plain.txt', 'line one\nline two'))
     await v.page.waitForFunction(() => document.querySelector('.de-bar .de-title')?.textContent === 'plain.txt')

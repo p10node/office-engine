@@ -3,7 +3,7 @@ import type { PlainFormat } from '../../core/plain'
 import { Icon } from '../edit/Toolbar'
 import { highlight } from './highlight'
 
-const LABEL: Partial<Record<PlainFormat, string>> = { markdown: 'Markdown', html: 'HTML', mermaid: 'Mermaid', plantuml: 'PlantUML', graphviz: 'Graphviz' }
+const LABEL: Partial<Record<PlainFormat, string>> = { markdown: 'Markdown', html: 'HTML', svg: 'SVG', mermaid: 'Mermaid', plantuml: 'PlantUML', graphviz: 'Graphviz' }
 
 export interface SourceEditorProps {
   text: string
@@ -17,7 +17,7 @@ export interface SourceEditorProps {
 }
 
 /**
- * The text of a Markdown / HTML / diagram file, editable, with line numbers and syntax colors: a transparent
+ * The text of a Markdown / HTML / SVG / diagram file, editable, with line numbers and syntax colors: a transparent
  * textarea over the colored text, both sized by their content in one grid cell (they scroll together).
  */
 export function SourceEditor({ text, format, onChange, readOnly, notice, onCopy, onDownload }: SourceEditorProps) {

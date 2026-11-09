@@ -52,6 +52,8 @@ export interface FileActionsOptions {
   save: () => Promise<void>
   /** the document in its own format */
   downloadOriginal: () => Promise<void>
+  /** a picture file (SVG): downloads are the Word document, PDF and the picture itself */
+  picture?: { label: string; ext: string; download: () => Promise<void> }
   rename?: () => void
   details?: () => void
   close?: () => void
@@ -101,8 +103,9 @@ export function useFileActions(o: FileActionsOptions): FileActions {
     section([
       { value: 'original', label: KIND_LABEL[kind], icon: 'save', hint: EXT[kind], head: 'Download as' },
       { value: 'pdf', label: 'PDF document', icon: 'pdf', hint: '.pdf' },
-      { value: 'html', label: 'Web page', icon: 'html', hint: '.html' },
-      ...TEXT_FORMATS[kind].map((f) => ({ value: 'text:' + f.id, label: f.label, icon: 'doc', hint: f.ext })),
+      ...(o.picture
+        ? [{ value: 'picture', label: o.picture.label, icon: 'image', hint: o.picture.ext }]
+        : [{ value: 'html', label: 'Web page', icon: 'html', hint: '.html' }, ...TEXT_FORMATS[kind].map((f) => ({ value: 'text:' + f.id, label: f.label, icon: 'doc', hint: f.ext }))]),
     ])
   }
   const tail: DropOption<string>[] = []
@@ -141,6 +144,7 @@ export function useFileActions(o: FileActionsOptions): FileActions {
     }
     if (!c.kind || !c.canDownload) return
     if (action === 'original') return c.downloadOriginal()
+    if (action === 'picture') return c.picture?.download()
     if (!ops) throw new Error('The document is still loading — try again in a moment')
     if (action.startsWith('text:')) {
       const f = TEXT_FORMATS[c.kind].find((x) => 'text:' + x.id === action)

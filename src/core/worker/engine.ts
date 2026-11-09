@@ -4,7 +4,7 @@ import type { CanonStyle, EditOp, HFSet, PageSet, ParaSpec, StyleLook, TableOp }
 import { OpcPackage, type DocKind } from '../opc'
 import { PptxPresentation } from '../pptx/parser'
 import { BlobSource, openSource, type DocSource } from '../source'
-import { decodeText, HAS_SOURCE, mayBePlain, plainFormat, plainToOffice } from '../plain'
+import { decodeText, HAS_SOURCE, mayBePlain, plainFormat, plainToOffice, ungzipped } from '../plain'
 import { XlsxWorkbook } from '../xlsx/workbook'
 import { XlsxEditor } from '../xlsx/editor'
 import { loadDelimited } from '../xlsx/import'
@@ -44,14 +44,17 @@ export class Engine {
   constructor(private emit: Emit) {}
 
   async open(src: DocSource, params: OpenParams = {}): Promise<OpenResult> {
-    const source = await openSource(src, {
+    let source = await openSource(src, {
       ...params,
       signal: this.abort.signal,
       onProgress: (loaded, total) => this.emit('progress', { phase: 'download', loaded, total }),
     })
     const name = params.name ?? source.name
-    // CSV / TSV / text / Markdown / HTML: converted to a workbook / document (an Office or iWork name skips the look)
+    const size = source.size
+    // CSV / TSV / text / Markdown / HTML / SVG / diagrams: converted to a workbook / document (an Office or iWork name skips the look)
     const imported = mayBePlain(name) ? plainFormat(name, source.type, await source.read(0, Math.min(source.size, 4096)), source.size <= 4096) : null
+    // gzip-compressed (.svgz, .csv.gz): unpacked whole, then read like the file inside
+    if (imported) source = await ungzipped(source)
     // CSV / TSV: an empty workbook whose sheet streams the rows in when it is loaded (the text is never read whole)
     const tabular = imported === 'csv' || imported === 'tsv'
     const text = imported && !tabular ? decodeText(await source.read(0, source.size), source.type) : null
@@ -65,7 +68,7 @@ export class Engine {
     const pkg = (this.pkg = new OpcPackage(zip))
     const main = await pkg.mainPart()
     this.kind = main.kind
-    const res: OpenResult = { kind: main.kind, name, size: source.size, ...(from ? { from } : {}), ...(imported ? { imported } : {}) }
+    const res: OpenResult = { kind: main.kind, name, size, ...(from ? { from } : {}), ...(imported ? { imported } : {}) }
     if (main.kind === 'docx') this.docx = await DocxDocument.open(pkg, main.path)
     else if (main.kind === 'xlsx') {
       const wb = (this.xlsx = await XlsxWorkbook.open(pkg, main.path))
@@ -166,7 +169,7 @@ export class Engine {
         return this.xed().bookOp(args[0] as BookOp)
       case 'xlsx.import': {
         const p = (args[2] ?? {}) as { name?: string; sep?: string; residentCells?: number; pageRows?: number }
-        const source = await openSource(args[1] as DocSource, { signal: this.abort.signal })
+        const source = await ungzipped(await openSource(args[1] as DocSource, { signal: this.abort.signal }))
         return this.xed().importText(args[0] as number, { source, sep: p.sep, budget: p.residentCells, pageRows: p.pageRows }, p.name)
       }
       case 'xlsx.undo':

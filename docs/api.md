@@ -71,7 +71,7 @@ CSS is auto-injected, no import needed. Container must have a height.
 | `fileMenuItems`    | `FileMenuItem[]`                               | –         | Extra File menu entries (`label`, `onClick`, `icon`, `hint`)                                            |
 | `onRename`         | `(name) => void`                               | –         | File → Rename result (extension included)                                                               |
 | `onClose`          | `() => void`                                   | –         | Adds File → Close                                                                                       |
-| `onSave`           | `(blob, name) => void`                         | download  | Receives saved file (downloads by default)                                                              |
+| `onSave`           | `(blob, name) => void`                         | download  | Receives saved file (downloads by default): the Office file, or a Markdown / HTML / SVG file as itself  |
 | `onDirtyChange`    | `(dirty) => void`                              | –         | Whether there are unsaved changes                                                                       |
 | `collab`           | `CollabOptions`                                | –         | Real-time collaboration, see [collaboration](collaboration.md)                                          |
 | `comments`         | `CommentOptions \| false`                      | `{}`      | Comments (see below); `false` hides them                                                                |
@@ -153,7 +153,7 @@ import { DocumentClient } from '@p10node/office-engine/core'
 const doc = await DocumentClient.open(fileOrUrl, { onProgress: console.log })
 doc.kind                                   // 'docx' | 'xlsx' | 'pptx'
 doc.info.from                              // 'pages' / 'keynote' / 'numbers': an Apple file, converted to docx / pptx / xlsx (view only)
-doc.info.imported                          // 'csv' / 'tsv' / 'text' / 'markdown' / 'html' / 'mermaid' / 'plantuml' / 'graphviz': a plain file, built as xlsx / docx (editable)
+doc.info.imported                          // 'csv' / 'tsv' / 'text' / 'markdown' / 'html' / 'svg' / 'mermaid' / 'plantuml' / 'graphviz': a plain file, built as xlsx / docx (editable)
 doc.on('docx:blocks', (blocks) => {})      // docx: streamed blocks
 await doc.call('docx.start')
 doc.call('xlsx.load', 0)                   // xlsx: stream sheet

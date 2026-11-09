@@ -12,10 +12,11 @@ import { FileMenu, KIND_LABEL, useFileActions, type FileMenuItem } from './file/
 import { importFile, type Imported } from './file/importFile'
 import { blankPptx, parasToDocx, rowsToXlsx } from '../core/convert'
 import type { DocKind } from '../core/opc'
-import { extOf, HAS_SOURCE, PLAIN_EXT, PLAIN_FILE, type PlainFormat } from '../core/plain'
+import { extOf, HAS_SOURCE, PLAIN_EXT, PLAIN_FILE, unpackedName, type PlainFormat } from '../core/plain'
 import { injectStyles } from './injectStyles'
 import { isTextEntry, useDarkTheme, useSize, type Theme } from './common/hooks'
 import { SourceEditor } from './source/SourceEditor'
+import { PictureView } from './picture/PictureView'
 import { PptxView } from './pptx/PptxView'
 import { useDocument } from './useDocument'
 import { XlsxView } from './xlsx/XlsxView'
@@ -27,7 +28,8 @@ import { COMMENT_KEYS, CommentsPanel } from './comments/CommentsPanel'
 export interface DocViewerProps {
   /**
    * File, Blob, ArrayBuffer, Uint8Array or URL (HTTP Range requests are used when the server supports them): an Office file,
-   * an Apple Pages / Keynote / Numbers file (view only), or CSV / TSV / text / Markdown / HTML (opened as a workbook / document).
+   * an Apple Pages / Keynote / Numbers file (view only), CSV / TSV / text / Markdown / HTML (opened as a workbook / document),
+   * an SVG picture or a Mermaid / PlantUML / Graphviz diagram.
    */
   src: DocSource | null | undefined
   /** Display name (defaults to File.name or the URL's last segment); its extension also tells the format of a source without one. */
@@ -99,16 +101,23 @@ export interface DocViewerProps {
 
 const EXT: Record<string, string> = { docx: '.docx', xlsx: '.xlsx', pptx: '.pptx' }
 const FROM_LABEL: Record<'pages' | 'keynote' | 'numbers', string> = { pages: 'Apple Pages document', keynote: 'Apple Keynote presentation', numbers: 'Apple Numbers spreadsheet' }
-const IMPORTED_BADGE: Record<PlainFormat, string> = { csv: 'csv', tsv: 'tsv', text: 'txt', markdown: 'md', html: 'html', mermaid: 'mmd', plantuml: 'puml', graphviz: 'dot' }
+const IMPORTED_BADGE: Record<PlainFormat, string> = { csv: 'csv', tsv: 'tsv', text: 'txt', markdown: 'md', html: 'html', svg: 'svg', mermaid: 'mmd', plantuml: 'puml', graphviz: 'dot' }
 const IMPORTED_LABEL: Record<PlainFormat, string> = {
   csv: 'CSV file',
   tsv: 'Tab-separated values',
   text: 'Plain text',
   markdown: 'Markdown',
   html: 'HTML page',
+  svg: 'SVG picture',
   mermaid: 'Mermaid diagram',
   plantuml: 'PlantUML diagram',
   graphviz: 'Graphviz diagram',
+}
+/** plain formats saved back as themselves: Markdown and HTML built again from the document when it was edited, SVG from its text */
+const SAVES_SOURCE = new Set<PlainFormat>(['markdown', 'html', 'svg'])
+const savesSource = (name: string) => {
+  const f = PLAIN_EXT[extOf(unpackedName(name) ?? name)]
+  return !!f && SAVES_SOURCE.has(f)
 }
 const UNTITLED: Record<DocKind, string> = { docx: 'Untitled document', xlsx: 'Untitled spreadsheet', pptx: 'Untitled presentation' }
 
@@ -152,17 +161,25 @@ export function DocViewer(props: DocViewerProps) {
   const { client, error, loading, progress } = useDocument(opened ? opened.src : src, { name: loadName, headers, credentials, worker }, !!opened?.live)
   const docName = renamed ?? loadName
   const collab = useCollab(client, props.collab)
+  const srcFormat = client?.info?.imported
+  // an SVG file: the picture alone, read only (its text is edited in the source pane)
+  const isPicture = srcFormat === 'svg'
   // converted from another format (Apple Pages, Keynote, Numbers): view only
-  const readOnly = !!client?.info?.from
+  const readOnly = !!client?.info?.from || isPicture
   // with collaboration, editing waits for the shared history (offline edits sync on reconnect)
   const canEdit = !readOnly && (!props.collab || collab.status === 'live' || collab.status === 'offline')
   const [statusEl, setStatusEl] = useState<HTMLSpanElement | null>(null)
 
-  // ---- source (Markdown, HTML, diagrams): edited side by side with the document built from it ----
-  const srcFormat = client?.info?.imported
+  // ---- source (Markdown, HTML, SVG, diagrams): edited side by side with the document built from it ----
   const hasSource = !!srcFormat && HAS_SOURCE.has(srcFormat)
   const [codeOpen, setCodeOpen] = useState(false)
   const codeShown = codeOpen && hasSource
+  // Markdown / HTML / SVG files are saved in their own format; Markdown and HTML are built again from an edited document
+  const saveFormat = srcFormat && SAVES_SOURCE.has(srcFormat) ? srcFormat : null
+  const rebuilds = saveFormat === 'markdown' || saveFormat === 'html'
+  /** what was edited last: the document (its source is stale) or the source (the document is built from it) */
+  const lastEdit = useRef<'doc' | 'source' | null>(null)
+  const fileOps = useRef<FileOps | null>(null)
   const [code, setCode] = useState<string | null>(null)
   const sourceEdited = useRef(false)
   const reloadTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
@@ -173,18 +190,29 @@ export function DocViewer(props: DocViewerProps) {
     clearTimeout(reloadTimer.current)
     setCode(null)
     sourceEdited.current = false
+    lastEdit.current = null
   }, [src, opened])
+  // the source shown: the file's text, or (Markdown / HTML edited as a document) the text built from the document
   useEffect(() => {
-    if (!client || !codeShown || code !== null) return
+    if (!client || !codeShown) return
+    const stale = rebuilds && lastEdit.current === 'doc'
+    if (code !== null && !stale) return
     let live = true
-    client.call('plain.source').then(
-      (t) => live && setCode(t ?? ''),
-      () => {},
-    )
+    const built = stale && fileOps.current ? fileOps.current.text(saveFormat === 'html' ? 'html' : 'md').catch(() => null) : Promise.resolve(null)
+    built
+      .then(async (t) => (typeof t === 'string' ? t : ((await client.call('plain.source')) as string | null)))
+      .then(
+        (t) => {
+          if (!live) return
+          if (stale) lastEdit.current = null
+          setCode(t ?? '')
+        },
+        () => {},
+      )
     return () => {
       live = false
     }
-  }, [client, codeShown, code])
+  }, [client, codeShown, code, rebuilds, saveFormat])
   const [bodyRef, bodySize] = useSize<HTMLDivElement>()
   const mainRef = useRef<HTMLDivElement>(null)
   const stacked = bodySize.w > 0 && bodySize.w < 720
@@ -212,7 +240,7 @@ export function DocViewer(props: DocViewerProps) {
   }, [client])
 
   // ---- comments ----
-  const cmOn = props.comments !== false
+  const cmOn = props.comments !== false && !isPicture
   const cmCtl = useMemo(() => (client && cmOn ? new CommentsCtl(client) : null), [client, cmOn])
   useEffect(() => () => cmCtl?.dispose(), [cmCtl])
   const cmOpts = props.comments || {}
@@ -264,15 +292,29 @@ export function DocViewer(props: DocViewerProps) {
   )
   const baseName = (renamed ?? (client?.name || docName || 'document')).replace(/\.[^.]+$/, '')
   const fileName = baseName + (client ? EXT[client.kind] : '')
+  // what Save writes: the Office file, or a Markdown / HTML / SVG file in its own format
+  const saveExt = saveFormat ? `.${PLAIN_FILE[saveFormat].ext}` : client ? EXT[client.kind] : ''
+  const saveName = baseName + saveExt
+  /** the text of a file saved in its own format: the source as edited, or built from the edited document */
+  const sourceText = useCallback(async (): Promise<string> => {
+    if (!client) return ''
+    if (rebuilds && lastEdit.current === 'doc' && fileOps.current) {
+      const text = (await fileOps.current.text(saveFormat === 'html' ? 'html' : 'md')) as string
+      lastEdit.current = null
+      setCode(text)
+      return text
+    }
+    return code ?? ((await client.call('plain.source')) as string | null) ?? ''
+  }, [client, rebuilds, saveFormat, code])
   // saving without onSave means downloading
   const canSave = allowSave && (!!onSave || allowDownload)
   const save = useCallback(async () => {
     if (!client || saving || !canSave) return
     setSaving(true)
     try {
-      const blob = await client.call('save')
-      if (onSave) await onSave(blob, fileName)
-      else download(blob, fileName)
+      const blob = saveFormat ? new Blob([await sourceText()], { type: `${PLAIN_FILE[saveFormat].mime};charset=utf-8` }) : await client.call('save')
+      if (onSave) await onSave(blob, saveName)
+      else download(blob, saveName)
       setDirty(false)
     } catch (e) {
       onError?.(e as Error)
@@ -281,20 +323,28 @@ export function DocViewer(props: DocViewerProps) {
     } finally {
       setSaving(false)
     }
-  }, [client, saving, canSave, onSave, fileName, setDirty, onError])
-  const fileOps = useRef<FileOps | null>(null)
+  }, [client, saving, canSave, onSave, saveName, saveFormat, sourceText, setDirty, onError])
+  // an edit in the document: its source (Markdown / HTML) is built again when shown or saved
+  const setDocDirty = useCallback(
+    (d: boolean) => {
+      if (d) lastEdit.current = 'doc'
+      setDirty(d)
+    },
+    [setDirty],
+  )
   const selectAll = useRef<(() => void) | null>(null)
   // next to its source, the document is a preview: it is edited through the source
   const docEditable = editing && canEdit && !codeShown
   const api = useMemo<ViewerApi>(
-    () => ({ bar: barEl, editable: docEditable, setDirty, save, canDownload: allowDownload, client, fileOps, selectAll }),
-    [barEl, docEditable, setDirty, save, allowDownload, client],
+    () => ({ bar: barEl, editable: docEditable, setDirty: setDocDirty, save, canDownload: allowDownload, client, fileOps, selectAll }),
+    [barEl, docEditable, setDocDirty, save, allowDownload, client],
   )
 
   const editSource = (text: string) => {
     setCode(text)
     if (!sourceEdited.current) setDirty(true)
     sourceEdited.current = true
+    lastEdit.current = 'source'
     clearTimeout(reloadTimer.current)
     const fmt = srcFormat
     if (!fmt) return
@@ -303,7 +353,7 @@ export function DocViewer(props: DocViewerProps) {
       restoreScroll.current = sc && sc.scrollHeight > sc.clientHeight ? sc.scrollTop / (sc.scrollHeight - sc.clientHeight) : null
       // the same name: the same format, title and saved name
       let n = client?.name || loadName || `document.${PLAIN_FILE[fmt].ext}`
-      if (PLAIN_EXT[extOf(n)] !== fmt) n += `.${PLAIN_FILE[fmt].ext}`
+      if (PLAIN_EXT[extOf(unpackedName(n) ?? n)] !== fmt) n += `.${PLAIN_FILE[fmt].ext}`
       openedDirty.current = true
       setOpened({ src: new Blob([text], { type: PLAIN_FILE[fmt].mime }), name: n, converted: true, live: true })
     }, 350)
@@ -373,7 +423,8 @@ export function DocViewer(props: DocViewerProps) {
   /** replaces the document, after confirmation when there are unsaved changes */
   const replace = (message: string, run: () => void) => (dirty ? setConfirm({ message, run }) : run())
   const show = useCallback((doc: Imported, edit = false) => {
-    openedDirty.current = doc.converted
+    // a file saved as itself (Markdown, HTML, SVG) is not unsaved for being shown as a document
+    openedDirty.current = doc.converted && (!!doc.live || !savesSource(doc.name))
     setRenamed(null)
     setOpened(doc)
     if (edit) setEditing(true)
@@ -403,6 +454,13 @@ export function DocViewer(props: DocViewerProps) {
       // without onSave, saving is downloading
       if (!onSave) setDirty(false)
     },
+    picture: isPicture
+      ? {
+          label: 'SVG picture',
+          ext: '.svg',
+          download: async () => download(new Blob([await sourceText()], { type: 'image/svg+xml' }), saveName),
+        }
+      : undefined,
     rename: () => setRenaming(true),
     details: () => setDetails(true),
     close: props.onClose,
@@ -457,7 +515,8 @@ export function DocViewer(props: DocViewerProps) {
     ) : (
       <div className="de-center">No document</div>
     )
-  } else if (client.kind === 'docx') body = <DocxView key={clientKey(client)} client={client} initialZoom={zoom} />
+  } else if (isPicture) body = <PictureView key={clientKey(client)} client={client} />
+  else if (client.kind === 'docx') body = <DocxView key={clientKey(client)} client={client} initialZoom={zoom} />
   else if (client.kind === 'xlsx') body = <XlsxView client={client} />
   else body = <PptxView client={client} initialZoom={zoom} thumbnails={thumbnails} />
 
@@ -531,7 +590,7 @@ export function DocViewer(props: DocViewerProps) {
                 onChange={editSource}
                 readOnly={!allowEdit || !!props.collab}
                 notice={
-                  dirty && !sourceEdited.current
+                  dirty && !sourceEdited.current && !rebuilds
                     ? 'Changes made in the document are not in this source: editing it builds the document again from the source.'
                     : undefined
                 }
@@ -585,10 +644,10 @@ export function DocViewer(props: DocViewerProps) {
             initial: baseName,
             ok: 'Rename',
             onOk: (v) => {
-              const next = v.trim().replace(/[\\/:*?"<>|]+/g, ' ').replace(new RegExp(`\\${EXT[client.kind]}$`, 'i'), '')
+              const next = v.trim().replace(/[\\/:*?"<>|]+/g, ' ').replace(new RegExp(`(\\${EXT[client.kind]}|\\${saveExt})$`, 'i'), '')
               if (!next) return
               setRenamed(next + EXT[client.kind])
-              props.onRename?.(next + EXT[client.kind])
+              props.onRename?.(next + saveExt)
             },
           }}
           onClose={() => setRenaming(false)}
@@ -598,7 +657,7 @@ export function DocViewer(props: DocViewerProps) {
         <DetailsDialog
           client={client}
           file={[
-            ['Name', fileName],
+            ['Name', saveName],
             [
               'Type',
               client.info?.from

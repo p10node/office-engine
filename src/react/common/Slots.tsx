@@ -8,7 +8,7 @@ import type { Printable } from '../file/print'
 export interface FileOps {
   /** all pages, for PDF / print and HTML */
   printable(): Promise<Printable>
-  /** text formats: 'txt' / 'md' (documents, presentations), 'csv' / 'tsv' (current sheet; a Blob, as a sheet can be large) */
+  /** text formats: 'txt' / 'md' / 'html' (documents; 'txt' for presentations), 'csv' / 'tsv' (current sheet; a Blob, as a sheet can be large) */
   text(format: string): Promise<string | Blob>
   /** File → Document details: [label, value] rows */
   stats(): [string, string][]

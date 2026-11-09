@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="480" height="270" viewBox="0 0 480 270">
+  <title>Hills at dusk</title>
+  <defs>
+    <linearGradient id="sky" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#1b2a49"/>
+      <stop offset="1" stop-color="#e8875b"/>
+    </linearGradient>
+  </defs>
+  <rect width="480" height="270" fill="url(#sky)"/>
+  <circle cx="340" cy="150" r="42" fill="#ffd27f"/>
+  <path d="M0 200 C 80 150, 140 160, 200 190 S 320 240, 480 180 V 270 H 0 Z" fill="#2f5d50"/>
+  <path d="M0 230 C 90 200, 180 215, 260 235 S 400 260, 480 225 V 270 H 0 Z" fill="#1d3f36"/>
+  <g fill="#f4efe6" font-family="Helvetica, Arial, sans-serif">
+    <text x="24" y="44" font-size="24" font-weight="bold">Opened from an SVG file</text>
+    <text x="24" y="68" font-size="13">The picture keeps its size; the Code button shows the markup.</text>
+  </g>
+</svg>

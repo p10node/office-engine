@@ -183,6 +183,94 @@ describe('viewing', () => {
     }
   })
 
+  test('an SVG file (also gzip-compressed) shows the picture alone; its source is edited and saved as SVG', async () => {
+    for (const name of ['picture.svg', 'picture.svgz']) {
+      const v = await viewer({ src: `samples/${name}` })
+      const { page } = v
+      expect(await v.title()).toBe(name)
+      expect(await page.locator('.de-badge').innerText()).toBe('SVG')
+      const img = page.getByTestId('de-picture').locator('img')
+      await img.waitFor()
+      await page.waitForFunction(() => {
+        const el = document.querySelector('[data-testid=de-picture] img') as HTMLImageElement | null
+        return !!el && el.complete && el.naturalWidth > 0
+      })
+      const box = await img.boundingBox()
+      expect(box!.width).toBeGreaterThan(300)
+      expect(box!.height).toBeGreaterThan(150)
+      // no document page, no editing, no comments
+      expect(await page.locator('.de-page-inner').count()).toBe(0)
+      expect(await v.barButton('Edit').count()).toBe(0)
+      expect(await page.getByTestId('de-comments-toggle').count()).toBe(0)
+      // the source beside the picture; a change redraws it and is saved as .svg
+      await page.getByTestId('de-code-toggle').click()
+      const input = page.getByTestId('de-source-input')
+      await input.waitFor()
+      expect(await input.inputValue()).toContain('<svg')
+      const before = await img.getAttribute('src')
+      await input.fill((await input.inputValue()).replace('Opened from an SVG file', 'Edited picture'))
+      await page.waitForFunction((was) => (document.querySelector('[data-testid=de-picture] img') as HTMLImageElement | null)?.src !== was, before)
+      const saved = await v.download(() => v.barButton('Save').click())
+      expect(saved.name).toBe('picture.svg')
+      expect(saved.text).toContain('Edited picture')
+      expect(saved.text).toStartWith('<?xml')
+      const labels = await v.menuLabels()
+      expect(labels).toContain('SVG picture')
+      expect(labels).not.toContain('Web page')
+      const dl = await v.downloadAs('Word document')
+      expect(dl.name).toBe('picture.docx')
+      expect(dl.bytes.subarray(0, 2).toString()).toBe('PK')
+      expect(v.errors).toEqual([])
+    }
+  })
+
+  test('a Markdown file edited as a document is saved as Markdown, its source built again', async () => {
+    const v = await viewer({ src: 'samples/sample.md', onSave: true })
+    const { page } = v
+    await page.locator('.de-page-inner').first().waitFor()
+    await v.edit()
+    await v.selectText('Field notes', 'end')
+    await page.keyboard.type(' (edited)')
+    const saved = await v.save()
+    expect(saved.name).toBe('sample.md')
+    const md = saved.bytes.toString('utf8')
+    expect(md).toStartWith('# Field notes (edited)\n')
+    expect(md).toContain('- Survey the northern sites')
+    expect(md).toContain('![Mermaid diagram](data:image/svg+xml;base64,')
+    // the source pane shows the Markdown built from the document
+    await page.getByTestId('de-code-toggle').click()
+    const input = page.getByTestId('de-source-input')
+    await input.waitFor()
+    expect(await input.inputValue()).toStartWith('# Field notes (edited)')
+    expect(await page.locator('.de-src-notice').count()).toBe(0)
+    expect(v.errors).toEqual([])
+  })
+
+  test('an HTML file is saved back as a web page', async () => {
+    const v = await viewer({ src: 'samples/sample.html', onSave: true })
+    const { page } = v
+    await page.locator('.de-page-inner').first().waitFor()
+    expect(await page.locator('.de-badge').innerText()).toBe('HTML')
+    // unchanged: the file as it is (File → Save; the bar's Save button comes with editing or changes)
+    const n = (await v.events('save')).length
+    await v.menu('Save')
+    const first = await v.waitEvent('save', n + 1)
+    expect(first.name).toBe('sample.html')
+    expect(Buffer.from(first.b64 as string, 'base64').toString('utf8')).toContain('<pre class="mermaid">')
+    await v.edit()
+    await v.selectText('Sample page', 'end')
+    await page.keyboard.type(' 2')
+    const saved = await v.save()
+    expect(saved.name).toBe('sample.html')
+    const html = saved.bytes.toString('utf8')
+    expect(html).toStartWith('<!doctype html>')
+    expect(html).toContain('<h1>Sample page 2</h1>')
+    expect(html).toContain('<li>Edit the document, or its markup under <strong>Code</strong></li>')
+    expect(html).toContain('<a href="https://p10node.github.io/office-engine/">links</a>')
+    expect(html).toContain('<img src="data:image/svg+xml;base64,')
+    expect(v.errors).toEqual([])
+  })
+
   test('source side by side: Markdown edited, the document follows', async () => {
     const v = await viewer({ src: 'samples/sample.md', onSave: true })
     const { page } = v
@@ -203,8 +291,11 @@ describe('viewing', () => {
     expect(await v.title()).toBe('sample.md')
     expect(await page.locator('.de-badge').innerText()).toBe('MD')
     const saved = await v.save()
-    expect(saved.name).toBe('sample.docx')
-    expect((await docxParas(saved.bytes)).map((p) => p.runs.map((r) => (r.t === 'text' ? r.text : '')).join(''))[0]).toBe('Edited title')
+    expect(saved.name).toBe('sample.md')
+    expect(saved.bytes.toString('utf8')).toMatch(/^# Edited title\n\n# Field notes/)
+    const word = await v.downloadAs('Word document')
+    expect(word.name).toBe('sample.docx')
+    expect((await docxParas(word.bytes)).map((p) => p.runs.map((r) => (r.t === 'text' ? r.text : '')).join(''))[0]).toBe('Edited title')
     // closing the source: the document can be edited again
     await page.getByTestId('de-code-toggle').click()
     await input.waitFor({ state: 'detached' })

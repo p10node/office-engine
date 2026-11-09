@@ -2,6 +2,7 @@ import { describe, expect, test } from 'bun:test'
 import type { Block, Paragraph } from '../src/core/docx/types'
 import { htmlToParas, parseHtml } from '../src/core/html'
 import { decodeText, plainFormat } from '../src/core/plain'
+import { svgImage } from '../src/core/svgfile'
 import { Engine } from '../src/core/worker/engine'
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
@@ -80,12 +81,57 @@ describe('plain sources open as Office files', () => {
     expect((await paras(html.engine, html.events)).map(textOf)).toEqual(['Web & more', 'Para it', 'next', 'a', 'b'])
   })
 
+  test('SVG: a document holding the picture, at the size the file says', async () => {
+    const svg = '<?xml version="1.0"?>\n<svg xmlns="http://www.w3.org/2000/svg" width="4in" height="2in" viewBox="0 0 400 200"><title>Logo &amp; mark</title><rect width="400" height="200" fill="#36c"/></svg>'
+    const { engine, info, events } = await open(enc(svg), 'logo.svg')
+    expect(info).toMatchObject({ kind: 'docx', imported: 'svg', name: 'logo.svg' })
+    const img = (await paras(engine, events)).flatMap((p) => p.runs).find((r) => r.t === 'img') as { target: string; w: number; h: number; alt?: string }
+    expect(img).toBeDefined()
+    // 4 in × 2 in, in pt
+    expect(img.w).toBeCloseTo(288, 0)
+    expect(img.h).toBeCloseTo(144, 0)
+    expect(img.alt).toBe('Logo & mark')
+    const part = (await engine.call('part', [img.target])) as Blob
+    expect(part.type).toBe('image/svg+xml')
+    expect(await part.text()).toBe(svg)
+    // saved as Word, the picture stays
+    const again = await open((await engine.call('save', [])) as Blob)
+    expect(again.info.imported).toBeUndefined()
+    expect((await paras(again.engine, again.events)).flatMap((p) => p.runs).filter((r) => r.t === 'img')).toHaveLength(1)
+    // not an SVG: why, then the text
+    const bad = await open(enc('hello'), 'bad.svg')
+    expect((await paras(bad.engine, bad.events)).map(textOf)).toEqual(['SVG picture not drawn: no <svg> element', 'hello'])
+  })
+
+  test('gzip-compressed plain files: .svgz, .csv.gz; other gzip files say so', async () => {
+    const gz = (s: string) => Bun.gzipSync(enc(s))
+    const svg = '<svg xmlns="http://www.w3.org/2000/svg" width="20" height="10"/>'
+    const z = await open(gz(svg), 'logo.svgz')
+    expect(z.info).toMatchObject({ kind: 'docx', imported: 'svg', name: 'logo.svgz', size: gz(svg).length })
+    const img = (await paras(z.engine, z.events)).flatMap((p) => p.runs).find((r) => r.t === 'img') as { target: string }
+    expect(await ((await z.engine.call('part', [img.target])) as Blob).text()).toBe(svg)
+    expect(await z.engine.call('plain.source', [])).toBe(svg)
+    // the server may have unpacked it already (Content-Encoding)
+    expect((await open(enc(svg), 'logo.svgz')).info.imported).toBe('svg')
+    const csv = await open(new File([gz('a,b\n1,2\n')], 'rows.csv.gz', { type: 'application/gzip' }))
+    expect(csv.info).toMatchObject({ kind: 'xlsx', imported: 'csv' })
+    expect(csv.info.xlsx!.sheets.map((s) => s.name)).toEqual(['rows'])
+    expect(await cells(csv.engine)).toEqual([
+      ['a', 'b'],
+      ['1', '2'],
+    ])
+    await expect(open(gz('x'), 'backup.tar.gz')).rejects.toThrow('“backup.tar.gz” is a gzip file')
+    await expect(open(gz('x'))).rejects.toThrow('The file is a gzip file')
+  })
+
   test('no name: the type, then the content, tells the format', async () => {
     expect((await open(new Blob(['x,y\n1,2\n'], { type: 'text/csv' }))).info.imported).toBe('csv')
     expect((await open(new Blob(['# Not a heading'], { type: 'text/plain' }))).info.imported).toBe('text')
     expect((await open(enc('id,city,pop\n1,Hanoi,8.4\n2,Hue,0.65\n'))).info.imported).toBe('csv')
     expect((await open(enc('a\tb\n1\t2\n'))).info.imported).toBe('tsv')
     expect((await open(enc('<html><body><p>Hi</p></body></html>'))).info.imported).toBe('html')
+    expect((await open(enc('<!-- hand made -->\n<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1 1"/>'))).info.imported).toBe('svg')
+    expect((await open(new Blob(['<svg xmlns="http://www.w3.org/2000/svg"/>'], { type: 'image/svg+xml' }))).info.imported).toBe('svg')
     expect((await open(enc('Dear team,\nthe meeting moved, again.\nThanks'))).info.imported).toBe('text')
   })
 
@@ -119,6 +165,15 @@ describe('plain format detection', () => {
     expect(fmt('a.log', undefined, 'x')).toBe('text')
     expect(fmt('a.markdown', undefined, 'x')).toBe('markdown')
     expect(fmt('a.htm', undefined, 'x')).toBe('html')
+    expect(fmt('a.svg', undefined, 'x')).toBe('svg')
+    expect(fmt('a.svgz', undefined, 'x')).toBe('svg')
+    expect(fmt('a.md.gz', undefined, '# x')).toBe('markdown')
+    expect(plainFormat('a.svgz', undefined, Bun.gzipSync(enc('<svg/>')).subarray(0, 10), false)).toBe('svg')
+    expect(plainFormat('a.tsv.gz', 'application/gzip', Bun.gzipSync(enc('a\tb')), true)).toBe('tsv')
+    expect(fmt('pic', 'image/svg+xml', '<svg/>')).toBe('svg')
+    expect(fmt(undefined, 'text/plain', '<?xml version="1.0"?><svg xmlns="http://www.w3.org/2000/svg"></svg>')).toBe('svg')
+    expect(fmt(undefined, undefined, '<html><body><svg></svg></body></html>')).toBe('html')
+    expect(fmt(undefined, undefined, '<svgs> is not a picture')).toBe('text')
     expect(fmt('a.txt', 'text/html', '<p>x</p>')).toBe('text')
     expect(fmt('export', 'text/csv; charset=utf-8', 'x')).toBe('csv')
     expect(fmt('export', 'application/octet-stream', 'a,b\n1,2')).toBe('csv')
@@ -129,6 +184,37 @@ describe('plain format detection', () => {
   test('a cut-off last line does not decide the column count', () => {
     expect(fmt(undefined, undefined, 'a,b,c\n1,2,3\n4,5', false)).toBe('csv')
     expect(fmt(undefined, undefined, 'a,b,c\n1,2,3\n4,5', true)).toBe('text')
+  })
+})
+
+describe('SVG pictures', () => {
+  const size = (attrs: string) => {
+    const i = svgImage(`<svg ${attrs}></svg>`)
+    return [i.w, i.h]
+  }
+
+  test('size: width / height in any unit, one of them with the viewBox ratio, the viewBox, else 300 × 150', () => {
+    expect(size('width="200" height="100"')).toEqual([200, 100])
+    expect(size('width="200px" height="75pt"')).toEqual([200, 100])
+    const [w, h] = size('width="2cm" height="10mm"')
+    expect(w).toBeCloseTo(75.59, 1)
+    expect(h).toBeCloseTo(37.8, 1)
+    expect(size("width='100%' height='100%' viewBox='0 0 50 25'")).toEqual([50, 25])
+    expect(size('width="100" viewBox="0 0 50 25"')).toEqual([100, 50])
+    expect(size('height="100" viewBox="0,0,50,25"')).toEqual([200, 100])
+    expect(size('viewBox="-8 -8 16 16"')).toEqual([16, 16])
+    expect(size('stroke-width="3"')).toEqual([300, 150])
+    expect(size('width="0" height="auto"')).toEqual([300, 150])
+    expect(() => svgImage('<p>no picture</p>')).toThrow('no <svg> element')
+  })
+
+  test('the root declares the namespaces it uses; the title is the alt text', () => {
+    const bare = svgImage('<svg width="1" height="1"><use xlink:href="#a"/></svg>')
+    expect(bare.svg).toBe('<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="1" height="1"><use xlink:href="#a"/></svg>')
+    expect(bare.alt).toBe('SVG picture')
+    const full = '<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" data-x=">"><title>A &lt;b&gt;\n  c</title></svg>'
+    expect(svgImage(full)).toMatchObject({ svg: full, alt: 'A <b> c' })
+    expect(svgImage('<svg/>').svg).toBe('<svg xmlns="http://www.w3.org/2000/svg"/>')
   })
 })
 

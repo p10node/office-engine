@@ -19,7 +19,7 @@ import { DocxToolbar, styleChoices, type ImageActions } from './DocxToolbar'
 import { FindBar, type Match } from './FindBar'
 import { HeaderFooterDialog } from './HeaderFooterDialog'
 import { PageSetupDialog } from './PageSetupDialog'
-import { docxToMarkdown, docxToText } from '../file/text'
+import { docxToHtml, docxToMarkdown, docxToText, pictureData } from '../file/text'
 import { BlockView, contextual, type RenderCtx } from './render'
 
 const PX = 4 / 3
@@ -467,7 +467,9 @@ export function DocxView({ client, onStatus, initialZoom = 'fit' }: DocxViewProp
     },
     text: async (format) => {
       if (!done) throw new Error('The document is still loading — try again in a moment')
-      return format === 'md' ? docxToMarkdown(st.blocks) : docxToText(st.blocks)
+      if (format === 'txt') return docxToText(st.blocks)
+      const images = await pictureData(st.blocks, (t) => client.call('part', t) as Promise<Blob>)
+      return format === 'html' ? docxToHtml(st.blocks, { title: (client.name ?? '').replace(/\.[^.]+$/, ''), images }) : docxToMarkdown(st.blocks, images)
     },
     stats: () => {
       let chars = 0

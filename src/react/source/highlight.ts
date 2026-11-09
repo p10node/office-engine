@@ -1,5 +1,5 @@
 /**
- * Syntax colors for the source editor: Markdown (diagram code blocks in their own language), HTML, Mermaid,
+ * Syntax colors for the source editor: Markdown (diagram code blocks in their own language), HTML, SVG, Mermaid,
  * PlantUML and Graphviz DOT. Line based, with the few states that span lines (code blocks, block comments).
  */
 import type { PlainFormat } from '../../core/plain'
@@ -112,8 +112,9 @@ function until(line: string, from: number, close: string, c: string, out: Token[
 
 /** Tokens of the whole text, lines separated by "\n" tokens. Over `max` characters: no colors. */
 export function highlight(format: PlainFormat, text: string, max = 300_000): Token[] {
-  if (text.length > max || !(format in RULES)) return [['', text]]
-  const lang = format as Lang
+  // SVG is XML: colored as HTML
+  const lang = (format === 'svg' ? 'html' : format) as Lang
+  if (text.length > max || !(lang in RULES)) return [['', text]]
   const out: Token[] = []
   let fence: { mark: string; lang?: Lang } | null = null
   let block: string | null = null

@@ -1293,6 +1293,9 @@
 
 /* source editor (Markdown, HTML, diagrams) side by side with the document built from it */
 .de-main { position: relative; flex: 1; min-width: 0; min-height: 0; display: flex; }
+/* an SVG file: the picture alone, scaled down to fit */
+.de-picture { display: flex; align-items: center; justify-content: center; padding: 24px; box-sizing: border-box; }
+.de-picture img { display: block; max-width: 100%; max-height: 100%; object-fit: contain; }
 .de-body-stacked { flex-direction: column; }
 .de-src-pane { position: relative; flex: none; min-width: 0; min-height: 0; display: flex; background: var(--de-chrome); }
 .de-body-stacked .de-src-pane { width: auto !important; }

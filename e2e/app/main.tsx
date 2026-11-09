@@ -51,7 +51,7 @@ const initial: DocViewerProps = {
   onRename: (name) => log({ type: 'rename', name }),
   onClose: q.has('close') ? () => log({ type: 'close' }) : undefined,
   fileMenuItems: q.has('items') ? items : undefined,
-  onLoad: (client) => log({ type: 'load', kind: client.kind, name: client.name }),
+  onLoad: (client) => log({ type: 'load', kind: client.kind, name: client.name, imported: client.info?.imported }),
   onError: (error) => log({ type: 'error', message: error.message }),
   comments:
     q.get('comments') === '0'
