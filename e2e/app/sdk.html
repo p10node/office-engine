@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>office-engine e2e SDK packages</title>
+  </head>
+  <body>
+    <pre class="mermaid">flowchart LR
+  A[Write] --&gt; B[Draw]</pre>
+    <div class="plantuml">@startuml
+Alice -> Bob : hi
+@enduml</div>
+    <pre><code class="language-dot">digraph { x -> y }</code></pre>
+    <pre class="diagram">sequenceDiagram
+  Ann->>Ben: detected</pre>
+    <pre class="mermaid" id="broken">gitGraph
+  commit</pre>
+    <pre><code class="language-js">const keep = 1</code></pre>
+    <div id="one"></div>
+    <div id="md"></div>
+    <script type="module">
+      import { renderPage, toPng } from '../../packages/diagram/src/index.ts'
+      import { renderTo } from '../../packages/mermaid/src/index.ts'
+      import { renderTo as renderMarkdown } from '../../packages/markdown/src/index.ts'
+      window.__sdk = (async () => {
+        const drawn = renderPage()
+        const one = renderTo(document.getElementById('one'), 'graph TD\n  P --> Q')
+        const png = await toPng(one.svg)
+        renderMarkdown(document.getElementById('md'), '# Notes\n\n- [x] done\n\n```mermaid\npie\n  "a": 1\n  "b": 2\n```\n\n<img src=x onerror=alert(1)>')
+        return { drawn, png: { type: png.type, size: png.size } }
+      })()
+    </script>
+  </body>
+</html>

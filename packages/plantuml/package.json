@@ -1,0 +1,36 @@
+{
+  "name": "@p10node/plantuml",
+  "version": "0.1.0",
+  "description": "PlantUML diagrams to SVG in the browser or Node, with no Java, server or dependency: sequence, class, use case, component, state, activity, mind map",
+  "type": "module",
+  "license": "MIT",
+  "files": [
+    "dist"
+  ],
+  "main": "./dist/index.js",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "sideEffects": false,
+  "keywords": [
+    "plantuml",
+    "uml",
+    "diagram",
+    "sequence-diagram",
+    "svg"
+  ],
+  "homepage": "https://github.com/p10node/office-engine/tree/main/packages/plantuml#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/p10node/office-engine.git",
+    "directory": "packages/plantuml"
+  },
+  "publishConfig": {
+    "access": "public"
+  }
+}

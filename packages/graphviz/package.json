@@ -1,0 +1,36 @@
+{
+  "name": "@p10node/graphviz",
+  "version": "0.1.0",
+  "description": "Graphviz DOT graphs to SVG in the browser or Node, with no WebAssembly, server or dependency",
+  "type": "module",
+  "license": "MIT",
+  "files": [
+    "dist"
+  ],
+  "main": "./dist/index.js",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "sideEffects": false,
+  "keywords": [
+    "graphviz",
+    "dot",
+    "graph",
+    "diagram",
+    "svg"
+  ],
+  "homepage": "https://github.com/p10node/office-engine/tree/main/packages/graphviz#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/p10node/office-engine.git",
+    "directory": "packages/graphviz"
+  },
+  "publishConfig": {
+    "access": "public"
+  }
+}

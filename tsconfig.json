@@ -17,5 +17,6 @@
     "allowImportingTsExtensions": true,
     "types": ["vite/client", "bun"]
   },
-  "include": ["src", "playground", "scripts", "test", "e2e", "*.ts"]
+  "include": ["src", "packages", "playground", "scripts", "test", "e2e", "*.ts"],
+  "exclude": ["packages/*/dist"]
 }

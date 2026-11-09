@@ -1,0 +1,36 @@
+{
+  "name": "@p10node/mermaid",
+  "version": "0.1.0",
+  "description": "Mermaid diagrams to SVG with no DOM, server or dependency: flowchart, sequence, class, state, ER, pie, Gantt, mind map",
+  "type": "module",
+  "license": "MIT",
+  "files": [
+    "dist"
+  ],
+  "main": "./dist/index.js",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "sideEffects": false,
+  "keywords": [
+    "mermaid",
+    "diagram",
+    "flowchart",
+    "sequence-diagram",
+    "svg"
+  ],
+  "homepage": "https://github.com/p10node/office-engine/tree/main/packages/mermaid#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/p10node/office-engine.git",
+    "directory": "packages/mermaid"
+  },
+  "publishConfig": {
+    "access": "public"
+  }
+}

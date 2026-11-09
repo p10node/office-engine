@@ -55,7 +55,8 @@
     "clean": "rm -rf dist",
     "screenshots": "bun scripts/screenshots.ts",
     "gifs": "bun scripts/gifs.ts",
-    "build:site": "bun scripts/build-site.ts"
+    "build:site": "bun scripts/build-site.ts",
+    "build:packages": "bun scripts/build-packages.ts"
   },
   "peerDependencies": {
     "react": ">=18",

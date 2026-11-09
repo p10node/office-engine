@@ -1,0 +1,40 @@
+{
+  "name": "@p10node/diagram",
+  "version": "0.1.0",
+  "description": "Mermaid, PlantUML and Graphviz diagrams to SVG with no DOM, server or dependency: render text, or draw every diagram block of a page",
+  "type": "module",
+  "license": "MIT",
+  "files": [
+    "dist"
+  ],
+  "main": "./dist/index.js",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "sideEffects": false,
+  "keywords": [
+    "diagram",
+    "mermaid",
+    "plantuml",
+    "graphviz",
+    "dot",
+    "svg",
+    "flowchart",
+    "sequence-diagram",
+    "uml"
+  ],
+  "homepage": "https://github.com/p10node/office-engine/tree/main/packages/diagram#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/p10node/office-engine.git",
+    "directory": "packages/diagram"
+  },
+  "publishConfig": {
+    "access": "public"
+  }
+}

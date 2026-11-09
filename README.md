@@ -83,6 +83,23 @@ Full list, format coverage and limitations: [Features](docs/features.md).
 
 Measured in headless Chromium on Apple M-series.
 
+## Standalone packages
+
+The renderers also ship on their own, to show diagrams and Markdown in any page without the viewer: no DOM needed, no server, no dependency.
+
+| Package                                  | For                                                                 | Size (gzip) |
+|------------------------------------------|---------------------------------------------------------------------|-------------|
+| [`@p10node/diagram`](packages/diagram)   | Mermaid, PlantUML and Graphviz; draws every diagram block of a page | 37 KB       |
+| [`@p10node/mermaid`](packages/mermaid)   | Mermaid → SVG                                                       | 26 KB       |
+| [`@p10node/plantuml`](packages/plantuml) | PlantUML → SVG (no Java)                                            | 29 KB       |
+| [`@p10node/graphviz`](packages/graphviz) | Graphviz DOT → SVG (no WebAssembly)                                 | 16 KB       |
+| [`@p10node/markdown`](packages/markdown) | Markdown → safe HTML, diagram code blocks drawn                     | 39 KB       |
+
+```ts
+import { render } from '@p10node/mermaid'
+document.getElementById('out')!.innerHTML = render('graph LR\n  A --> B').svg
+```
+
 ## License
 
 [MIT](LICENSE) © p10node

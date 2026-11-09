@@ -169,6 +169,19 @@ await doc.call('plain.source')             // text of a Markdown / HTML / diagra
 doc.destroy()
 ```
 
+## Standalone packages
+
+Diagrams and Markdown without the viewer (no DOM needed, no dependency): [`@p10node/diagram`](../packages/diagram), [`@p10node/mermaid`](../packages/mermaid), [`@p10node/plantuml`](../packages/plantuml), [`@p10node/graphviz`](../packages/graphviz), [`@p10node/markdown`](../packages/markdown).
+
+```ts
+import { render, renderPage } from '@p10node/diagram'
+const { svg, width, height } = render('sequenceDiagram\n  Ann->>Ben: hi') // language detected
+renderPage() // <pre class="mermaid">, <code class="language-dot">… of the page become drawings
+
+import { render as markdown } from '@p10node/markdown'
+el.innerHTML = markdown(text) // safe HTML; ```mermaid / ```plantuml / ```dot drawn
+```
+
 ## CSP
 
 The default worker is an inline blob → requires `worker-src blob:`. If that's not allowed, host `dist/office-engine.worker.js` (exported as `@p10node/office-engine/worker`) on the same origin:

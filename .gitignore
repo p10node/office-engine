@@ -5,3 +5,4 @@ playground/public/samples/large-*
 *.log
 .DS_Store
 dist-site
+packages/*/LICENSE
