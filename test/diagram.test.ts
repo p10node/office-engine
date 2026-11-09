@@ -392,6 +392,68 @@ describe('layered layout', () => {
     const end = back.segs[back.segs.length - 1].p.at(-1)!
     expect(end.y).toBeLessThan(out.nodes[1].y)
   })
+
+  test('an edge through dummies is one smooth curve: no piece swings out past its ends, the pieces meet without a corner', () => {
+    // a labelled graph doubles every edge length, so each edge passes a dummy halfway: the bend spreads over the
+    // whole edge instead of sitting in the short piece after the dummy
+    const nodes: LNode[] = [{ w: 60, h: 24, cluster: -1 }, { w: 80, h: 24, cluster: -1 }, { w: 90, h: 60, cluster: -1 }, { w: 50, h: 24, cluster: -1 }]
+    const edges: LEdge[] = [
+      { v: 0, w: 1, minlen: 2, weight: 1 },
+      { v: 1, w: 2, minlen: 2, weight: 1 },
+      { v: 2, w: 0, minlen: 2, weight: 1, label: { w: 20, h: 14 } },
+      { v: 2, w: 3, minlen: 2, weight: 1, label: { w: 24, h: 14 } },
+    ]
+    const out = layered(nodes, edges, [], { nodesep: 20, ranksep: 30, edgesep: 10 })
+    const dir = (p: { x: number; y: number }, q: { x: number; y: number }) => Math.atan2(q.y - p.y, q.x - p.x)
+    let curved = 0
+    let joins = 0
+    for (const e of out.edges) {
+      if (!e) continue
+      let from = e.start
+      e.segs.forEach((s, k) => {
+        const to = s.p[s.p.length - 1]
+        if (s.c === 'C') {
+          curved++
+          for (const c of [s.p[0], s.p[1]]) {
+            expect(c.x).toBeGreaterThanOrEqual(Math.min(from.x, to.x) - 1e-6)
+            expect(c.x).toBeLessThanOrEqual(Math.max(from.x, to.x) + 1e-6)
+            expect(c.y).toBeGreaterThanOrEqual(Math.min(from.y, to.y) - 1e-6)
+            expect(c.y).toBeLessThanOrEqual(Math.max(from.y, to.y) + 1e-6)
+          }
+          const next = e.segs[k + 1]
+          if (next?.c === 'C') {
+            joins++
+            expect(Math.abs(dir(s.p[1], to) - dir(to, next.p[0]))).toBeLessThan(1e-6)
+          }
+        }
+        from = to
+      })
+    }
+    expect(curved).toBeGreaterThan(0)
+    expect(joins).toBeGreaterThan(0)
+  })
+
+  test('an arrow on a short last piece does not fold the curve back', () => {
+    const [r] = renderDiagrams('mermaid', 'flowchart LR\n  A[Process] --> B[Export CSV]\n  B --> C{Done?}\n  C -->|no| A\n  C -->|yes| D[Finish]')
+    const paths = [...r.svg.matchAll(/<path d="([^"]+)"/g)].map((m) => m[1])
+    expect(paths.length).toBe(4)
+    for (const d of paths) {
+      const nums = d.match(/-?[\d.]+/g)!.map(Number)
+      let p = { x: nums[0], y: nums[1] }
+      for (const m of d.matchAll(/([LC])([^LC]+)/g)) {
+        const v = m[2].trim().split(/\s+/).map(Number)
+        const to = { x: v[v.length - 2], y: v[v.length - 1] }
+        if (m[1] === 'C') {
+          // the legs of the control polygon never turn against each other (a trimmed end point behind the first
+          // control point did that)
+          const legs = [{ x: v[0] - p.x, y: v[1] - p.y }, { x: v[2] - v[0], y: v[3] - v[1] }, { x: to.x - v[2], y: to.y - v[3] }]
+          expect(legs[0].x * legs[1].x + legs[0].y * legs[1].y).toBeGreaterThanOrEqual(-1e-6)
+          expect(legs[1].x * legs[2].x + legs[1].y * legs[2].y).toBeGreaterThanOrEqual(-1e-6)
+        }
+        p = to
+      }
+    }
+  })
 })
 
 // ---------------------------------------------------------------- opening files

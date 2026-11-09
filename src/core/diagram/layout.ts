@@ -637,21 +637,38 @@ export function layered(nodes: LNode[], edges: LEdge[], clusters: LCluster[], o:
     const b = centre(c[c.length - 1])
     pts.push({ x: portX.get(`${c[c.length - 1]}:t:${i}`) ?? b.x, y: b.y - H[c[c.length - 1]] / 2 })
     straight.push(false)
-    if (reversed[i]) {
-      pts.reverse()
-      straight.reverse()
+    // one smooth curve through the waypoints, the across coordinate a function of the rank coordinate: square-on at
+    // the ports and at a straight piece, a monotone (Fritsch–Carlson) slope at the other waypoints, so the curve never
+    // swings out past one (a dummy next to an end would otherwise bend the whole offset into a short piece)
+    const n = pts.length
+    const slope = new Array<number>(n).fill(0)
+    const sec = (k: number) => (pts[k + 1].x - pts[k].x) / Math.max(0.5, pts[k + 1].y - pts[k].y)
+    for (let k = 1; k + 1 < n; k++) {
+      if (straight[k - 1] || straight[k]) continue
+      const s1 = sec(k - 1)
+      const s2 = sec(k)
+      if (s1 * s2 <= 0) continue
+      const h1 = pts[k].y - pts[k - 1].y
+      const h2 = pts[k + 1].y - pts[k].y
+      slope[k] = (3 * (h1 + h2)) / ((2 * h2 + h1) / s1 + (h2 + 2 * h1) / s2)
     }
     const segs: Seg[] = []
-    for (let k = 1; k < pts.length; k++) {
+    for (let k = 1; k < n; k++) {
       const p = pts[k - 1]
       const q = pts[k]
-      if (straight[k - 1] || Math.abs(p.x - q.x) < 0.5) segs.push({ c: 'L', p: [q] })
-      else {
-        const m = (p.y + q.y) / 2
-        segs.push({ c: 'C', p: [{ x: p.x, y: m }, { x: q.x, y: m }, q] })
-      }
+      const h = (q.y - p.y) / 3
+      if (straight[k - 1] || (Math.abs(p.x - q.x) < 0.5 && !slope[k - 1] && !slope[k])) segs.push({ c: 'L', p: [q] })
+      else segs.push({ c: 'C', p: [{ x: p.x + slope[k - 1] * h, y: p.y + h }, { x: q.x - slope[k] * h, y: q.y - h }, q] })
     }
-    return { start: pts[0], segs, label: labelAt[i] >= 0 ? centre(labelAt[i]) : undefined }
+    const label = labelAt[i] >= 0 ? centre(labelAt[i]) : undefined
+    if (!reversed[i]) return { start: pts[0], segs, label }
+    // drawn from the other end: the pieces in reverse, each cubic's control points swapped
+    const back: Seg[] = []
+    for (let k = n - 1; k >= 1; k--) {
+      const s = segs[k - 1]
+      back.push(s.c === 'C' ? { c: 'C', p: [s.p[1], s.p[0], pts[k - 1]] } : { c: 'L', p: [pts[k - 1]] })
+    }
+    return { start: pts[n - 1], segs: back, label }
   })
   const boxes: (Box | null)[] = clusters.map((_, c) => {
     if (cMin[c] > cMax[c]) return null

@@ -544,7 +544,12 @@ function trimEnd(start: Pt, segs: Seg[], len: number): Pt {
   if (len) {
     const q = { x: end.x - d.x * len, y: end.y - d.y * len }
     last.p[last.p.length - 1] = q
-    if (last.c === 'C') last.p[1] = { x: last.p[1].x - d.x * Math.min(len, 6), y: last.p[1].y - d.y * Math.min(len, 6) }
+    if (last.c === 'C') {
+      const c2 = { x: last.p[1].x - d.x * Math.min(len, 6), y: last.p[1].y - d.y * Math.min(len, 6) }
+      // a short last piece: the control point stays ahead of the first one, or the curve would loop back
+      const k = Math.min(0, (c2.x - last.p[0].x) * d.x + (c2.y - last.p[0].y) * d.y)
+      last.p[1] = { x: c2.x - d.x * k, y: c2.y - d.y * k }
+    }
   }
   return d
 }
@@ -730,7 +735,11 @@ export function renderGraph(g: Graph): Rendered {
     const tailStart = g2.start
     const tl = HEAD_LEN[tail] ?? 0
     const start = tl ? { x: g2.start.x - dTail.x * tl, y: g2.start.y - dTail.y * tl } : g2.start
-    if (tl && first.c === 'C') first.p[0] = { x: first.p[0].x - dTail.x * Math.min(tl, 6), y: first.p[0].y - dTail.y * Math.min(tl, 6) }
+    if (tl && first.c === 'C') {
+      const c1 = { x: first.p[0].x - dTail.x * Math.min(tl, 6), y: first.p[0].y - dTail.y * Math.min(tl, 6) }
+      const k = Math.max(0, (first.p[1].x - c1.x) * dTail.x + (first.p[1].y - c1.y) * dTail.y)
+      first.p[0] = { x: c1.x + dTail.x * k, y: c1.y + dTail.y * k }
+    }
     svg.path(pathData([{ c: 'M', p: [start] }, ...g2.segs.map((k) => ({ c: k.c, p: k.p }))]), paint)
     if (head !== 'none') drawHead(svg, head, end, dHead, col)
     if (tail !== 'none') drawHead(svg, tail, tailStart, dTail, col)
