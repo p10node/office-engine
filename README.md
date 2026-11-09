@@ -7,6 +7,10 @@
 
 View + edit **DOCX / XLSX / PPTX** directly in the browser, view Apple **Pages**, **Keynote** and **Numbers** files, open **CSV**, text, Markdown and HTML as editable sheets / documents, and draw **Mermaid**, **PlantUML** and **Graphviz** diagrams (no server, no extra library). Loads progressively like Google Docs, handles heavy files, one-line React embed, saves back to the original format.
 
+**Zero runtime dependencies, zero servers.** Parsing, layout, formulas, diagrams and ZIP are all in the library, running in a Web Worker: nothing leaves the browser.
+
+**Open a 10 GB CSV in a browser tab.** There is no row limit: the first screen shows in under a second, 12 million cells stay in memory and every other row is read from the file the moment it scrolls into view. 100 million rows × 10 columns (10.6 GB) open in ~50 s in Chrome and the tab stays at ~1 GB of memory, whether the file has one million rows or a hundred. XLSX goes to Excel's full 1,048,576 × 16,384 (300k rows open in ~2 s), DOCX to thousands of pages, PPTX to hundreds of slides.
+
 **[npm](https://www.npmjs.com/package/@p10node/office-engine)** · **[Live demo](https://p10node.github.io/office-engine/demo/)** · **[Docs](https://p10node.github.io/office-engine/)**
 
 The demo has samples, heavy files (300k-row sheet, 305-slide deck), drag & drop your own file, edit and download.
@@ -64,7 +68,7 @@ Also online at [p10node.github.io/office-engine](https://p10node.github.io/offic
 - **Editing** with a Google Docs-style toolbar: DOCX text, styles, lists, images, tables; XLSX cells, formulas (134 functions), formats, borders, rows/columns, sheets; PPTX text, shapes, images, slides, slideshow
 - **Fast save**: only edited parts are regenerated, everything else keeps its original bytes
 - **Apple Pages, Keynote and Numbers (view only)**: `.pages` / `.key` / `.numbers` files open read-only, converted to Word / PowerPoint / Excel in the worker (styles, lists, tables, images, shapes, header/footer, footnotes, master slides, typed and formatted cells); *Download as* Word / PowerPoint / Excel saves the converted file
-- **CSV, text, Markdown, HTML**: `.csv` / `.tsv` open as a workbook, `.txt` / `.md` / `.html` as a document, from any `src` (file, Blob, URL); format from the extension, MIME type or content; UTF-8 / UTF-16 / Windows-1252; editable, saved as `.xlsx` / `.docx`
+- **CSV, text, Markdown, HTML**: `.csv` / `.tsv` open as a workbook (streamed: a million rows in about 2 s; past 12 million cells the rows are read from the file as they are shown, so there is no row limit), `.txt` / `.md` / `.html` as a document, from any `src` (file, Blob, URL); format from the extension, MIME type or content; UTF-8 / UTF-16 / Windows-1252; editable, saved as `.xlsx` / `.docx`
 - **Diagrams as code**: `.mmd` (Mermaid), `.puml` (PlantUML), `.dot` / `.gv` (Graphviz) open as a document with the drawing; ` ```mermaid ` / ` ```plantuml ` / ` ```dot ` blocks in Markdown and `<pre class="mermaid">` in HTML are drawn too. Drawn by a built-in layout engine in the worker: no server, no network, no dependency
 - **Code side by side**: Markdown, HTML and diagram files show their source next to the document (**Code** button); edit it and the document is rebuilt as you type
 - **File menu**: new, open (also Pages / Keynote / Numbers / CSV / text / Markdown / HTML / diagrams), import CSV, rename, download as PDF / HTML / text / CSV, document details, print
@@ -75,11 +79,14 @@ Also online at [p10node.github.io/office-engine](https://p10node.github.io/offic
 
 Full list, format coverage and limitations: [Features](docs/features.md).
 
-| File                     | Size    | First paint | Fully loaded      |
-|--------------------------|---------|-------------|-------------------|
-| DOCX 20k paragraphs      | 1.2 MB  | ~180 ms     | 2073 pages in ~2s |
-| XLSX 300k rows × 12 cols | 24.8 MB | ~330 ms     | ~2s               |
-| PPTX 305 slides          | 0.3 MB  | ~110 ms     | on-demand         |
+| File                                    | Size          | First paint       | Fully loaded            |
+|-----------------------------------------|---------------|-------------------|-------------------------|
+| DOCX 20k paragraphs                     | 1.2 MB        | ~180 ms           | 2073 pages in ~2s       |
+| CSV 1M rows × 10 cols                   | 99.1 MB       | ~270 ms           | ~2.4s                   |
+| CSV 25M rows × 10 cols (rows paged)     | 2.67 GB       | ~270 ms           | ~14 s                   |
+| CSV 100M rows × 10 cols (rows paged)    | 10.6 GB       | ~690 ms           | ~50 s                   |
+| XLSX 300k rows × 12 cols                | 24.8 MB       | ~330 ms           | ~2s                     |
+| PPTX 305 slides                         | 0.3 MB        | ~110 ms           | on-demand               |
 
 Measured in headless Chromium on Apple M-series.
 

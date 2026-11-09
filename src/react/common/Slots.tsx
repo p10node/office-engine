@@ -8,12 +8,12 @@ import type { Printable } from '../file/print'
 export interface FileOps {
   /** all pages, for PDF / print and HTML */
   printable(): Promise<Printable>
-  /** text formats: 'txt' / 'md' (documents, presentations), 'csv' / 'tsv' (current sheet) */
-  text(format: string): Promise<string>
+  /** text formats: 'txt' / 'md' (documents, presentations), 'csv' / 'tsv' (current sheet; a Blob, as a sheet can be large) */
+  text(format: string): Promise<string | Blob>
   /** File → Document details: [label, value] rows */
   stats(): [string, string][]
-  /** File → Import (spreadsheets): rows into a new sheet */
-  importTable?(rows: string[][], name: string): Promise<void>
+  /** File → Import (spreadsheets): the rows of a delimited text file (CSV / TSV) into a new sheet */
+  importText?(file: Blob, name: string): Promise<void>
 }
 
 export interface ViewerApi {

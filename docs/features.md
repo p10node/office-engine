@@ -47,15 +47,18 @@ Cell values in Pages and Keynote tables use the same formats.
 
 A `src` (file, Blob, buffer or URL) that is not an Office package opens too, converted in the worker and **editable**:
 
-| File                      | Opens as                                                                                                |
-|---------------------------|---------------------------------------------------------------------------------------------------------|
-| `.csv`, `.tsv` / `.tab`   | workbook, one sheet named after the file; numbers and booleans typed, codes like `007` kept as text     |
-| `.txt`, `.text`, `.log`   | document, one paragraph per line                                                                        |
-| `.md`, `.markdown`        | document: headings, lists, bold / italic / strike, links, code, quotes, tables (as tab-separated lines) |
-| `.html`, `.htm`, `.xhtml` | document: headings, paragraphs, lists, inline formatting and links; scripts and styles are dropped      |
+| File                        | Opens as                                                                                                                                                                                                                                                                  |
+|-----------------------------|---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| `.csv`, `.tsv` / `.tab`     | workbook, one sheet named after the file; the rows stream in as the file is read (a million rows open like a large workbook; past 12 million cells the rows are read from the file by pages as they are shown); numbers and booleans typed, codes like `007` kept as text |
+| `.txt`, `.text`, `.log`     | document, one paragraph per line                                                                                                                                                                                                                                          |
+| `.md`, `.markdown`          | document: headings, lists, bold / italic / strike, links, code, quotes, tables (as tab-separated lines)                                                                                                                                                                   |
+| `.html`, `.htm`, `.xhtml`   | document: headings, paragraphs, lists, inline formatting and links; scripts and styles are dropped                                                                                                                                                                        |
 
 - **Format**: the extension (of `name`, the File or the URL), else the MIME type (Blob type, `Content-Type`), else the content (HTML, delimited rows, or text). A file named `.docx` / `.xlsx` / … is always read as a package, so an HTML error page served for a missing file still fails
 - **CSV**: comma, semicolon (then `12,5` is a number) or tab, detected from the first line; quoted fields, newlines inside quotes
+- **Streamed**: the text goes from the file straight into the sheet, in chunks, in the worker (never a string of the whole file, never a workbook built first): the first rows show at once and the rest streams in like a large workbook's. Column widths come from the first 5 000 rows. Saving writes every row from the sheet
+- **Paged**: past 12 million cells (about 300 MB in Chrome) the rows stay in the file: the loader notes where each page of 1 024 rows starts and goes on counting, and a page is read when its rows are shown, edited, searched, exported or saved, the least recently shown pages making room (pages with edits stay). So there is no row limit. In such a sheet rows and columns cannot be inserted or deleted, and an edit or a formula may not need more rows than fit in memory (`=SUM(A:A)` over 100 million rows is refused with a message). `residentCells` in the open parameters sets the budget
+- **Excel's limit**: a sheet of more than 1,048,576 rows cannot be saved as a workbook: the bar says so, saving fails with a message, and *Download as* CSV / TSV gives the rows (written in the worker, page by page)
 - **Encoding**: byte order mark (UTF-8, UTF-16), the declared `charset`, UTF-8, else Windows-1252 (Excel's CSV on Windows)
 - The bar shows a `CSV` / `TSV` / `TXT` / `MD` / `HTML` badge; saving writes the workbook / document (`.xlsx` / `.docx`); *Download as* CSV / text / Markdown gives the plain format back
 
@@ -146,7 +149,7 @@ Comment text is plain (lines kept); formatting inside comments read from a file 
 - **New**: blank document, spreadsheet or presentation (16:9, Office theme, title / content / blank layouts)
 - **Open** (`Ctrl/⌘+O`): `.docx` `.xlsx` `.pptx` open as they are; `.csv` / `.tsv` become a workbook (numbers and booleans typed, codes like `007` kept as text); `.txt` / `.md` / `.html` become a document (headings, lists, bold / italic / strike, links, code); `.mmd` / `.puml` / `.dot` become a document with the drawing
 - **Download as**: the native format, PDF, web page (`.html`, images embedded), plain text / Markdown (DOCX), CSV / TSV of the current sheet (XLSX), slide text with notes (PPTX)
-- **Import CSV into new sheet** (XLSX): adds a sheet after the current one with the file's rows
+- **Import CSV into new sheet** (XLSX): adds a sheet after the current one with the file's rows, streamed in the same way (in a shared session the rows go to everyone as cell edits)
 - **Save** (`Ctrl/⌘+S`), **Rename** (shown name and the name used for saving), **Document details** (file, core properties, page / word / slide counts)
 - **Host entries** (`fileMenuItems`: Share, Version history…) and **Close** (`onClose`)
 - **PDF / Print** (`Ctrl/⌘+P`): rendered off-screen and sent to the browser print dialog (choose "Save as PDF"): DOCX pages as paginated on screen, PPTX one slide per page, XLSX current sheet fitted to the paper width
@@ -158,16 +161,20 @@ Comment text is plain (lines kept); formatting inside comments read from a file 
 - PPTX: only `a:p` of edited shapes are regenerated
 - Unchanged ZIP entries are copied as-is (no recompression)
 
-| Operation                  | File                   | Time   |
-|----------------------------|------------------------|--------|
-| Type 1 char (browser)      | DOCX 2073 pages        | ~7 ms  |
-| Save after edit            | DOCX 20k paragraphs    | ~0.5 s |
-| Save after editing 2 cells | XLSX 300k rows (25 MB) | ~3 s   |
+| Operation                            | File                                | Time         |
+|--------------------------------------|-------------------------------------|--------------|
+| Type 1 char (browser)                | DOCX 2073 pages                     | ~7 ms        |
+| Save after edit                      | DOCX 20k paragraphs                 | ~0.5 s       |
+| Save after editing 2 cells           | XLSX 300k rows (25 MB)              | ~3 s         |
+| Open (rows streamed in)              | CSV 1M rows × 10 cols (99 MB)       | ~2.4 s       |
+| Open (rows paged, ~1 GB of memory)   | CSV 25M rows × 10 cols (2.7 GB)     | ~14 s        |
+| Open (rows paged, ~1 GB of memory)   | CSV 100M rows × 10 cols (10.6 GB)   | ~50 s        |
+| Save (every row written)             | CSV 1M rows → XLSX (56 MB)          | ~13 s        |
 
 ## Limitations
 
 - Formulas: no defined names, structured refs (`Table1[Col]`), 3-D refs
 - DOCX: text boxes and nested tables are read-only; paragraphs with fields spanning multiple paragraphs (TOC) are read-only; headers / footers are edited as text lines (pictures, tables and shapes in them are replaced when edited, with a warning); a header taller than the top margin overlaps the text; tracked changes don't cover formatting changes, paragraph marks or pictures; page setup applies to the whole document (not per section)
-- XLSX: no chart/pivot/conditional format/data validation/filter editing; inserting/deleting rows & columns doesn't shift conditional formats/data validation
+- XLSX: no chart/pivot/conditional format/data validation/filter editing; inserting/deleting rows & columns doesn't shift conditional formats/data validation; a sheet read by pages (a CSV past 12 million cells) takes no row / column insert or delete, and its formulas only the rows that fit in memory
 - PPTX: can't rotate shapes with the mouse yet, can't edit text inside tables yet, no table insert, no animations/transitions; slide list changes (add/delete/move) are not undoable
 - Comments: plain text only; DOCX comments can't cover text in more than one table cell or across a table; comments in headers, footers and footnotes are kept but not shown; XLSX comments don't move with sorted rows; PPTX comments anchored to a shape are shown at the shape's position when the file is opened and keep that anchor until moved

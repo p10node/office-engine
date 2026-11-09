@@ -1,5 +1,7 @@
 import { OpcPackage, relOfType, type Rels } from '../opc'
 import { readXlsxComments, XlsxComments } from './comments'
+import type { LoadReport, RowPages, SheetLoader } from './import'
+import { toCsv } from '../convert'
 import { parseTheme, type Theme } from '../theme'
 import { Calc } from './calc'
 import { kid, kids, num, parseXmlStream, type Attrs, type SaxHandler } from '../xml'
@@ -16,6 +18,8 @@ export const T_DATE = 5
 export const T_EMPTY = 6
 
 export const MAX_COL = 16384
+/** rows a worksheet holds (Excel's limit): a sheet with more cannot be saved as a workbook */
+export const MAX_ROWS = 1_048_576
 
 const decodeX = (s: string) => (s.indexOf('_x') >= 0 ? s.replace(/_x([0-9A-Fa-f]{4})_/g, (_, h: string) => String.fromCharCode(parseInt(h, 16))) : s)
 
@@ -78,6 +82,8 @@ export class SheetData {
   /** formula cells stored without a cached value (to compute after load) */
   uncached: number[] = []
   rows: (unknown[] | undefined)[] = []
+  /** a sheet too large for memory: its rows are read from the file by pages, those in memory being in `rows` */
+  pages?: RowPages
   maxRow = -1
   maxCol = -1
   formulas = new Map<number, string>()
@@ -313,6 +319,8 @@ export class XlsxWorkbook {
   readonly calc = new Calc(this)
   sst: string[] = []
   private sstLoading?: Promise<void>
+  /** sheets filled from something else than their XML (a text file being imported), by sheet path: run when the sheet loads */
+  readonly loaders = new Map<string, SheetLoader>()
 
   private constructor(
     readonly pkg: OpcPackage,
@@ -389,26 +397,44 @@ export class XlsxWorkbook {
       if (!info) throw new Error(`No sheet #${index}`)
       try {
         await this.loadSst((l, t) => onBytes?.('strings', l, t))
-        const h = new SheetHandler(d, this.styles.xfs.map((x) => x.fontPt), this.styles.xfs[0]?.fontPt ?? 11)
         let sentHeader = false
         let last = 0
-        await parseXmlStream(await this.pkg.stream(info.path, (l, t) => onBytes?.('sheet', l, t)), h, {
-          onChunk: async () => {
-            const now = Date.now()
-            if (!sentHeader && h.headerReady) {
-              sentHeader = true
-              emit(this.snapshot(index, d, h.newSizes.splice(0), true))
-              last = now
-              await new Promise((r) => setTimeout(r, 0))
-            } else if (now - last > 150) {
-              last = now
-              emit(this.snapshot(index, d, h.newSizes.splice(0), false))
-              await new Promise((r) => setTimeout(r, 0))
-            }
-          },
-        })
+        let stale = false
+        // the view grows while the sheet parses: the header as soon as it is known, then every 150 ms
+        const report = async (ready: boolean, sizes: () => [number, number][]) => {
+          const now = Date.now()
+          if (!sentHeader && ready) {
+            sentHeader = true
+            emit(this.snapshot(index, d, sizes(), true))
+            last = now
+            await new Promise((r) => setTimeout(r, 0))
+          } else if (now - last > 150) {
+            last = now
+            emit(this.snapshot(index, d, sizes(), false))
+            await new Promise((r) => setTimeout(r, 0))
+          }
+        }
+        const loader = this.loaders.get(info.path)
+        let sizes: [number, number][] = []
+        if (loader) {
+          // the rows come from somewhere else than the sheet's XML (a text file being imported)
+          const rep: LoadReport = {
+            chunk: () => report(true, () => []),
+            reset: () => {
+              stale = true
+            },
+            bytes: (l, t) => onBytes?.('sheet', l, t),
+          }
+          await loader(d, rep)
+        } else {
+          const h = new SheetHandler(d, this.styles.xfs.map((x) => x.fontPt), this.styles.xfs[0]?.fontPt ?? 11)
+          await parseXmlStream(await this.pkg.stream(info.path, (l, t) => onBytes?.('sheet', l, t)), h, {
+            onChunk: () => report(h.headerReady, () => h.newSizes.splice(0)),
+          })
+          sizes = h.newSizes.splice(0)
+        }
         d.done = true
-        emit({ ...this.snapshot(index, d, h.newSizes.splice(0), !sentHeader), merges: d.merges })
+        emit({ ...this.snapshot(index, d, sizes, !sentHeader), merges: d.merges, ...(stale ? { recalc: true } : {}) })
         if (d.uncached.length) {
           // files written by libraries often omit cached formula results: compute them (other sheets may be referenced)
           const keys = d.uncached.splice(0)
@@ -428,6 +454,12 @@ export class XlsxWorkbook {
     return d.loading
   }
 
+  /** loads the sheets whose rows come from a loader (an imported text file) and are not in yet: saving writes them from the model */
+  async loadPending(): Promise<void> {
+    const pending = this.sheets.filter((s) => this.loaders.has(s.path) && !this.sheetsData.get(s.index)?.done)
+    await Promise.all(pending.map((s) => this.loadSheet(s.index, () => {})))
+  }
+
   private snapshot(sheet: number, d: SheetData, rowSizes: [number, number][], header: boolean): SheetProgress {
     const p: SheetProgress = { sheet, rows: d.maxRow + 1, cols: d.maxCol + 1, rowSizes, done: d.done }
     if (header) {
@@ -442,13 +474,19 @@ export class XlsxWorkbook {
     return p
   }
 
+  /** rows [r0, r1] of a sheet in memory (a sheet whose rows are read from its file by pages); throws when they cannot all be */
+  async ensure(d: SheetData, r0: number, r1: number): Promise<void> {
+    if (d.pages) await d.pages.ensure(Math.max(0, r0), r1)
+  }
+
   /** Formatted cells for rows [r0, r1). */
-  block(sheet: number, r0: number, r1: number): BlockOut {
+  async block(sheet: number, r0: number, r1: number): Promise<BlockOut> {
     const d = this.sheetsData.get(sheet)
     const rows: RowOut[] = []
     if (!d) return { sheet, r0, r1, rows, complete: false }
+    await this.ensure(d, r0, r1 - 1)
     const xfs = this.styles.xfs
-    const end = Math.min(r1, d.rows.length)
+    const end = Math.min(r1, Math.max(d.maxRow + 1, d.rows.length))
     for (let r = r0; r < end; r++) {
       const row = d.rows[r]
       if (!row) continue
@@ -486,20 +524,75 @@ export class XlsxWorkbook {
       }
       rows.push({ r, cells })
     }
-    return { sheet, r0, r1, rows, complete: d.done || r1 <= d.maxRow }
+    // rows of a page the scan has not passed yet are not known
+    const known = d.pages && !d.pages.complete ? Math.min(d.maxRow, d.pages.scanned - 1) : d.maxRow
+    return { sheet, r0, r1, rows, complete: d.done || r1 <= known }
+  }
+
+  /**
+   * The sheet as delimited text (the values as shown), a line per row of the used range less the rows and columns
+   * with nothing shown at its end. A Blob: it can be larger than a string should be.
+   */
+  async text(sheet: number, sep: string): Promise<Blob> {
+    const d = this.sheetsData.get(sheet)
+    if (!d?.done) throw new Error('Sheet is still loading')
+    let lastR = d.maxRow
+    let lastC = d.maxCol
+    if (!d.pages) {
+      lastR = lastC = -1
+      const last = Math.max(d.maxRow, d.rows.length - 1)
+      for (let r = 0; r <= last; r++) {
+        const row = d.rows[r]
+        if (!row) continue
+        for (let k = 0; k < row.length; k += 4) {
+          const t = row[k + 1]
+          if ((t === T_EMPTY || (t === T_STR && row[k + 2] === '')) && !d.formulas.has(r * MAX_COL + (row[k] as number))) continue
+          lastR = r
+          if ((row[k] as number) > lastC) lastC = row[k] as number
+        }
+      }
+    }
+    // the text goes into Blobs every few MB: a Blob lives outside the heap (and on disk, when large), a string does not
+    const blobs: Blob[] = []
+    let parts: string[] = [sep === ',' ? '\uFEFF' : '']
+    let held = 0
+    const step = d.pages?.size ?? 4096
+    const blank = () => new Array<string>(lastC + 1).fill('')
+    for (let r0 = 0; r0 <= lastR; r0 += step) {
+      const r1 = Math.min(r0 + step, lastR + 1)
+      const b = await this.block(sheet, r0, r1)
+      const lines: string[][] = []
+      let next = r0
+      for (const row of b.rows) {
+        for (; next < row.r; next++) lines.push(blank())
+        const line = blank()
+        for (const c of row.cells) if (c[0] <= lastC) line[c[0]] = c[1]
+        lines.push(line)
+        next++
+      }
+      for (; next < r1; next++) lines.push(blank())
+      const piece = toCsv(lines, sep)
+      parts.push(piece)
+      held += piece.length
+      if (held > 1 << 23) {
+        blobs.push(new Blob(parts))
+        parts = []
+        held = 0
+      }
+    }
+    if (parts.length) blobs.push(new Blob(parts))
+    return new Blob(blobs, { type: sep === '\t' ? 'text/tab-separated-values' : 'text/csv' })
   }
 
   /** cells whose shown value (or formula) contains `query`, in row order */
-  find(sheet: number, query: string, opts: FindOptions = {}, limit = 20_000): FindMatch[] {
+  async find(sheet: number, query: string, opts: FindOptions = {}, limit = 20_000): Promise<FindMatch[]> {
     const d = this.sheetsData.get(sheet)
     const out: FindMatch[] = []
     if (!d || !query) return out
     const norm = (t: string) => (opts.matchCase ? t : t.toLowerCase())
     const q = norm(query)
     const xfs = this.styles.xfs
-    for (let r = 0; r < d.rows.length && out.length < limit; r++) {
-      const row = d.rows[r]
-      if (!row) continue
+    const scan = (r: number, row: unknown[]) => {
       for (let k = 0; k < row.length && out.length < limit; k += 4) {
         const c = row[k] as number
         const t = row[k + 1] as number
@@ -517,11 +610,29 @@ export class XlsxWorkbook {
         if (opts.whole ? h === q : h.includes(q)) out.push({ r, c, text })
       }
     }
+    const last = Math.max(d.maxRow, d.rows.length - 1)
+    if (!d.pages) {
+      for (let r = 0; r <= last && out.length < limit; r++) {
+        const row = d.rows[r]
+        if (row) scan(r, row)
+      }
+    } else {
+      // page by page, each read for the look only
+      const size = d.pages.size
+      for (let p = 0; p * size <= last && out.length < limit; p++) {
+        const rows = await d.pages.peek(p)
+        for (let k = 0; k < rows.length && out.length < limit; k++) {
+          const row = rows[k]
+          if (row) scan(p * size + k, row)
+        }
+      }
+    }
     return out
   }
 
-  cell(sheet: number, r: number, c: number): CellDetail | undefined {
+  async cell(sheet: number, r: number, c: number): Promise<CellDetail | undefined> {
     const d = this.sheetsData.get(sheet)
+    if (d) await this.ensure(d, r, r)
     const row = d?.rows[r]
     const formula = d?.formulas.get(r * MAX_COL + c)
     if (!row) return formula ? { value: '', formula: '=' + formula, type: 'formula' } : undefined

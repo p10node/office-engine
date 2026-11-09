@@ -12,6 +12,13 @@ export interface OpenParams {
   name?: string
   headers?: Record<string, string>
   credentials?: RequestCredentials
+  /**
+   * CSV / TSV: cells kept in memory at a time (default 12 million, about 300 MB); the rows past them are read from
+   * the file as they are shown, edited, searched or saved
+   */
+  residentCells?: number
+  /** CSV / TSV: rows read from the file at a time past `residentCells` (default 1024) */
+  pageRows?: number
 }
 
 export interface OpenResult {
@@ -58,12 +65,19 @@ export interface Methods {
   'xlsx.cell'(sheet: number, r: number, c: number): CellDetail | undefined
   /** cells whose shown value (or formula) contains the text */
   'xlsx.find'(sheet: number, query: string, opts?: FindOptions): FindMatch[]
+  /** the sheet as delimited text (the values as shown): `sep` a comma (with a byte order mark) or a tab */
+  'xlsx.text'(sheet: number, sep: string): Blob
   /** replaces text in matching cells (or only `at`); null when nothing changed */
   'xlsx.replace'(sheet: number, query: string, by: string, opts?: FindOptions, at?: { r: number; c: number }): XlsxEditResult | null
   'xlsx.set'(sheet: number, cells: CellInput[]): XlsxEditResult
   'xlsx.format'(sheet: number, range: Range, patch: FmtPatch): XlsxEditResult
   'xlsx.sheetOp'(sheet: number, op: SheetOp): XlsxEditResult
   'xlsx.bookOp'(op: BookOp): XlsxEditResult
+  /**
+   * a new sheet after `after` holding the rows of a delimited text file (CSV / TSV), streamed in when the sheet is
+   * loaded; `sep` is detected from the first line when missing, `name` defaults to the file's
+   */
+  'xlsx.import'(after: number, src: Blob | ArrayBuffer | string, params?: { name?: string; sep?: string; residentCells?: number; pageRows?: number }): XlsxEditResult
   'xlsx.undo'(): XlsxEditResult | null
   'xlsx.redo'(): XlsxEditResult | null
   'pptx.slide'(index: number): SlideModel

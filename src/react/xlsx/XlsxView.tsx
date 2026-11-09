@@ -1,6 +1,7 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type CSSProperties, type MutableRefObject, type ReactNode } from 'react'
 import type { BookOp, CellDetail, CellInput, CellOut, FindMatch, FindOptions, FmtPatch, Merge, Range, SheetOp, SheetProgress, WorkbookMeta, XlsxEditResult } from '../../core/xlsx/types'
-import { colName } from '../../core/xlsx/workbook'
+import { colName, MAX_ROWS } from '../../core/xlsx/workbook'
+import { detectSeparator, parseCsv } from '../../core/convert'
 import { closeFormula, formulaContext, isFormula, rangeText, type FormulaContext } from '../../core/xlsx/formula/assist'
 import { argSlot, functionInfo, suggestFunctions, type FnInfo } from '../../core/xlsx/formula/catalog'
 import { MAX_COL, MAX_ROW } from '../../core/xlsx/formula/types'
@@ -15,7 +16,7 @@ import { FindBar } from '../docx/FindBar'
 import { XlsxToolbar, type MergeMode } from './XlsxToolbar'
 import { Axis } from './axis'
 import { fitNumber, fontPx } from './fit'
-import { sheetPrintable, sheetText } from './print'
+import { sheetPrintable } from './print'
 import { useCommentsCtl, useCommentsState, type CommentsCtl, type PlacedThread } from '../comments/Comments'
 import { COMMENT_KEYS } from '../comments/CommentsPanel'
 import type { CommentThread } from '../../core/comments'
@@ -228,12 +229,12 @@ export function XlsxView({ client, onStatus, initialSheet }: XlsxViewProps) {
 
   const status = state.error
     ? `Error: ${state.error}`
-    : `${state.rows.toLocaleString()} rows × ${state.cols.toLocaleString()} cols${state.done ? '' : ' · loading…'}`
+    : `${state.rows.toLocaleString()} rows × ${state.cols.toLocaleString()} cols${state.done ? '' : ' · loading…'}${state.rows > MAX_ROWS ? ` · over Excel’s ${MAX_ROWS.toLocaleString()}-row limit: save as CSV` : ''}`
 
   const viewer = useViewer()
   useFileOps({
     printable: () => sheetPrintable(client, cur, store.sheet(cur), meta),
-    text: (format) => sheetText(client, cur, store.sheet(cur), format === 'tsv' ? '\t' : ','),
+    text: (format) => client.call('xlsx.text', cur, format === 'tsv' ? '\t' : ','),
     stats: () => {
       const s = store.sheet(cur)
       return [
@@ -242,31 +243,44 @@ export function XlsxView({ client, onStatus, initialSheet }: XlsxViewProps) {
         ['Used range', `${s.rows.toLocaleString()} rows × ${s.cols.toLocaleString()} columns${s.done ? '' : ' (loading)'}`],
       ]
     },
-    importTable: async (rows, name) => {
-      const res = await client.call('xlsx.bookOp', { op: 'add', name, after: cur })
+    importText: async (file, name) => {
+      const sep = /\.(tsv|tab)$/i.test((file as File).name ?? '') ? '\t' : undefined
+      // a shared session: the rows reach the others as cell edits
+      if (client.interceptor) return importRows(file, name, sep)
+      // else the worker streams the file into the new sheet, like a sheet's XML (a million rows is fine)
+      const res = await client.call('xlsx.import', cur, file, { name, sep })
       store.applied(res, meta)
       viewer.setDirty(true)
-      const idx = cur + 1
-      setActive(idx)
-      // cells can be written once the new sheet is loaded
-      await new Promise<void>((resolve, reject) => {
-        let off = () => {}
-        const check = () => {
-          const s = store.sheet(idx)
-          if (s.error) reject(new Error(s.error))
-          else if (s.done) resolve()
-          else return
-          off()
-        }
-        off = store.subscribe(check)
-        check()
-      })
-      const cells: CellInput[] = []
-      rows.forEach((row, r) => row.forEach((input, c) => input !== '' && cells.push({ r, c, input })))
-      if (cells.length) store.applied(await client.call('xlsx.set', idx, cells), meta)
-      bump()
+      setActive(cur + 1)
     },
   })
+  /** the rows of a text file as cell edits of a new sheet (parsed here, sent through the session) */
+  const importRows = async (file: Blob, name: string, sep?: string) => {
+    const text = await file.text()
+    const rows = parseCsv(text, sep ?? detectSeparator(text))
+    const res = await client.call('xlsx.bookOp', { op: 'add', name, after: cur })
+    store.applied(res, meta)
+    viewer.setDirty(true)
+    const idx = cur + 1
+    setActive(idx)
+    // cells can be written once the new sheet is loaded
+    await new Promise<void>((resolve, reject) => {
+      let off = () => {}
+      const check = () => {
+        const s = store.sheet(idx)
+        if (s.error) reject(new Error(s.error))
+        else if (s.done) resolve()
+        else return
+        off()
+      }
+      off = store.subscribe(check)
+      check()
+    })
+    const cells: CellInput[] = []
+    rows.forEach((row, r) => row.forEach((input, c) => input !== '' && cells.push({ r, c, input })))
+    if (cells.length) store.applied(await client.call('xlsx.set', idx, cells), meta)
+    bump()
+  }
   const [renaming, setRenaming] = useState<number | null>(null)
   const [tabMenu, setTabMenu] = useState<{ index: number; x: number; y: number } | null>(null)
   const bookOp = async (op: BookOp, goTo?: number) => {
@@ -899,6 +913,7 @@ function SheetGrid({ store, sheet, meta, client, edit, setEdit, hold, onSheet }:
       setDetailTick((t) => t + 1)
     } catch (e) {
       console.error('[office-engine]', e)
+      setToast((e as Error).message)
     }
   }
 

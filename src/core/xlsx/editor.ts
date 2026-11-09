@@ -15,8 +15,9 @@ import { parseSheetStyles } from './styles'
 import type { BookOp, BorderKind, CellInput, ColInfo, FindOptions, FmtPatch, Merge, Range, SheetOp, SheetProgress, XlsxEditResult } from './types'
 import { materializeShared, restore, setColWidth, setMerge, setRowHeight, shiftSheet, snapshot, type Snapshot } from './structure'
 import { renameSheetInFormula, translateFormula } from './formula'
+import { loadDelimited, type DelimitedImport } from './import'
 import {
-  colName, MAX_COL, parseRef, rowSizesOf, SheetData, T_BOOL, T_DATE, T_EMPTY, T_ERR, T_NUM, T_SST, T_STR, XlsxWorkbook,
+  colName, MAX_COL, MAX_ROWS, parseRef, rowSizesOf, SheetData, T_BOOL, T_DATE, T_EMPTY, T_ERR, T_NUM, T_SST, T_STR, XlsxWorkbook,
 } from './workbook'
 
 export const XLSX_MIME = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
@@ -73,6 +74,9 @@ export function getEntry(d: SheetData, r: number, c: number): Entry | null {
 }
 
 function setEntry(d: SheetData, r: number, c: number, e: Entry | null) {
+  // the file does not have this row's edit: its page stays in memory (and must be there: a fresh row would lose the rest)
+  if (d.pages && !d.pages.has(r)) throw new Error('Row not in memory')
+  d.pages?.pin(r)
   const row = rowOf(d, r, !!e)
   if (!row) return
   let k = 0
@@ -393,8 +397,9 @@ export class XlsxEditor {
     return [...this.wb.calc.recalc([], all)]
   }
 
-  setCells(sheet: number, inputs: CellInput[]): XlsxEditResult {
+  async setCells(sheet: number, inputs: CellInput[]): Promise<XlsxEditResult> {
     const d = this.sheet(sheet)
+    await this.prepare(sheet, d, inputs)
     const changes: CellChange[] = []
     const range = { r0: Infinity, c0: Infinity, r1: -1, c1: -1 }
     for (const { r, c, input } of inputs) {
@@ -412,6 +417,33 @@ export class XlsxEditor {
     return this.record(sheet, changes, range)
   }
 
+  /**
+   * Sheets read from their file by pages: the rows an edit touches, and the rows read by the formulas it adds or
+   * whose value it changes, are in memory first (throws when they cannot all be).
+   */
+  private async prepare(sheet: number, d: SheetData, inputs: CellInput[]): Promise<void> {
+    let paged = false
+    for (const x of this.wb.sheetsData.values()) if (x.pages) paged = true
+    if (!paged) return
+    // the rows edited, in runs (an edit far down and one at the top are two)
+    const rows = [...new Set(inputs.map((i) => i.r))].sort((a, b) => a - b)
+    const gap = d.pages?.size ?? 1
+    for (let i = 0; i < rows.length; ) {
+      let j = i
+      while (j + 1 < rows.length && rows[j + 1] - rows[j] <= gap) j++
+      await this.wb.ensure(d, rows[i], rows[j])
+      i = j + 1
+    }
+    const changed = inputs.map((i) => ({ sheet, key: i.r * MAX_COL + i.c }))
+    const added = inputs.filter((i) => i.input.length > 1 && i.input.startsWith('=')).map((i) => ({ sheet, key: i.r * MAX_COL + i.c, text: i.input.slice(1) }))
+    for (const need of this.wb.calc.reads(changed, added)) {
+      const x = this.wb.sheetsData.get(need.sheet)
+      if (x?.pages) await this.wb.ensure(x, need.r0, need.r1)
+    }
+    // later rows may have pushed earlier ones out again
+    if (d.pages) for (const r of rows) if (!d.pages.has(r)) throw new Error(`More rows at once than a sheet of ${(d.maxRow + 1).toLocaleString()} rows can hold in memory`)
+  }
+
   private async styles(): Promise<StyleEditor> {
     if (!this.styleEd) {
       const rel = relOfType(this.wb.rels, 'styles')
@@ -427,9 +459,10 @@ export class XlsxEditor {
   async format(sheet: number, range: Range, patch: FmtPatch): Promise<XlsxEditResult> {
     const d = this.sheet(sheet)
     const ed = await this.styles()
+    const r1 = Math.min(range.r1, range.r0 + 200_000)
+    await this.wb.ensure(d, range.r0, r1)
     const before = this.wb.styles.xfs.length
     const changes: CellChange[] = []
-    const r1 = Math.min(range.r1, range.r0 + 200_000)
     let budget = 300_000
     for (let r = range.r0; r <= r1 && budget > 0; r++) {
       for (let c = range.c0; c <= range.c1 && budget > 0; c++, budget--) {
@@ -571,6 +604,7 @@ export class XlsxEditor {
       case 'deleteRows':
       case 'insertCols':
       case 'deleteCols': {
+        if (d.pages) throw new Error(`Rows and columns cannot be inserted or deleted in a sheet of ${(d.maxRow + 1).toLocaleString()} rows (its rows are read from the file as they are shown)`)
         const others = await this.allSheets()
         const before = snapshot(d)
         const axis = op.op.endsWith('Rows') ? 'row' : 'col'
@@ -603,7 +637,7 @@ export class XlsxEditor {
             for (let r = b.r0; r <= b.r1; r++)
               for (let c = b.c0; c <= b.c1; c++) if ((r !== b.r0 || c !== b.c0) && getEntry(d, r, c) && getEntry(d, r, c)?.[1] !== '') clear.push({ r, c, input: '' })
           if (clear.length) {
-            this.setCells(sheet, clear)
+            await this.setCells(sheet, clear)
             const last = this.undoStack.pop()!
             this.undoStack[this.undoStack.length - 1].cells = last.cells
           }
@@ -640,21 +674,23 @@ export class XlsxEditor {
           d.dirtyView = true
         })
       case 'fill':
+        await this.wb.ensure(d, op.range.r0, op.range.r1)
         return this.fill(sheet, d, op.range, op.dir)
       case 'sort':
+        await this.wb.ensure(d, op.range.r0, op.range.r1)
         return this.sort(sheet, d, op.range, op.col, !!op.desc)
     }
   }
 
   /** replaces `query` in matching cells (one undo step); `at` limits it to one cell */
-  replace(sheet: number, query: string, by: string, opts: FindOptions = {}, at?: { r: number; c: number }): XlsxEditResult | null {
+  async replace(sheet: number, query: string, by: string, opts: FindOptions = {}, at?: { r: number; c: number }): Promise<XlsxEditResult | null> {
     const d = this.sheet(sheet)
     const re = new RegExp(opts.whole ? `^${escRe(query)}$` : escRe(query), opts.matchCase ? 'g' : 'gi')
     const inputs: CellInput[] = []
-    const cells = at ? [at] : this.wb.find(sheet, query, opts, 1e9)
+    const cells = at ? [at] : await this.wb.find(sheet, query, opts, 1e9)
     for (const { r, c } of cells) {
       const f = d.formulas.get(r * MAX_COL + c)
-      const raw = opts.formulas && f ? '=' + f : this.wb.cell(sheet, r, c)?.value
+      const raw = opts.formulas && f ? '=' + f : (await this.wb.cell(sheet, r, c))?.value
       if (raw === undefined || (f && !opts.formulas)) continue
       const next = raw.replace(re, by)
       if (next !== raw) inputs.push({ r, c, input: next })
@@ -826,12 +862,30 @@ export class XlsxEditor {
   /** XML of sheets created in this session (no original to stream from) */
   private newSheets = new Map<string, string>()
 
+  /**
+   * Adds a sheet after `after` holding the rows of a delimited text file (CSV / TSV): they stream into the sheet
+   * when it is loaded, like a sheet's XML does. `name` defaults to the file's name.
+   */
+  async importText(after: number, imp: DelimitedImport, name?: string): Promise<XlsxEditResult> {
+    const base = (name ?? imp.source.name ?? '').replace(/\.[^./\\]+$/, '').replace(/[\\/?*[\]:]/g, '_').slice(0, 31).trim() || 'Imported'
+    const res = await this.bookOp({ op: 'add', name: base, after })
+    this.wb.loaders.set(this.wb.sheets[after + 1].path, (d, report) => loadDelimited(d, imp, report))
+    return res
+  }
+
   // ---------------------------------------------------------------- save
 
   async save(): Promise<Blob> {
+    // rows still to come from an import are in the model before the sheets are written
+    await this.wb.loadPending()
     const pkg = this.wb.pkg
     let any = false
     for (const [index, d] of this.wb.sheetsData) {
+      if (d.maxRow >= MAX_ROWS) {
+        throw new Error(
+          `Sheet “${this.wb.sheets[index].name}” has ${(d.maxRow + 1).toLocaleString()} rows: an Excel workbook holds at most ${MAX_ROWS.toLocaleString()}. Save the sheet as CSV instead.`,
+        )
+      }
       if (!needsWrite(d)) continue
       any = true
       const info = this.wb.sheets[index]
@@ -896,7 +950,7 @@ export class XlsxEditor {
         for (;;) {
           const { done, value } = await reader.read()
           const text = done ? dec.decode() : dec.decode(value, { stream: true })
-          for (const part of rw.push(text, done)) if (part) ctrl.enqueue(enc.encode(part))
+          for (const part of await rw.push(text, done)) if (part) ctrl.enqueue(enc.encode(part))
           if (done) break
         }
         ctrl.close()
@@ -1053,12 +1107,15 @@ class RowPatcher {
     return out
   }
 
-  /** every row of the sheet, regenerated from the model (structural edits) */
-  private *allRows(): Generator<string> {
+  /** every row of the sheet, regenerated from the model (structural edits); a paged sheet is read page by page */
+  private async *allRows(): AsyncGenerator<string> {
     const d = this.d
-    const last = Math.max(d.rows.length - 1, ...d.rowAttrs.keys(), -1)
+    let last = Math.max(d.rows.length - 1, d.maxRow)
+    for (const r of d.rowAttrs.keys()) if (r > last) last = r
+    const size = d.pages?.size ?? Infinity
     let chunk = ''
     for (let r = 0; r <= last; r++) {
+      if (d.pages && r % size === 0) await d.pages.ensure(r, r + size - 1)
       const row = d.rows[r]
       const attrs = this.rowAttrXml(r)
       if (!row?.length && !attrs) continue
@@ -1137,7 +1194,7 @@ class RowPatcher {
   }
 
   /** feeds decoded text; returns what can be written so far */
-  push(text: string, final: boolean): string[] {
+  async push(text: string, final: boolean): Promise<string[]> {
     const s = this.buf + text
     this.buf = ''
     const out: string[] = []
@@ -1159,7 +1216,7 @@ class RowPatcher {
       const end = m.index + m[0].length
       if (m[3] === '/') {
         out.push(`<${this.P}sheetData>`)
-        if (this.d.structural) out.push(...this.allRows())
+        if (this.d.structural) for await (const part of this.allRows()) out.push(part)
         else {
           let rows = ''
           while (this.next < this.rows.length) rows += this.newRow(this.rows[this.next++])
@@ -1167,7 +1224,7 @@ class RowPatcher {
         }
         out.push(`</${this.P}sheetData>`)
         this.phase = 'tail'
-        return [...out, ...this.push(s.slice(end), final)]
+        return [...out, ...(await this.push(s.slice(end), final))]
       }
       out.push(m[0])
       i = end
@@ -1180,9 +1237,10 @@ class RowPatcher {
         this.buf = s.slice(Math.max(i, s.length - dataClose.length))
         return out
       }
-      out.push(...this.allRows(), dataClose)
+      for await (const part of this.allRows()) out.push(part)
+      out.push(dataClose)
       this.phase = 'tail'
-      return [...out, ...this.push(s.slice(dc + dataClose.length), final)]
+      return [...out, ...(await this.push(s.slice(dc + dataClose.length), final))]
     }
     const rowOpen = `<${this.P}row`
     let chunk = ''
@@ -1194,7 +1252,7 @@ class RowPatcher {
         chunk += s.slice(i, dc) + this.before(Infinity) + dataClose
         out.push(chunk)
         this.phase = 'tail'
-        return [...out, ...this.push(s.slice(dc + dataClose.length), final)]
+        return [...out, ...(await this.push(s.slice(dc + dataClose.length), final))]
       }
       if (ro < 0) break
       const gt = s.indexOf('>', ro)

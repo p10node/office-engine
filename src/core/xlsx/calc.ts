@@ -89,7 +89,10 @@ export class Calc {
 
   /** current value of a cell as the formula engine sees it */
   private value(sheet: number, r: number, c: number): Value {
-    const row = this.wb.sheetsData.get(sheet)?.rows[r]
+    const d = this.wb.sheetsData.get(sheet)
+    // a row of a page not in memory (a sheet read from its file by pages): the formula gets #VALUE!, not a blank
+    if (d?.pages && !d.pages.has(r)) throw new Error('Row not in memory')
+    const row = d?.rows[r]
     if (!row) return null
     for (let k = 0; k < row.length; k += 4) {
       if (row[k] !== c) continue
@@ -161,9 +164,40 @@ export class Calc {
     store(d, key, v)
   }
 
-  /** Evaluates the given formula cells and everything that depends on the changed cells. */
-  recalc(changed: { sheet: number; key: number }[], formulas: { sheet: number; key: number }[] = []): Set<number> {
+  /**
+   * The rows that computing the formulas a change touches would read: the formulas given (added: their text, not yet
+   * in the sheet) and those depending on the changed cells. For sheets read from their file by pages, to have those
+   * rows in memory first.
+   */
+  reads(changed: { sheet: number; key: number }[], added: { sheet: number; key: number; text: string }[]): { sheet: number; r0: number; r1: number }[] {
     this.index()
+    const out: { sheet: number; r0: number; r1: number }[] = []
+    const collect = (a: Ast, self: number) => {
+      for (const ref of references(a)) {
+        const s = this.sheetIndex(ref.sheet, self)
+        if (s < 0) continue
+        const max = this.wb.sheetsData.get(s)?.maxRow ?? -1
+        if ('r' in ref) out.push({ sheet: s, r0: ref.r, r1: ref.r })
+        else out.push({ sheet: s, r0: ref.r0, r1: Math.min(ref.r1, max) })
+      }
+    }
+    for (const f of added) {
+      try {
+        collect(parseFormula(f.text), f.sheet)
+      } catch {
+        // not a formula after all: nothing read
+      }
+    }
+    for (const id of this.affected(changed, [])) {
+      const [s, key] = id.split(':').map(Number)
+      const a = this.ast(s, key)
+      if (a) collect(a, s)
+    }
+    return out
+  }
+
+  /** the formula cells to compute after `changed` cells change: the given ones, then every dependent (transitively) */
+  private affected(changed: { sheet: number; key: number }[], formulas: { sheet: number; key: number }[]): Id[] {
     const pending = new Set<Id>()
     const queue: Id[] = []
     const push = (id: Id) => {
@@ -192,6 +226,14 @@ export class Calc {
     }
     for (const ch of changed) visit(idOf(ch.sheet, ch.key))
     for (const f of formulas) visit(idOf(f.sheet, f.key))
+    return queue
+  }
+
+  /** Evaluates the given formula cells and everything that depends on the changed cells. */
+  recalc(changed: { sheet: number; key: number }[], formulas: { sheet: number; key: number }[] = []): Set<number> {
+    this.index()
+    const queue = this.affected(changed, formulas)
+    const pending = new Set<Id>(queue)
     const sheets = new Set<number>()
     const visiting = new Set<Id>()
     for (const id of queue) {
@@ -212,6 +254,9 @@ export class Calc {
 function store(d: SheetData, key: number, v: Value) {
   const r = Math.floor(key / MAX_COL)
   const c = key % MAX_COL
+  // a formula cell was edited: its page is in memory for good
+  if (d.pages && !d.pages.has(r)) throw new Error('Row not in memory')
+  d.pages?.pin(r)
   let row = d.rows[r]
   if (!row) d.rows[r] = row = []
   let t: number

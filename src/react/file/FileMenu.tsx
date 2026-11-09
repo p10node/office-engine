@@ -1,5 +1,4 @@
 import { useRef, useState } from 'react'
-import { detectSeparator, parseCsv } from '../../core/convert'
 import type { DocKind } from '../../core/opc'
 import { MOD } from '../common/ContextMenu'
 import type { FileOps } from '../common/Slots'
@@ -136,10 +135,8 @@ export function useFileActions(o: FileActionsOptions): FileActions {
     if (action === 'import') {
       const [file] = await pickFiles('.csv,.tsv,.tab,.txt', false)
       if (!file) return
-      if (!ops?.importTable) throw new Error('The document is still loading — try again in a moment')
-      const text = await file.text()
-      const sep = /\.(tsv|tab)$/i.test(file.name) ? '\t' : detectSeparator(text)
-      await ops.importTable(parseCsv(text, sep), file.name.replace(/\.[^.]+$/, '').slice(0, 31) || 'Imported')
+      if (!ops?.importText) throw new Error('The document is still loading — try again in a moment')
+      await ops.importText(file, file.name.replace(/\.[^.]+$/, '').slice(0, 31) || 'Imported')
       return
     }
     if (!c.kind || !c.canDownload) return

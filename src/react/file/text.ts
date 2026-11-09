@@ -137,7 +137,4 @@ export function slidesToText(slides: SlideModel[]): string {
 // ---------------------------------------------------------------- CSV
 
 /** RFC 4180 output (CRLF; fields with separators, quotes or line breaks are quoted). */
-export function toCsv(rows: string[][], sep = ','): string {
-  const q = (v: string) => (v.includes(sep) || /["\r\n]/.test(v) || /^\s|\s$/.test(v) ? `"${v.replace(/"/g, '""')}"` : v)
-  return rows.map((r) => r.map(q).join(sep)).join('\r\n') + '\r\n'
-}
+export { toCsv } from '../../core/convert'

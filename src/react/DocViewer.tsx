@@ -277,6 +277,7 @@ export function DocViewer(props: DocViewerProps) {
     } catch (e) {
       onError?.(e as Error)
       console.error('[office-engine] save failed', e)
+      setToast((e as Error).message)
     } finally {
       setSaving(false)
     }

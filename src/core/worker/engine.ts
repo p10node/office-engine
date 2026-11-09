@@ -7,6 +7,7 @@ import { BlobSource, openSource, type DocSource } from '../source'
 import { decodeText, HAS_SOURCE, mayBePlain, plainFormat, plainToOffice } from '../plain'
 import { XlsxWorkbook } from '../xlsx/workbook'
 import { XlsxEditor } from '../xlsx/editor'
+import { loadDelimited } from '../xlsx/import'
 import type { BookOp, CellInput, FindOptions, FmtPatch, Range, SheetOp } from '../xlsx/types'
 import type { PParaSpec, ShapeOp, SlideOp } from '../pptx/types'
 import { addSlideImage, shapeOps, slideOp, undoShapes } from '../pptx/edit'
@@ -23,7 +24,7 @@ const WRITES = new Set<string>([
   'comments.set',
   // `docx.convert` only reads, but what it reads (styles, lists) is what the writes before it set
   'docx.edit', 'docx.table', 'docx.image', 'docx.link', 'docx.style', 'docx.styleSet', 'docx.page', 'docx.hf', 'docx.convert', 'save',
-  'xlsx.set', 'xlsx.format', 'xlsx.sheetOp', 'xlsx.bookOp', 'xlsx.replace', 'xlsx.undo', 'xlsx.redo', 'collab.xlsx.apply', 'collab.xlsx.revert',
+  'xlsx.set', 'xlsx.format', 'xlsx.sheetOp', 'xlsx.bookOp', 'xlsx.import', 'xlsx.replace', 'xlsx.undo', 'xlsx.redo', 'collab.xlsx.apply', 'collab.xlsx.revert',
   'pptx.setText', 'pptx.shapes', 'pptx.slides', 'pptx.image', 'pptx.undo', 'collab.pptx.apply', 'collab.pptx.revert',
 ])
 
@@ -51,10 +52,12 @@ export class Engine {
     const name = params.name ?? source.name
     // CSV / TSV / text / Markdown / HTML: converted to a workbook / document (an Office or iWork name skips the look)
     const imported = mayBePlain(name) ? plainFormat(name, source.type, await source.read(0, Math.min(source.size, 4096)), source.size <= 4096) : null
-    const text = imported ? decodeText(await source.read(0, source.size), source.type) : null
+    // CSV / TSV: an empty workbook whose sheet streams the rows in when it is loaded (the text is never read whole)
+    const tabular = imported === 'csv' || imported === 'tsv'
+    const text = imported && !tabular ? decodeText(await source.read(0, source.size), source.type) : null
     // kept for the source view: formats whose text is worth reading next to the document
     this.plainText = imported && HAS_SOURCE.has(imported) ? text : null
-    let zip = imported ? await ZipArchive.open(new BlobSource(await plainToOffice(text!, imported, name))) : await ZipArchive.open(source)
+    let zip = imported ? await ZipArchive.open(new BlobSource(await plainToOffice(text ?? '', imported, name))) : await ZipArchive.open(source)
     let from: OpenResult['from']
     // Apple Pages / Keynote / Numbers: converted to a Word document / PowerPoint presentation / Excel workbook, shown read-only
     if (isIworkZip(zip)) ({ zip, from } = await openIwork(zip))
@@ -64,7 +67,14 @@ export class Engine {
     this.kind = main.kind
     const res: OpenResult = { kind: main.kind, name, size: source.size, ...(from ? { from } : {}), ...(imported ? { imported } : {}) }
     if (main.kind === 'docx') this.docx = await DocxDocument.open(pkg, main.path)
-    else if (main.kind === 'xlsx') res.xlsx = (this.xlsx = await XlsxWorkbook.open(pkg, main.path)).meta()
+    else if (main.kind === 'xlsx') {
+      const wb = (this.xlsx = await XlsxWorkbook.open(pkg, main.path))
+      if (tabular) {
+        const imp = { source, sep: imported === 'tsv' ? '\t' : undefined, budget: params.residentCells, pageRows: params.pageRows }
+        wb.loaders.set(wb.sheets[0].path, (d, report) => loadDelimited(d, imp, report))
+      }
+      res.xlsx = wb.meta()
+    }
     else res.pptx = (this.pptx = await PptxPresentation.open(pkg, main.path)).meta
     // comment changes (also those made by edits, like rows deleted) reach the views
     this.comments()
@@ -154,6 +164,11 @@ export class Engine {
         return this.xed().replace(args[0] as number, args[1] as string, args[2] as string, args[3] as FindOptions, args[4] as { r: number; c: number } | undefined)
       case 'xlsx.bookOp':
         return this.xed().bookOp(args[0] as BookOp)
+      case 'xlsx.import': {
+        const p = (args[2] ?? {}) as { name?: string; sep?: string; residentCells?: number; pageRows?: number }
+        const source = await openSource(args[1] as DocSource, { signal: this.abort.signal })
+        return this.xed().importText(args[0] as number, { source, sep: p.sep, budget: p.residentCells, pageRows: p.pageRows }, p.name)
+      }
       case 'xlsx.undo':
         return this.xed().undo()
       case 'xlsx.redo':
@@ -172,6 +187,8 @@ export class Engine {
         return this.need(this.xlsx).cell(args[0] as number, args[1] as number, args[2] as number)
       case 'xlsx.find':
         return this.need(this.xlsx).find(args[0] as number, args[1] as string, args[2] as FindOptions)
+      case 'xlsx.text':
+        return this.need(this.xlsx).text(args[0] as number, args[1] as string)
       case 'pptx.setText':
         return this.need(this.pptx).setText(args[0] as number, args[1] as number, args[2] as PParaSpec[])
       case 'pptx.shapes':

@@ -8,6 +8,12 @@ import { escAttr, escText } from './raw'
 import { safeHref } from './url'
 import { writeZip } from './zipwrite'
 
+/** rows as delimited text: a field is quoted when it holds the separator, a quote, a line break or outer spaces */
+export function toCsv(rows: string[][], sep = ','): string {
+  const q = (v: string) => (v.includes(sep) || /["\r\n]/.test(v) || /^\s|\s$/.test(v) ? `"${v.replace(/"/g, '""')}"` : v)
+  return rows.map((r) => r.map(q).join(sep)).join('\r\n') + '\r\n'
+}
+
 // kept local: the writers that also define these are worker-side modules
 const DOCX_MIME = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
 const XLSX_MIME = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
@@ -77,13 +83,41 @@ function colName(c: number): string {
 
 const NUMBER = /^[-+]?(?:\d+\.?\d*|\.\d+)(?:[eE][-+]?\d+)?$/
 
+/**
+ * What a delimited text field holds: a number (not a code like "007", nor one of more than 15 digits), a boolean, or
+ * text (null). `decimalComma`: "12,5" is a number. Cheap for the common case: text allocates nothing.
+ */
+export function fieldValue(v: string, decimalComma = false): number | boolean | null {
+  let t = v
+  if (t.charCodeAt(0) <= 32 || t.charCodeAt(t.length - 1) <= 32) t = t.trim()
+  const n = t.length
+  if (!n) return null
+  const c0 = t.charCodeAt(0)
+  // a digit, a sign or a decimal point first: a number, or text that looks like one
+  if ((c0 >= 48 && c0 <= 57) || c0 === 45 || c0 === 43 || c0 === 46 || (decimalComma && c0 === 44)) {
+    if (decimalComma && /^[-+]?\d*,\d+$/.test(t)) t = t.replace(',', '.')
+    if (!NUMBER.test(t) || /^[-+]?0\d/.test(t)) return null
+    let digits = 0
+    for (let i = 0; i < t.length; i++) {
+      const c = t.charCodeAt(i)
+      if (c >= 48 && c <= 57) digits++
+    }
+    return digits <= 15 ? Number(t) : null
+  }
+  if ((n === 4 || n === 5) && (c0 === 116 || c0 === 84 || c0 === 102 || c0 === 70)) {
+    const l = t.toLowerCase()
+    if (l === 'true') return true
+    if (l === 'false') return false
+  }
+  return null
+}
+
 /** Value written for a CSV field: numbers (but not codes like "007") and booleans keep their type. */
 function cellXml(ref: string, v: string, decimalComma: boolean): string {
   if (v === '') return ''
-  let t = v.trim()
-  if (decimalComma && /^[-+]?\d*,\d+$/.test(t)) t = t.replace(',', '.')
-  if (NUMBER.test(t) && !/^[-+]?0\d/.test(t) && t.replace(/\D/g, '').length <= 15) return `<c r="${ref}"><v>${Number(t)}</v></c>`
-  if (/^(true|false)$/i.test(t)) return `<c r="${ref}" t="b"><v>${/^true$/i.test(t) ? 1 : 0}</v></c>`
+  const k = fieldValue(v, decimalComma)
+  if (typeof k === 'number') return `<c r="${ref}"><v>${k}</v></c>`
+  if (typeof k === 'boolean') return `<c r="${ref}" t="b"><v>${k ? 1 : 0}</v></c>`
   return `<c r="${ref}" t="inlineStr"><is><t xml:space="preserve">${escText(v)}</t></is></c>`
 }
 

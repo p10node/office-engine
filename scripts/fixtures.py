@@ -258,6 +258,15 @@ def make_large_xlsx(path, rows=300_000, cols=12):
     wb.save(path)
 
 
+def make_large_csv(path, rows=1_000_000):
+    """a million-row CSV (quoted fields, escaped quotes, numbers, booleans, dates): the streamed import's heavy sample"""
+    with open(path, 'w', encoding='utf-8', newline='') as f:
+        f.write('id,name,email,city,country,amount,qty,date,flag,note\n')
+        for i in range(1, rows + 1):
+            f.write(f'{i},User {i},user{i}@example.com,"City, {i % 500}",VN,{i * 1.37:.2f},{i % 97},'
+                    f'2026-0{1 + i % 9}-1{i % 9},{"true" if i % 2 else "false"},"note ""{i}"""\n')
+
+
 # ---------------------------------------------------------------- PPTX
 def make_pptx(path, extra=0):
     from pptx import Presentation
@@ -344,6 +353,7 @@ if __name__ == '__main__':
     if large:
         make_docx(os.path.join(OUT, 'large-doc.docx'), paragraphs=20000)
         make_large_xlsx(os.path.join(OUT, 'large-sheet.xlsx'))
+        make_large_csv(os.path.join(OUT, 'large-rows.csv'))
     if large or deck_only:
         make_pptx(os.path.join(OUT, 'large-deck.pptx'), extra=300)
     print('ok')

@@ -2,7 +2,6 @@ import type { CSSProperties, ReactNode } from 'react'
 import type { DocumentClient } from '../../core/worker/client'
 import type { CellOut, Merge, WorkbookMeta } from '../../core/xlsx/types'
 import type { Printable } from '../file/print'
-import { toCsv } from '../file/text'
 import type { Axis } from './axis'
 import { fitNumber, fontPx } from './fit'
 
@@ -36,27 +35,6 @@ async function sheetRows(client: DocumentClient, sheet: number, rows: number): P
 const loading = () => new Error('The sheet is still loading — try again in a moment')
 
 /** Shown values of the sheet as CSV / TSV (UTF-8 BOM for CSV so Excel reads accents). */
-export async function sheetText(client: DocumentClient, sheet: number, l: SheetLayout, sep: string): Promise<string> {
-  if (!l.done) throw loading()
-  const data = await sheetRows(client, sheet, l.rows)
-  let lastR = -1
-  let lastC = -1
-  for (const [r, cells] of data) {
-    for (const c of cells) {
-      if (c[1] === '') continue
-      lastR = Math.max(lastR, r)
-      lastC = Math.max(lastC, c[0])
-    }
-  }
-  const rows: string[][] = []
-  for (let r = 0; r <= lastR; r++) {
-    const line = new Array<string>(lastC + 1).fill('')
-    for (const c of data.get(r) ?? []) if (c[0] <= lastC) line[c[0]] = c[1]
-    rows.push(line)
-  }
-  return (sep === ',' ? '﻿' : '') + toCsv(rows, sep)
-}
-
 const VALIGN: Record<string, CSSProperties['verticalAlign']> = { 'flex-start': 'top', center: 'middle', 'flex-end': 'bottom' }
 
 /** The sheet as a table (used range, hidden rows / columns left out), fitted to the paper width. */
