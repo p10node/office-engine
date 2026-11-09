@@ -1,6 +1,6 @@
 {
   "name": "@p10node/plantuml",
-  "version": "0.1.0",
+  "version": "0.9.0",
   "description": "PlantUML diagrams to SVG in the browser or Node, with no Java, server or dependency: sequence, class, use case, component, state, activity, mind map",
   "type": "module",
   "license": "MIT",
