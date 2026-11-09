@@ -17,6 +17,9 @@ name: Release
 # - Prereleases (`v0.2.0-rc.1`) are marked prerelease on GitHub and go to the
 #   `next` npm dist-tag; everything else goes to `latest`.
 # - Re-running is safe: an existing tag, release or npm version is reused.
+#   A released tag is also published again by hand (Actions → Release → Run
+#   workflow, with the tag): packages missing on npm are published, the rest
+#   is reused. For when a package's trusted publisher got fixed after the run.
 # - Versions are immutable: pushing new commits to a branch whose tag already
 #   exists fails. Cut a new version branch instead.
 #
@@ -29,9 +32,15 @@ name: Release
 on:
   push:
     branches: ['v[0-9]+.[0-9]+.[0-9]+*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Released tag to publish again (v0.2.0): packages missing on npm are published, the rest is reused'
+        required: true
+        type: string
 
 concurrency:
-  group: release-${{ github.ref }}
+  group: release-${{ inputs.tag || github.ref_name }}
   cancel-in-progress: false
 
 permissions:
@@ -42,17 +51,21 @@ env:
 
 jobs:
   ci:
+    # a tag published again passed CI when it was released
+    if: github.event_name == 'push'
     uses: ./.github/workflows/ci.yml
 
   release:
     needs: ci
+    # after CI, or without it when CI was skipped
+    if: ${{ !cancelled() && (needs.ci.result == 'success' || needs.ci.result == 'skipped') }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
     permissions:
       contents: write # push release commit + tag, create GitHub release
       id-token: write # npm provenance / trusted publishing
     env:
-      TAG: ${{ github.ref_name }}
+      TAG: ${{ inputs.tag || github.ref_name }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -75,15 +88,18 @@ jobs:
           version="${TAG#v}"
           case "$version" in *-*) dist_tag=next; pre=true ;; *) dist_tag=latest; pre=false ;; esac
 
-          head=$(git rev-parse "origin/$TAG")
-          if git rev-parse -q --verify "refs/tags/$TAG" >/dev/null; then
-            tagged=$(git rev-parse "refs/tags/$TAG^{commit}")
-            if [ "$tagged" != "$head" ]; then
-              echo "::error::Tag $TAG already exists at ${tagged:0:7} but branch $TAG is at ${head:0:7}. Versions are immutable: cut a new version branch."
+          # the branch's tip as the remote has it: a re-run's checkout points origin/$TAG at the run's own commit
+          head=$(git ls-remote origin "refs/heads/$TAG" | cut -f1)
+          if tagged_at=$(git rev-parse -q --verify "refs/tags/$TAG^{commit}"); then
+            if [ "$GITHUB_EVENT_NAME" = push ] && [ -n "$head" ] && [ "$tagged_at" != "$head" ]; then
+              echo "::error::Tag $TAG already exists at ${tagged_at:0:7} but branch $TAG is at ${head:0:7}. Versions are immutable: cut a new version branch."
               exit 1
             fi
             git checkout -q "refs/tags/$TAG"
             tagged=true
+          elif [ "$GITHUB_EVENT_NAME" != push ]; then
+            echo "::error::Tag $TAG does not exist: a version is released by pushing a branch named $TAG."
+            exit 1
           else
             if [ "$GITHUB_SHA" != "$head" ]; then
               echo "::error::Branch $TAG moved to ${head:0:7} after this run started; the run for that push releases it."

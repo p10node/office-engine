@@ -88,7 +88,7 @@ Released together, at one version (the SDK packages compile in the engine's code
 | `@p10node/graphviz`      | `packages/graphviz` |
 | `@p10node/markdown`      | `packages/markdown` |
 
-A package whose version is already on npm is skipped; one that fails to publish does not stop the others (the job fails at the end, and re-running it publishes what is missing).
+A package whose version is already on npm is skipped; one that fails to publish does not stop the others (the job fails at the end). Re-running the failed job publishes what is missing; so does publishing the tag again by hand once its branch is gone or its run is old: **Actions → Release → Run workflow**, with the tag (`gh workflow run release.yml -f tag=v0.2.0`). Typical case: a package's trusted publisher was fixed after the release ran.
 
 - Release notes: optional `docs/releases/<tag>.md`, placed above GitHub's generated commit list.
 - Prereleases (`v0.2.0-rc.1`) are marked prerelease on GitHub and go to the `next` dist-tag; others go to `latest`.
