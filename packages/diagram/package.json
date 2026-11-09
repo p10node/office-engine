@@ -1,6 +1,6 @@
 {
   "name": "@p10node/diagram",
-  "version": "0.1.0",
+  "version": "0.11.0",
   "description": "Mermaid, PlantUML and Graphviz diagrams to SVG with no DOM, server or dependency: render text, or draw every diagram block of a page",
   "type": "module",
   "license": "MIT",
