@@ -8,6 +8,10 @@ name: Release
 # (committing `chore(release): v0.2.0` onto the branch if it differs), creates
 # and pushes the `v0.2.0` tag, creates the GitHub release and publishes to npm.
 #
+# Packages: @p10node/office-engine and the standalone SDK packages in
+# packages/* (@p10node/diagram, mermaid, plantuml, graphviz, markdown) are
+# released together, all at the branch's version (they share the engine code).
+#
 # - Release notes: docs/releases/<tag>.md is optional. If present it goes on
 #   top, GitHub's generated commit list below it.
 # - Prereleases (`v0.2.0-rc.1`) are marked prerelease on GitHub and go to the
@@ -16,9 +20,11 @@ name: Release
 # - Versions are immutable: pushing new commits to a branch whose tag already
 #   exists fails. Cut a new version branch instead.
 #
-# npm auth is Trusted Publishing (OIDC), no token secret. The npm package
+# npm auth is Trusted Publishing (OIDC), no token secret. Each npm package
 # must trust this repo + `release.yml` with `npm publish` allowed; see
-# docs/development.md.
+# docs/development.md. npm trusts existing packages only: a new package is
+# bootstrapped once, with a hand-published placeholder or, for one release,
+# the NPM_TOKEN secret (granular token with publish rights on @p10node).
 
 on:
   push:
@@ -101,8 +107,13 @@ jobs:
           set -euo pipefail
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          if [ "$(jq -r .version package.json)" != "$VERSION" ]; then
-            npm version "$VERSION" --no-git-tag-version
+          # the library and every SDK package get the version
+          for pkg in . packages/*; do
+            if [ "$(jq -r .version "$pkg/package.json")" != "$VERSION" ]; then
+              (cd "$pkg" && npm version "$VERSION" --no-git-tag-version)
+            fi
+          done
+          if ! git diff --quiet; then
             git commit -am "chore(release): $TAG"
           fi
           git tag -a "$TAG" -m "$TAG"
@@ -114,16 +125,33 @@ jobs:
 
       - run: bun install --frozen-lockfile
       - run: bun run build
+      - run: bun run build:packages
 
+      # one tarball per package, in $RUNNER_TEMP/packs (the library's first)
       - name: Pack
         id: pack
-        run: echo "file=$(npm pack --silent | tail -1)" >> "$GITHUB_OUTPUT"
+        env:
+          VERSION: ${{ steps.meta.outputs.version }}
+        run: |
+          set -euo pipefail
+          dir="$RUNNER_TEMP/packs"
+          mkdir -p "$dir"
+          for pkg in . packages/*; do
+            v=$(jq -r .version "$pkg/package.json")
+            if [ "$v" != "$VERSION" ]; then
+              echo "::error::$pkg/package.json is at $v, not $VERSION"
+              exit 1
+            fi
+            (cd "$pkg" && npm pack --silent --pack-destination "$dir" | tail -1)
+          done
+          ls -1 "$dir"
+          echo "dir=$dir" >> "$GITHUB_OUTPUT"
 
       - name: Create GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
           PRERELEASE: ${{ steps.meta.outputs.prerelease }}
-          TARBALL: ${{ steps.pack.outputs.file }}
+          PACKS: ${{ steps.pack.outputs.dir }}
         run: |
           set -euo pipefail
           if gh release view "$TAG" >/dev/null 2>&1; then
@@ -138,7 +166,7 @@ jobs:
             echo "::notice::no $notes, publishing with generated notes only"
           fi
           [ "$PRERELEASE" = "true" ] && args+=(--prerelease)
-          gh release create "$TAG" "${args[@]}" "$TARBALL"
+          gh release create "$TAG" "${args[@]}" "$PACKS"/*.tgz
 
       # Trusted publishing needs npm >= 11.5.1
       - run: npm install -g npm@latest
@@ -147,12 +175,27 @@ jobs:
         env:
           VERSION: ${{ steps.meta.outputs.version }}
           DIST_TAG: ${{ steps.meta.outputs.dist_tag }}
-          TARBALL: ${{ steps.pack.outputs.file }}
+          PACKS: ${{ steps.pack.outputs.dir }}
+          # only for a package's first version (see the top of this file)
+          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
           set -euo pipefail
-          name=$(jq -r .name package.json)
-          if npm view "$name@$VERSION" version >/dev/null 2>&1; then
-            echo "$name@$VERSION is already on npm"
-            exit 0
-          fi
-          npm publish "$TARBALL" --provenance --access public --tag "$DIST_TAG"
+          # without the secret: trusted publishing (OIDC) alone, as for every later version
+          if [ -n "$NPM_TOKEN" ]; then export NODE_AUTH_TOKEN="$NPM_TOKEN"; fi
+          failed=0
+          for pkg in . packages/*; do
+            name=$(jq -r .name "$pkg/package.json")
+            if npm view "$name@$VERSION" version >/dev/null 2>&1; then
+              echo "$name@$VERSION is already on npm"
+              continue
+            fi
+            tarball="$PACKS/$(echo "${name#@}" | tr / -)-$VERSION.tgz"
+            # keep going: one package's failure (e.g. not trusted yet) does not hold back the others
+            if npm publish "$tarball" --provenance --access public --tag "$DIST_TAG"; then
+              echo "published $name@$VERSION"
+            else
+              echo "::error::publishing $name@$VERSION failed"
+              failed=1
+            fi
+          done
+          exit $failed

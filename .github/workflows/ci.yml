@@ -32,9 +32,13 @@ jobs:
       - run: bun run typecheck
       - run: bun test
       - run: bun run build
+      - run: bun run build:packages
 
       - name: Check package contents
-        run: npm pack --dry-run
+        run: |
+          set -euo pipefail
+          npm pack --dry-run
+          for pkg in packages/*; do (cd "$pkg" && npm pack --dry-run); done
 
   e2e:
     name: Browser tests
