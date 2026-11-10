@@ -41,6 +41,7 @@ const RAW: Record<string, string> = {
   GCD: 'number1, [number2], ...|Greatest common divisor.',
   HLOOKUP: 'lookup_value, table_array, row_index_num, [range_lookup]|Looks up a value in the top row and returns a value from the same column.',
   HOUR: 'serial_number|Hour of a time value (0-23).',
+  HYPERLINK: 'link_location, [friendly_name]|A link: the cell shows the friendly name, or else the address.',
   IF: 'logical_test, [value_if_true], [value_if_false]|Returns one value if a condition is TRUE and another if FALSE.',
   IFERROR: 'value, value_if_error|Returns value_if_error if the expression is an error.',
   IFNA: 'value, value_if_na|Returns value_if_na if the expression is #N/A.',

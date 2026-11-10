@@ -105,6 +105,8 @@ export const TEXT: Record<string, FnDef> = {
   FIND: S(2, 3, (a) => find(str(a[0]), str(a[1]), Math.trunc(opt(a, 2, 1)), false)),
   SEARCH: S(2, 3, (a) => find(str(a[0]), str(a[1]), Math.trunc(opt(a, 2, 1)), true)),
   EXACT: S(2, 2, ([x, y]) => str(x) === str(y)),
+  // the link itself is not followed: the cell shows the friendly name, else the address
+  HYPERLINK: S(1, 2, (a) => (a.length > 1 && a[1] !== null ? a[1] : str(a[0]))),
   VALUE: S(1, 1, ([x]) => {
     if (typeof x === 'number') return x
     if (x === null) return 0
