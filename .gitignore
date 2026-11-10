@@ -6,3 +6,4 @@ playground/public/samples/large-*
 .DS_Store
 dist-site
 packages/*/LICENSE
+__pycache__

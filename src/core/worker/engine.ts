@@ -4,7 +4,7 @@ import type { CanonStyle, EditOp, HFSet, PageSet, ParaSpec, StyleLook, TableOp }
 import { OpcPackage, type DocKind } from '../opc'
 import { PptxPresentation } from '../pptx/parser'
 import { BlobSource, openSource, type DocSource } from '../source'
-import { decodeText, HAS_SOURCE, mayBePlain, plainFormat, plainToOffice, ungzipped } from '../plain'
+import { decodeText, extOf, HAS_SOURCE, mayBePlain, plainFormat, plainToOffice, ungzipped } from '../plain'
 import { XlsxWorkbook } from '../xlsx/workbook'
 import { XlsxEditor } from '../xlsx/editor'
 import { loadDelimited } from '../xlsx/import'
@@ -13,6 +13,7 @@ import type { PParaSpec, ShapeOp, SlideOp } from '../pptx/types'
 import { addSlideImage, shapeOps, slideOp, undoShapes } from '../pptx/edit'
 import { ZipArchive } from '../zip'
 import { isIworkZip, isLegacyIwork, openIwork } from '../iwork'
+import { convertBiff, convertCfb, convertFlatOdf, convertOdfZip, convertRtf, LEGACY_EXT, legacyFormatOf, type Converted } from '../legacy'
 import { XlsxCollabWorker } from '../../collab/xlsx-worker'
 import type { XOp } from '../../collab/xlsx-ops'
 import { PptxCollabWorker } from '../../collab/pptx-worker'
@@ -51,8 +52,17 @@ export class Engine {
     })
     const name = params.name ?? source.name
     const size = source.size
-    // CSV / TSV / text / Markdown / HTML / SVG / diagrams: converted to a workbook / document (an Office or iWork name skips the look)
-    const imported = mayBePlain(name) ? plainFormat(name, source.type, await source.read(0, Math.min(source.size, 4096)), source.size <= 4096) : null
+    // the first bytes say the format, unless the name says an Office Open XML or iWork package
+    const head = mayBePlain(name) || LEGACY_EXT[extOf(name)] ? await source.read(0, Math.min(source.size, 4096)) : null
+    // Word / Excel / PowerPoint 97-2003, RTF, flat OpenDocument: converted to the Office Open XML file they open as (editable)
+    const legacy = head && legacyFormatOf(head)
+    let converted: Converted | null = null
+    if (legacy) {
+      const bytes = await source.read(0, source.size)
+      converted = legacy === 'cfb' ? await convertCfb(bytes) : legacy === 'rtf' ? await convertRtf(bytes) : legacy === 'biff' ? await convertBiff(bytes) : await convertFlatOdf(bytes)
+    }
+    // CSV / TSV / text / Markdown / HTML / SVG / diagrams: converted to a workbook / document
+    const imported = head && !converted ? plainFormat(name, source.type, head, source.size <= 4096) : null
     // gzip-compressed (.svgz, .csv.gz): unpacked whole, then read like the file inside
     if (imported) source = await ungzipped(source)
     // CSV / TSV: an empty workbook whose sheet streams the rows in when it is loaded (the text is never read whole)
@@ -60,7 +70,16 @@ export class Engine {
     const text = imported && !tabular ? decodeText(await source.read(0, source.size), source.type) : null
     // kept for the source view: formats whose text is worth reading next to the document
     this.plainText = imported && HAS_SOURCE.has(imported) ? text : null
-    let zip = imported ? await ZipArchive.open(new BlobSource(await plainToOffice(text ?? '', imported, name))) : await ZipArchive.open(source)
+    let zip = converted
+      ? await ZipArchive.open(new BlobSource(converted.file))
+      : imported
+        ? await ZipArchive.open(new BlobSource(await plainToOffice(text ?? '', imported, name)))
+        : await ZipArchive.open(source)
+    // OpenDocument text / spreadsheet / presentation packages
+    if (!converted && !imported) {
+      converted = await convertOdfZip(zip)
+      if (converted) zip = await ZipArchive.open(new BlobSource(converted.file))
+    }
     let from: OpenResult['from']
     // Apple Pages / Keynote / Numbers: converted to a Word document / PowerPoint presentation / Excel workbook, shown read-only
     if (isIworkZip(zip)) ({ zip, from } = await openIwork(zip))
@@ -68,7 +87,7 @@ export class Engine {
     const pkg = (this.pkg = new OpcPackage(zip))
     const main = await pkg.mainPart()
     this.kind = main.kind
-    const res: OpenResult = { kind: main.kind, name, size, ...(from ? { from } : {}), ...(imported ? { imported } : {}) }
+    const res: OpenResult = { kind: main.kind, name, size, ...(from ? { from } : {}), ...(imported ? { imported } : {}), ...(converted ? { converted: converted.format } : {}) }
     if (main.kind === 'docx') this.docx = await DocxDocument.open(pkg, main.path)
     else if (main.kind === 'xlsx') {
       const wb = (this.xlsx = await XlsxWorkbook.open(pkg, main.path))

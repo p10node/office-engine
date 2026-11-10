@@ -2,6 +2,7 @@ import { StrictMode, useCallback, useEffect, useMemo, useState } from 'react'
 import { createRoot } from 'react-dom/client'
 import { DocViewer, type DocSource, type Theme } from '../src'
 import type { CollabOptions } from '../src/collab'
+import { OPEN_ACCEPT } from '../src/react/file/importFile'
 
 const SAMPLES = [
   { label: 'sample.docx', url: 'samples/sample.docx' },
@@ -10,6 +11,13 @@ const SAMPLES = [
   { label: 'sample.pages', url: 'samples/sample.pages' },
   { label: 'sample.key', url: 'samples/sample.key' },
   { label: 'sample.numbers', url: 'samples/sample.numbers' },
+  { label: 'sample.doc', url: 'samples/sample.doc' },
+  { label: 'sample.xls', url: 'samples/sample.xls' },
+  { label: 'sample.ppt', url: 'samples/sample.ppt' },
+  { label: 'sample.odt', url: 'samples/sample.odt' },
+  { label: 'sample.ods', url: 'samples/sample.ods' },
+  { label: 'sample.odp', url: 'samples/sample.odp' },
+  { label: 'sample.rtf', url: 'samples/sample.rtf' },
   { label: 'sample.csv', url: 'samples/sample.csv' },
   { label: 'sample.md', url: 'samples/sample.md' },
   { label: 'sample.html', url: 'samples/sample.html' },
@@ -168,7 +176,7 @@ function App() {
         ))}
         <label style={{ ...btn, display: 'inline-block' }}>
           Open file…
-          <input type="file" accept=".docx,.xlsx,.pptx,.docm,.xlsm,.pptm,.pages,.key,.numbers,.csv,.tsv,.txt,.md,.html,.htm,.mmd,.mermaid,.puml,.plantuml,.dot,.gv" hidden onChange={(e) => e.target.files?.[0] && open(e.target.files[0])} />
+          <input type="file" accept={`${OPEN_ACCEPT},.docm,.xlsm,.pptm`} hidden onChange={(e) => e.target.files?.[0] && open(e.target.files[0])} />
         </label>
         <form onSubmit={(e) => { e.preventDefault(); if (url) open(url) }} style={{ display: 'flex', gap: 6, flex: '1 1 260px' }}>
           <input value={url} onChange={(e) => setUrl(e.target.value)} placeholder="https://…/file.xlsx (Range requests)" style={{ ...btn, flex: 1, cursor: 'text' }} />

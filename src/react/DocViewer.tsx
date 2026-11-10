@@ -13,6 +13,7 @@ import { importFile, type Imported } from './file/importFile'
 import { blankPptx, parasToDocx, rowsToXlsx } from '../core/convert'
 import type { DocKind } from '../core/opc'
 import { extOf, HAS_SOURCE, PLAIN_EXT, PLAIN_FILE, unpackedName, type PlainFormat } from '../core/plain'
+import type { LegacyFormat } from '../core/legacy'
 import { injectStyles } from './injectStyles'
 import { isTextEntry, useDarkTheme, useSize, type Theme } from './common/hooks'
 import { SourceEditor } from './source/SourceEditor'
@@ -101,6 +102,15 @@ export interface DocViewerProps {
 
 const EXT: Record<string, string> = { docx: '.docx', xlsx: '.xlsx', pptx: '.pptx' }
 const FROM_LABEL: Record<'pages' | 'keynote' | 'numbers', string> = { pages: 'Apple Pages document', keynote: 'Apple Keynote presentation', numbers: 'Apple Numbers spreadsheet' }
+const CONVERTED_LABEL: Record<LegacyFormat, string> = {
+  doc: 'Word 97-2003 document',
+  xls: 'Excel 97-2003 workbook',
+  ppt: 'PowerPoint 97-2003 presentation',
+  rtf: 'Rich Text Format document',
+  odt: 'OpenDocument text',
+  ods: 'OpenDocument spreadsheet',
+  odp: 'OpenDocument presentation',
+}
 const IMPORTED_BADGE: Record<PlainFormat, string> = { csv: 'csv', tsv: 'tsv', text: 'txt', markdown: 'md', html: 'html', svg: 'svg', mermaid: 'mmd', plantuml: 'puml', graphviz: 'dot' }
 const IMPORTED_LABEL: Record<PlainFormat, string> = {
   csv: 'CSV file',
@@ -524,7 +534,7 @@ export function DocViewer(props: DocViewerProps) {
     <div ref={rootRef} className={'de-root' + (dark ? ' de-dark' : '') + (className ? ` ${className}` : '')} style={style} onKeyDown={onKeyDown}>
       {toolbar && (
         <div className="de-bar">
-          {client && <span className={`de-badge de-badge-${client.kind}`}>{client.info?.from ?? (client.info?.imported ? IMPORTED_BADGE[client.info.imported] : client.kind)}</span>}
+          {client && <span className={`de-badge de-badge-${client.kind}`}>{client.info?.from ?? client.info?.converted ?? (client.info?.imported ? IMPORTED_BADGE[client.info.imported] : client.kind)}</span>}
           {fileMenu && <FileMenu actions={fileActions} />}
           <span className="de-title" title={title}>
             {title}
@@ -662,9 +672,11 @@ export function DocViewer(props: DocViewerProps) {
               'Type',
               client.info?.from
                 ? `${FROM_LABEL[client.info.from]} (view only)`
-                : client.info?.imported
-                  ? `${IMPORTED_LABEL[client.info.imported]}, opened as ${KIND_LABEL[client.kind]}`
-                  : KIND_LABEL[client.kind],
+                : client.info?.converted
+                  ? `${CONVERTED_LABEL[client.info.converted]}, opened as ${KIND_LABEL[client.kind]}`
+                  : client.info?.imported
+                    ? `${IMPORTED_LABEL[client.info.imported]}, opened as ${KIND_LABEL[client.kind]}`
+                    : KIND_LABEL[client.kind],
             ],
             ...(client.size > 0 ? [['File size', fmtBytes(client.size)] as [string, string]] : []),
             ...(dirty ? [['Status', 'Unsaved changes'] as [string, string]] : []),

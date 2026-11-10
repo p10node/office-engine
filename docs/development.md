@@ -11,6 +11,7 @@ bun run build:packages  # packages/*/dist: the standalone SDK packages (@p10node
 python3 -m venv .venv && .venv/bin/pip install python-docx openpyxl python-pptx Pillow
 .venv/bin/python scripts/fixtures.py --large   # generate samples + heavy files (--large-deck: only the deck the browser tests need)
 bun scripts/iwork-samples.ts                   # sample.pages / .key / .numbers (built by test/iwork-builder.ts)
+bun scripts/legacy-samples/doc.ts              # .doc / .ppt / .rtf test fixtures and samples (also ppt.ts, rtf.ts; .xls / .odt / .ods / .odp from the *.py scripts: see scripts/legacy-samples/*.md)
 bun run screenshots  # README screenshots -> docs/screenshots/ (headless Chromium)
 bun run gifs         # README GIFs (300k-row sheet opening, collaboration) -> docs/screenshots/*.gif (headless Chromium + ffmpeg)
 ```
@@ -29,6 +30,8 @@ DocViewer ─ useDocument ─ DocumentClient ⇄ RPC ⇄ Engine
 
 ```
 src/core     parsers, DOM-free (runs in worker / Bun)
+  legacy     .doc / .xls / .ppt (compound file reader + converters), .rtf, OpenDocument → DOCX / XLSX / PPTX
+  iwork      Pages / Keynote / Numbers → DOCX / PPTX / XLSX
 src/react    view components
 src/embed.ts mount() + <office-viewer>
 src/collab   real-time collaboration (hub, session, per-format adapters)
@@ -42,6 +45,7 @@ The app reads `DocViewer` props from the query string (`?src=samples/sample.docx
 | Spec                  | Covers                                                                                            |
 |-----------------------|---------------------------------------------------------------------------------------------------|
 | `viewer.spec.ts`      | rendering of the 3 formats, outline, zoom, sheet tabs, thumbnails, slideshow, props, errors       |
+| `legacy.spec.ts`      | .doc / .xls / .ppt / .rtf / OpenDocument samples: converted, shown, edited, saved as OOXML        |
 | `docx.spec.ts`        | typing, formatting, styles, lists, colors, fonts, links, tables, images, find & replace, undo     |
 | `xlsx.spec.ts`        | values, formulas, merges (all / across / down / unmerge), formats, rows / columns, sheets, freeze |
 | `pptx.spec.ts`        | text, shapes (insert, move, fill, arrange, rotate, duplicate, delete), images, slides, present    |

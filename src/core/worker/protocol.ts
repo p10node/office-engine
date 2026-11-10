@@ -1,6 +1,7 @@
 import type { DocKind } from '../opc'
 import type { DocComment } from '../comments'
 import type { PlainFormat } from '../plain'
+import type { LegacyFormat } from '../legacy'
 import type { XOp } from '../../collab/xlsx-ops'
 import type { POp } from '../../collab/pptx-ops'
 import type { PptxCollabResult } from '../../collab/pptx-worker'
@@ -29,6 +30,11 @@ export interface OpenResult {
   from?: 'pages' | 'keynote' | 'numbers'
   /** built from a plain file, editable: CSV / TSV (as xlsx), text / Markdown / HTML (as docx); saving writes the Office format */
   imported?: PlainFormat
+  /**
+   * converted from another format, editable: Word / Excel / PowerPoint 97-2003 (doc, xls, ppt), RTF, OpenDocument
+   * (odt, ods, odp); saving writes the Office Open XML file (docx, xlsx, pptx)
+   */
+  converted?: LegacyFormat
   xlsx?: WorkbookMeta
   pptx?: PresentationMeta
 }

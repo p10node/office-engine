@@ -29,11 +29,12 @@ export const PLAIN_EXT: Record<string, PlainFormat> = {
   ...DIAGRAM_EXT,
 }
 
-/** packages (Office, iWork) and the legacy binary formats: never read as text */
+/** packages (Office, iWork, OpenDocument), the legacy binary formats and RTF: never read as text */
 const PACKAGE_EXT = new Set([
   'docx', 'dotx', 'docm', 'dotm', 'xlsx', 'xltx', 'xlsm', 'xltm', 'pptx', 'potx', 'pptm', 'potm', 'ppsx', 'ppsm',
   // (.dot is also Graphviz: a Word 97 template is told apart by its bytes)
-  'pages', 'key', 'numbers', 'doc', 'xls', 'xlt', 'ppt', 'pot', 'pps',
+  'pages', 'key', 'numbers', 'doc', 'xls', 'xlt', 'ppt', 'pot', 'pps', 'rtf',
+  'odt', 'ott', 'fodt', 'ods', 'ots', 'fods', 'odp', 'otp', 'fodp',
 ])
 
 const MIME: Record<string, PlainFormat> = {

@@ -12,13 +12,66 @@
 
 ## Format support
 
-| Format | Supported                                                                                                                                                                         | Not yet                                                                    |
-|--------|-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|----------------------------------------------------------------------------|
+| Format | Supported                                                                                                                                                                                                      | Not yet                                                                    |
+|--------|----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|----------------------------------------------------------------------------|
 | DOCX   | inherited styles, run formatting, lists/numbering, tables (merge, border, shading, table style), images, hyperlinks, header/footer, PAGE field, text boxes, page/section breaks, text columns, tracked changes | footnote body, charts, exact float wrapping, paragraphs split across pages |
-| XLSX   | shared strings, number/date formats, font/fill/border/align, merge, freeze, hidden columns/rows, wrap, formula calculation (134 functions, recalculated on edit), multiple sheets | charts, conditional formatting, images                                     |
-| PPTX   | master/layout/theme, placeholder inheritance, ~50 preset shapes, custGeom, images (crop), tables + table style, groups, bullet/autonum, autofit                                   | charts (placeholder), SmartArt, animations, video playback                 |
+| XLSX   | shared strings, number/date formats, font/fill/border/align, merge, freeze, hidden columns/rows, wrap, formula calculation (135 functions, recalculated on edit), multiple sheets                              | charts, conditional formatting, images                                     |
+| PPTX   | master/layout/theme, placeholder inheritance, ~50 preset shapes, custGeom, images (crop), tables + table style, groups, bullet/autonum, autofit                                                                | charts (placeholder), SmartArt, animations, video playback                 |
 
-`.doc/.xls/.ppt` (legacy binary) and encrypted files are not supported.
+Password-protected (encrypted) files are not supported.
+
+### Word, Excel and PowerPoint 97-2003, RTF and OpenDocument
+
+These files open **editable**: the worker converts them in memory to the Office Open XML file the views show, and **Save** writes that file (`report.doc` is saved as `report.docx`, `budget.ods` as `budget.xlsx`; the original is never overwritten). The bar shows a `DOC` / `XLS` / `PPT` / `RTF` / `ODT` / `ODS` / `ODP` badge, *Document details* says "Word 97-2003 document, opened as Word document". Nothing leaves the browser and no library is added: every format is read by the library's own code in the worker.
+
+| File                    | Opens as                                                                                   |
+|-------------------------|--------------------------------------------------------------------------------------------|
+| `.doc`, `.dot`          | document (Word 97-2003)                                                                    |
+| `.xls`, `.xlt`          | workbook (Excel 97-2003, also Excel 5.0 / 95 and workbook streams outside a compound file) |
+| `.ppt`, `.pot`, `.pps`  | presentation (PowerPoint 97-2003)                                                          |
+| `.rtf`                  | document                                                                                   |
+| `.odt`, `.ott`, `.fodt` | document (OpenDocument text, template, flat XML)                                           |
+| `.ods`, `.ots`, `.fods` | workbook (OpenDocument spreadsheet, template, flat XML)                                    |
+| `.odp`, `.otp`, `.fodp` | presentation (OpenDocument presentation, template, flat XML)                               |
+
+The format comes from the file's bytes (compound file, `{\rtf`, OpenDocument `mimetype`, flat XML), so a `.doc` that is really RTF, or a file without a name, opens too.
+
+**Word 97-2003 (`.doc`)**
+
+- **Converted**: paragraph and character styles (built-in ones get Word's names: Heading 1, Title…), fonts, sizes, bold / italic / underline kinds / strikethrough, caps, colors, highlight, shading, borders, super/subscript, spacing, alignment, indents, line spacing, tabs, keep with next, page breaks; bullet and numbered lists (9 levels); tables (merged cells, borders, shading, padding, row heights, header rows, nested tables); sections (page size, orientation, margins, columns, section breaks), headers and footers (first page, even pages), footnotes and endnotes, comments, bookmarks, tracked insertions / deletions; fields (links, `PAGE` / `NUMPAGES`, the rest with their result), inline and floating pictures, text boxes and shapes, groups, WordArt text
+- **Not yet**: Word 6.0 / 95 and older files (an error says so), table styles, drop caps, formatting revisions; EMF / WMF pictures are kept in the file (Word shows them) and shown as a placeholder
+
+**Excel 97-2003 (`.xls`)**
+
+- **Converted**: every sheet (hidden ones stay hidden), values of every type, the shared string table, fonts, fills, borders, alignment, wrap, indent, rotation, number formats (built-in and custom), Excel 2007+ colors and themes, merged cells, column widths and row heights, hidden rows / columns, outline levels, frozen panes, gridlines, zoom, the active sheet; formulas (every token, shared and array formulas, names, 3-D references) with their last values; defined names, print areas, page setup, headers and footers, hyperlinks, cell comments, tab colors; Excel 5.0 / 95 files
+- **Not yet**: pictures, charts, conditional formats, data validation; chart sheets open empty; formulas pointing at other workbooks keep their values only
+
+**PowerPoint 97-2003 (`.ppt`)**
+
+- **Converted**: slide size, masters and title masters (backgrounds, shapes, placeholders, text styles, color schemes), slides with their own backgrounds and color schemes, hidden slides, footers / slide numbers / dates; about 190 shape types, freeforms, fills (solid, gradient, picture, texture, pattern), lines (dash, arrowheads), shadows, rotation and flips, groups, tables (as grouped cells); text with bullets (also numbered), fonts, sizes, colors, alignment, spacing, links, slide number and date fields; pictures; speaker notes and comments (saved in the file)
+- **Not yet**: PowerPoint 95 and older files (an error says so), animations and transitions, sounds and movies, charts and embedded objects (their preview picture is shown); EMF / WMF pictures are kept in the file and shown as a placeholder
+
+**RTF**
+
+- **Converted**: every code page (also Shift-JIS, GBK, Big5, Korean), `\u` Unicode text, Symbol / Wingdings characters; paragraph and character styles (built-in ones get Word's names), fonts, sizes, bold / italic / underline kinds / strikethrough, caps, colors, highlight, shading, borders, super/subscript, spacing, alignment, indents, line spacing, tabs, frames; bullet and numbered lists (also the older WordPad / Word 95 kind); tables (merged cells, borders, shading, padding, header rows, row heights, nested tables); sections (page size, orientation, margins, columns, breaks, page numbering, first page), headers and footers (first page, left / right pages), footnotes and endnotes, bookmarks, links, `PAGE` / `NUMPAGES` fields (the rest with their result), tracked insertions / deletions; PNG / JPEG / GIF / BMP pictures (size, scale, crop), text boxes and shapes in groups
+- **Not yet**: comments, equations, drawing objects and lines, drop caps, line numbering, page borders; EMF / WMF pictures and OLE objects (their preview picture is shown when it is a bitmap)
+
+**OpenDocument text (`.odt`)**
+
+- **Converted**: named styles (LibreOffice's built-in ones get Word's names), automatic styles as direct formatting, every character and paragraph property the DOCX view shows (fonts for each script, sizes, colors, underline kinds, strike, highlight, super/subscript, caps, letter spacing, alignment, margins, line height, keep together / with next, breaks, borders, backgrounds, tab stops), numbered headings, bullet / numbered / picture lists (9 levels, continued numbering), tables (spans, header rows, borders, backgrounds, padding, nested tables), pictures (inline and anchored) and text boxes, links, bookmarks, footnotes and endnotes, comments, page styles as sections (size, orientation, margins, columns, page numbering), headers and footers (left / first page), page number and count fields, tables of contents (as their text)
+- **Not yet**: tracked changes (shown accepted), lines and connectors, objects with only a StarView preview, drop caps, line numbering, picture cropping
+
+**OpenDocument spreadsheet (`.ods`)**
+
+- **Converted**: every sheet (hidden, tab color, right to left), values (numbers, percentages, currencies, dates, times, booleans, errors), formulas translated to Excel's syntax with their last values, number formats (also conditional), cell styles (font, fill, borders, alignment, wrap, rotation, indent), merged cells, column widths and row heights, hidden rows / columns, outline groups, frozen panes, gridlines, zoom, the active sheet, named ranges, print ranges, page setup with headers and footers, hyperlinks, comments. The empty rows and columns LibreOffice writes to the end of a sheet (a million rows) are not expanded
+- **Not yet**: pictures and charts, conditional formatting, data validation, rich text inside a cell
+
+**OpenDocument presentation (`.odp`)**
+
+- **Converted**: slide size, master pages as slide masters (theme colors and fonts, backgrounds, drawings, placeholders, title / outline text styles), slides with their own backgrounds, hidden slides, date / footer / slide number; text with lists, bullets and numbering, fonts, sizes, colors, alignment, spacing, links, fields; preset and custom shapes (`draw:enhanced-geometry` drawn as custom geometry), lines and connectors with arrowheads, fills (solid, gradient, bitmap, hatch), shadows, rotation, skew and flips; pictures (cropped), groups, tables (cell styles, merged cells), speaker notes and comments (saved in the file), text that shrinks to fit
+- **Not yet**: charts and embedded objects without a picture (a labeled box), 3D scenes, Fontwork effects, animations and transitions
+
+**Not supported**: password-protected files, Word 6.0 / 95, Excel 2.x-4.0 and PowerPoint 95 files, OpenOffice.org 1.x files (`.sxw`, `.sxc`, `.sxi`): each gives an error saying so.
 
 ### Apple Pages, Keynote and Numbers (view only)
 
@@ -101,7 +154,7 @@ Diagram sources open as a document holding the drawing (an SVG picture, editable
 ### XLSX
 
 - **Cells**: edit, range selection, select all (Ctrl/⌘+A), copy/cut/paste, fill down/right, sort, find & replace (match case, entire cell, in formulas)
-- **Formulas**: auto-calculated (134 functions), function name & argument hints while typing, click/drag cells (incl. other sheets, arrow keys) to insert references, colored references, auto-close parentheses, functions menu (SUM/AVERAGE/COUNT/MAX/MIN)
+- **Formulas**: auto-calculated (135 functions), function name & argument hints while typing, click/drag cells (incl. other sheets, arrow keys) to insert references, colored references, auto-close parentheses, functions menu (SUM/AVERAGE/COUNT/MAX/MIN)
 - **Formatting**: paint format, currency/percent/decimal buttons + 20 number formats, font, size, B/I/U/S, text/fill color, borders (8 kinds, color, line style), merge all/horizontally/vertically, horizontal & vertical alignment, wrap, text rotation, clear formatting
 - **Rows & columns**: insert/delete/hide/unhide, drag to resize column width/row height, freeze, gridlines
 - **Sheets**: add/rename/delete/reorder
@@ -150,7 +203,7 @@ Comment text is plain (lines kept); formatting inside comments read from a file 
 ## File menu
 
 - **New**: blank document, spreadsheet or presentation (16:9, Office theme, title / content / blank layouts)
-- **Open** (`Ctrl/⌘+O`): `.docx` `.xlsx` `.pptx` open as they are; `.csv` / `.tsv` become a workbook (numbers and booleans typed, codes like `007` kept as text); `.txt` / `.md` / `.html` become a document (headings, lists, bold / italic / strike, links, code); `.svg` / `.mmd` / `.puml` / `.dot` become a document with the picture
+- **Open** (`Ctrl/⌘+O`): `.docx` `.xlsx` `.pptx` open as they are; `.doc` `.xls` `.ppt` `.rtf` and OpenDocument `.odt` `.ods` `.odp` are converted (editable, saved as `.docx` / `.xlsx` / `.pptx`); `.csv` / `.tsv` become a workbook (numbers and booleans typed, codes like `007` kept as text); `.txt` / `.md` / `.html` become a document (headings, lists, bold / italic / strike, links, code); `.svg` / `.mmd` / `.puml` / `.dot` become a document with the picture
 - **Download as**: the native format, PDF, web page (`.html`, images embedded), plain text / Markdown (DOCX), CSV / TSV of the current sheet (XLSX), slide text with notes (PPTX)
 - **Import CSV into new sheet** (XLSX): adds a sheet after the current one with the file's rows, streamed in the same way (in a shared session the rows go to everyone as cell edits)
 - **Save** (`Ctrl/⌘+S`), **Rename** (shown name and the name used for saving), **Document details** (file, core properties, page / word / slide counts)
