@@ -380,7 +380,10 @@ export interface PageSetResult {
 export interface SectionBreak {
   t: 'sect'
   page: PageSetup
-  /** 'nextPage' | 'continuous' | 'evenPage' | 'oddPage' */
+  /**
+   * how the section this block ends starts after the one before it: 'nextPage' | 'continuous' | 'evenPage' | 'oddPage'
+   * (the break after this block is the next section's kind)
+   */
   kind: string
 }
 
@@ -400,6 +403,8 @@ export interface DocxMeta {
   sz?: number
   /** final page setup known (end of document reached) */
   final?: boolean
+  /** how the last section (the body's sectPr) starts after the one before it: 'nextPage', 'continuous'… */
+  sectKind?: string
 }
 
 export const DEFAULT_PAGE: PageSetup = { w: 612, h: 792, mt: 72, mr: 72, mb: 72, ml: 72, header: 36, footer: 36 }

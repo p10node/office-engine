@@ -935,6 +935,7 @@ export class DocxDocument {
     this.page = pageSetup(sect)
     const meta: DocxMeta = { page: { ...this.page }, ...baseMeta, final: true }
     if (sect) {
+      meta.sectKind = kid(sect, 'type')?.a.val ?? 'nextPage'
       const ref = (tag: string, type: string) => kids(sect, tag).find((r) => (r.a.type ?? 'default') === type)?.a['r:id']
       meta.titlePg = !!kid(sect, 'titlePg') && kid(sect, 'titlePg')?.a.val !== '0' && kid(sect, 'titlePg')?.a.val !== 'false'
       this.titlePg = meta.titlePg

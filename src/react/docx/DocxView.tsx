@@ -21,56 +21,11 @@ import { HeaderFooterDialog } from './HeaderFooterDialog'
 import { PageSetupDialog } from './PageSetupDialog'
 import { docxToHtml, docxToMarkdown, docxToText, pictureData } from '../file/text'
 import { BlockView, contextual, type RenderCtx } from './render'
+import { paginate, type PageSlice } from './paginate'
 
 const PX = 4 / 3
 const GAP = 16
 const PAD = 24
-
-interface PageSlice {
-  start: number
-  end: number
-  used: number
-}
-
-/**
- * Cuts the blocks into pages. With text columns (`cols` > 1) a page holds `cols` columns of `avail`: a block that does
- * not fit what is left of a column starts the next one (blocks are never split, as for pages), and `used` is the
- * tallest column.
- */
-function paginate(blocks: Block[], heights: WeakMap<Block, number>, count: number, avail: number, cols = 1): PageSlice[] {
-  const pages: PageSlice[] = []
-  let cur: PageSlice = { start: 0, end: 0, used: 0 }
-  let col = 0
-  let inCol = 0
-  const next = (start: number) => {
-    pages.push(cur)
-    cur = { start, end: start, used: 0 }
-    col = 0
-    inCol = 0
-  }
-  for (let i = 0; i < count; i++) {
-    const b = blocks[i]
-    const h = heights.get(b) ?? 0
-    if (b.t === 'sect') {
-      cur.end = i + 1
-      if (b.kind !== 'continuous') next(i + 1)
-      continue
-    }
-    const forced = b.t === 'p' && b.pb && cur.end > cur.start
-    if (forced) next(i)
-    else if (inCol > 0 && inCol + h > avail) {
-      if (col + 1 < cols) {
-        col++
-        inCol = 0
-      } else next(i)
-    }
-    cur.end = i + 1
-    inCol += h
-    cur.used = Math.max(cur.used, cols > 1 ? Math.min(inCol, avail) : inCol)
-  }
-  if (cur.end > cur.start || !pages.length) pages.push(cur)
-  return pages
-}
 
 const started = new WeakSet<DocumentClient>()
 
@@ -231,9 +186,9 @@ export function DocxView({ client, onStatus, initialZoom = 'fit' }: DocxViewProp
   })
 
   const pages = useMemo(
-    () => paginate(st.blocks, st.heights, Math.min(st.frontier, total), availPx, cols),
+    () => paginate(st.blocks, st.heights, Math.min(st.frontier, total), availPx, cols, (meta?.final && meta.sectKind) || 'nextPage'),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [version, availPx, total, cols],
+    [version, availPx, total, cols, meta?.final, meta?.sectKind],
   )
 
   // ---- layout ----
