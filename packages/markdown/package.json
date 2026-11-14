@@ -1,6 +1,6 @@
 {
   "name": "@p10node/markdown",
-  "version": "0.1.0",
+  "version": "0.13.1",
   "description": "Markdown to safe HTML with Mermaid, PlantUML and Graphviz code blocks drawn as SVG; no dependency",
   "type": "module",
   "license": "MIT",
