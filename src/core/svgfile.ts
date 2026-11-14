@@ -5,6 +5,7 @@
  */
 import type { ImportImage } from './convert'
 import { decodeEntities } from './html'
+import { dict } from './dict'
 
 const SVG_NS = 'http://www.w3.org/2000/svg'
 const XLINK_NS = 'http://www.w3.org/1999/xlink'
@@ -37,7 +38,7 @@ function attr(attrs: string, name: string): string | undefined {
 }
 
 /** CSS / SVG units in px (1/96 in); em and ex at the default 16 px font */
-const UNIT: Record<string, number> = { '': 1, px: 1, pt: 96 / 72, pc: 16, in: 96, cm: 96 / 2.54, mm: 96 / 25.4, q: 96 / 101.6, em: 16, ex: 8 }
+const UNIT: Record<string, number> = dict({ '': 1, px: 1, pt: 96 / 72, pc: 16, in: 96, cm: 96 / 2.54, mm: 96 / 25.4, q: 96 / 101.6, em: 16, ex: 8 })
 
 /** a positive length in px, or undefined (a percentage, 0, or not a length) */
 function px(v: string | undefined): number | undefined {

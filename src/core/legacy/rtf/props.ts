@@ -7,6 +7,7 @@
  */
 import { HIGHLIGHT } from '../../docx/styles'
 import { escAttr } from '../../raw'
+import { dict } from '../../dict'
 
 export type Side = 't' | 'l' | 'b' | 'r' | 'btw' | 'h' | 'v'
 
@@ -190,7 +191,7 @@ export function borderXml(t: Tables, tag: string, b: Border | undefined): string
 }
 
 /** RTF border kinds → w:val */
-export const BORDER: Record<string, string> = {
+export const BORDER: Record<string, string> = dict({
   brdrs: 'single', brdrth: 'thick', brdrsh: 'single', brdrdb: 'double', brdrdot: 'dotted', brdrdash: 'dashed',
   brdrhair: 'single', brdrinset: 'inset', brdroutset: 'outset', brdrtriple: 'triple', brdrtnthsg: 'thinThickSmallGap',
   brdrthtnsg: 'thickThinSmallGap', brdrtnthtnsg: 'thinThickThinSmallGap', brdrtnthmg: 'thinThickMediumGap',
@@ -199,7 +200,7 @@ export const BORDER: Record<string, string> = {
   brdrdashsm: 'dashSmallGap', brdrdashd: 'dotDash', brdrdashdd: 'dotDotDash', brdremboss: 'threeDEmboss',
   brdrengrave: 'threeDEngrave', brdrframe: 'single', brdrdashdotstr: 'dashDotStroked', brdrnone: 'nil', brdrnil: 'nil',
   brdrtbl: 'nil',
-}
+})
 
 // ---------------------------------------------------------------- run properties
 
@@ -365,8 +366,8 @@ function bordersDiff(t: Tables, p: Pap, base: Pap | undefined): string {
   return x ? `<w:pBdr>${x}</w:pBdr>` : ''
 }
 
-const TAB_KIND: Record<string, string> = { tqr: 'right', tqc: 'center', tqdec: 'decimal', tb: 'bar' }
-const TAB_LEADER: Record<string, string> = { tldot: 'dot', tlhyph: 'hyphen', tlul: 'underscore', tlth: 'heavy', tleq: 'middleDot', tlmdot: 'middleDot' }
+const TAB_KIND: Record<string, string> = dict({ tqr: 'right', tqc: 'center', tqdec: 'decimal', tb: 'bar' })
+const TAB_LEADER: Record<string, string> = dict({ tldot: 'dot', tlhyph: 'hyphen', tlul: 'underscore', tlth: 'heavy', tleq: 'middleDot', tlmdot: 'middleDot' })
 export const tabKind = (w: string) => TAB_KIND[w]
 export const tabLeader = (w: string) => TAB_LEADER[w]
 

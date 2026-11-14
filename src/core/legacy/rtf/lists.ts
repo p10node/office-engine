@@ -1,6 +1,7 @@
 /** `\listtable` / `\listoverridetable` and legacy `\pn` paragraph numbering → numbering.xml. */
 import { escAttr } from '../../raw'
 import { levelInd, rPrSet, type Chp, type Pap, type Pn, type Tables } from './props'
+import { dict } from '../../dict'
 
 export interface Level {
   nfc?: number
@@ -44,10 +45,10 @@ const NFC: Record<number, string> = {
   57: 'numberInDash', 58: 'russianLower', 59: 'russianUpper', 255: 'none',
 }
 
-const PN_FMT: Record<string, string> = {
+const PN_FMT: Record<string, string> = dict({
   pndec: 'decimal', pnucrm: 'upperRoman', pnlcrm: 'lowerRoman', pnucltr: 'upperLetter', pnlcltr: 'lowerLetter',
   pnord: 'ordinal', pncard: 'cardinalText', pnordt: 'ordinalText', pndecd: 'decimalZero',
-}
+})
 export const pnFormat = (w: string) => PN_FMT[w]
 
 /** symbol-font bullets: their bytes as Word's U+F0xx code points */

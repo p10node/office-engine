@@ -2,8 +2,9 @@
  * OpenDocument plumbing shared by the text, spreadsheet and presentation converters: the package (ZIP or flat XML),
  * an element tree with mixed content kept in order, styles with their inheritance, lengths.
  */
-import { decodeEntities } from '../../xml'
+import { decodeEntities, MAX_XML_DEPTH, tooDeep } from '../../xml'
 import type { ZipArchive } from '../../zip'
+import { dict } from '../../dict'
 
 /** an element: qualified name with the usual ODF prefix (office:, style:, text:, table:, draw:, fo:…), attributes decoded */
 export interface ONode {
@@ -14,7 +15,7 @@ export interface ONode {
 }
 
 /** the prefixes used for the ODF namespaces whatever a file declares */
-const CANON: Record<string, string> = {
+const CANON: Record<string, string> = dict({
   'urn:oasis:names:tc:opendocument:xmlns:office:1.0': 'office',
   'urn:oasis:names:tc:opendocument:xmlns:style:1.0': 'style',
   'urn:oasis:names:tc:opendocument:xmlns:text:1.0': 'text',
@@ -37,7 +38,7 @@ const CANON: Record<string, string> = {
   'http://www.w3.org/1999/xlink': 'xlink',
   'http://purl.org/dc/elements/1.1/': 'dc',
   'http://www.w3.org/1998/Math/MathML': 'math',
-}
+})
 
 const ATTR = /([^\s=]+)\s*=\s*(?:"([^"]*)"|'([^']*)')/g
 
@@ -128,6 +129,7 @@ export function parseOdfXml(xml: string): ONode {
     if (top) top.node.kids.push(node)
     else root ??= node
     if (self) scope = top ? top.scope : base
+    else if (stack.length >= MAX_XML_DEPTH) throw tooDeep()
     else stack.push({ node, scope })
     i = gt + 1
   }

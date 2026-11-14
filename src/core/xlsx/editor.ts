@@ -2,6 +2,7 @@
  * XLSX editing: cell values/formats live in the worker's SheetData; on save each
  * edited sheet is streamed through a rewriter that only touches edited rows.
  */
+import { officeHex } from '../color'
 import { relOfType, relsPathFor } from '../opc'
 import type { DocComment } from '../comments'
 import { writeXlsxComments } from './comments'
@@ -218,7 +219,8 @@ class StyleEditor {
       if (patch.strike !== undefined) put('strike', patch.strike ? el(P + 'strike') : undefined)
       if (patch.u !== undefined) put('u', patch.u ? el(P + 'u') : undefined)
       if (patch.sz !== undefined) put('sz', el(P + 'sz', { val: String(patch.sz) }))
-      if ('color' in patch) put('color', patch.color ? el(P + 'color', { rgb: 'FF' + patch.color.replace('#', '').toUpperCase() }) : undefined)
+      const color = officeHex(patch.color)
+      if ('color' in patch) put('color', color ? el(P + 'color', { rgb: 'FF' + color }) : undefined)
       if (patch.font) {
         put('name', el(P + 'name', { val: patch.font }))
         put('scheme', undefined)
@@ -226,11 +228,13 @@ class StyleEditor {
       setAttr(xf, 'fontId', String(this.intern('fonts', font)))
       setAttr(xf, 'applyFont', '1')
     }
-    if ('fill' in patch) {
+    // a fill that is not a color (it would be written into the XML as it is) leaves the cell's fill alone
+    const fillHex = officeHex(patch.fill)
+    if ('fill' in patch && (!patch.fill || fillHex)) {
       if (!patch.fill) setAttr(xf, 'fillId', '0')
       else {
         const fill = parseRaw(
-          `<${P}fill><${P}patternFill patternType="solid"><${P}fgColor rgb="FF${patch.fill.replace('#', '').toUpperCase()}"/><${P}bgColor indexed="64"/></${P}patternFill></${P}fill>`,
+          `<${P}fill><${P}patternFill patternType="solid"><${P}fgColor rgb="FF${fillHex}"/><${P}bgColor indexed="64"/></${P}patternFill></${P}fill>`,
         )[0] as RNode
         setAttr(xf, 'fillId', String(this.intern('fills', fill)))
       }
@@ -240,7 +244,7 @@ class StyleEditor {
       const sides = (patch as FmtPatch & { sides?: Record<string, boolean> }).sides ?? {}
       const borders = kidsOf(this.section('borders'), 'border')
       const b = clone(borders[Number(getAttr(xf, 'borderId') ?? 0)] ?? borders[0] ?? el(P + 'border'))
-      const color = (patch.borderColor ?? '#000000').replace('#', '').toUpperCase()
+      const color = officeHex(patch.borderColor) ?? '000000'
       const order = ['left', 'start', 'right', 'end', 'top', 'bottom', 'diagonal', 'vertical', 'horizontal']
       for (const side of ['left', 'right', 'top', 'bottom']) {
         if (!(side in sides)) continue

@@ -19,6 +19,7 @@ import { plen, runsText, splitRuns, type Pos, type RRun, type Sel } from '../rea
 import { watchHost } from './hosts'
 import type { Adapter, ApplyResult } from './session'
 import { applyComment, revertComment, type CommentOp } from './comments'
+import { dict } from '../core/dict'
 
 export interface DocxHost {
   editor: DocxEditor
@@ -70,6 +71,64 @@ type Undo = Step[] | null
 
 /** worker methods that only read */
 const READS = new Set<keyof Methods>(['open', 'part', 'docx.start', 'docx.convert', 'save', 'dirty'])
+
+// ---------------------------------------------------------------- ops as received
+//
+// An op arrives from the hub as another client wrote it, and every client in the room runs it. What it asks the
+// worker to do is therefore checked here, by the receiver: a `call` op names one of the document-level edits
+// `intercept` shares and nothing else. `open` with an address to fetch, `save`, a method of another format or
+// arguments of another shape are refused, and the op is dropped (by every client alike, so they still agree).
+
+const isObj = (x: unknown): x is Record<string, unknown> => typeof x === 'object' && x !== null && !Array.isArray(x)
+/** a plain object holding only `keys` */
+const only = (x: unknown, keys: readonly string[]): x is Record<string, unknown> => isObj(x) && Object.keys(x).every((k) => keys.includes(k))
+const text = (x: unknown, max: number): x is string => typeof x === 'string' && x.length <= max
+const scalar = (x: unknown) => x === null || typeof x === 'boolean' || (typeof x === 'number' && Number.isFinite(x)) || text(x, 255)
+
+const CANON_STYLES: readonly unknown[] = ['normal', 'title', 'subtitle', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6']
+const LOOK_KEYS = ['b', 'i', 'u', 'strike', 'color', 'sz', 'font', 'align', 'line', 'lineRule', 'before', 'after']
+const PAGE_KEYS = ['w', 'h', 'mt', 'mr', 'mb', 'ml', 'cols', 'colGap']
+const HF_KINDS = ['header', 'footer', 'firstHeader', 'firstFooter']
+/** a header / footer part's XML, as an undo carries it */
+const MAX_HF_XML = 4 * 1024 * 1024
+
+const hfLine = (l: unknown) =>
+  only(l, ['text', 'align', 'b', 'sz']) && text(l.text, 2000) && (l.align === undefined || text(l.align, 10)) && (l.b === undefined || typeof l.b === 'boolean') && (l.sz === undefined || typeof l.sz === 'number')
+
+function hfSet(x: unknown): boolean {
+  if (!only(x, ['parts', 'raw', 'titlePg'])) return false
+  if (x.titlePg !== undefined && typeof x.titlePg !== 'boolean') return false
+  if (x.parts !== undefined && !(only(x.parts, HF_KINDS) && Object.values(x.parts).every((lines) => Array.isArray(lines) && lines.length <= 20 && lines.every(hfLine)))) return false
+  return x.raw === undefined || (only(x.raw, HF_KINDS) && Object.values(x.raw).every((xml) => text(xml, MAX_HF_XML)))
+}
+
+/** the worker calls a `call` op may name, each with the check of its arguments (the worker checks their values) */
+const SHARED_CALLS: Record<string, (args: unknown[]) => boolean> = dict({
+  'docx.style': (a) => a.length === 1 && CANON_STYLES.includes(a[0]),
+  'docx.styleSet': (a) => a.length === 2 && text(a[0], 255) && only(a[1], LOOK_KEYS) && Object.values(a[1]).every(scalar),
+  'docx.page': (a) => a.length === 1 && only(a[0], PAGE_KEYS) && Object.values(a[0]).every((v) => typeof v === 'number' && Number.isFinite(v)),
+  'docx.hf': (a) => a.length === 1 && hfSet(a[0]),
+})
+
+/** whether a `call` op is one the document-level edits make: the method is shared, the arguments are its kind */
+export function isSharedCall(method: unknown, args: unknown): method is keyof Methods {
+  const check = typeof method === 'string' ? SHARED_CALLS[method] : undefined
+  return !!check && Array.isArray(args) && check(args)
+}
+
+const IMAGE_EXT = /^[a-z0-9]{1,8}$/i
+
+/** throws for a resource / call op that is not of the shape `fetchRes` hands to the worker */
+function checkOp(op: DocxOp): void {
+  const bad = () => new Error(`Collaboration: operation refused (${String((op as { method?: unknown }).method ?? op.t).slice(0, 40)})`)
+  if (op.t === 'call') {
+    if (!isSharedCall(op.method, op.args)) throw bad()
+  } else if (op.t === 'image') {
+    if (!text(op.key, 200) || !(op.bytes instanceof Uint8Array) || typeof op.ext !== 'string' || !IMAGE_EXT.test(op.ext)) throw bad()
+  } else if (op.t === 'link') {
+    if (!text(op.key, 200) || !text(op.url, 8192)) throw bad()
+  }
+}
 
 const bkey = (b: Block): BKey | null => (b.t === 'p' ? (b.pid !== undefined ? { p: b.pid } : null) : b.t === 'tbl' ? { tid: b.tid, item: b.item } : null)
 
@@ -328,6 +387,7 @@ export class DocxCollab implements Adapter<DocxOp> {
   }
 
   private async fetchRes(op: DocxOp) {
+    checkOp(op)
     if (op.t === 'image' && !this.res.has(op.key)) {
       const r = await this.client.direct('docx.image', op.bytes.slice().buffer as ArrayBuffer, op.ext)
       this.res.set(op.key, r)

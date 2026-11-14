@@ -5,6 +5,7 @@
 import { escAttr } from '../../raw'
 import { toHex, toPt, type OdfStyles, type StyleProps } from './common'
 import { excelFormat } from './ods-format'
+import { dict } from '../../dict'
 
 const XML_HEAD = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n'
 const NS = 'xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"'
@@ -101,7 +102,7 @@ function rotation(deg: number): number | undefined {
   return d <= 180 ? 90 : 180
 }
 
-const H: Record<string, string> = { start: 'left', left: 'left', end: 'right', right: 'right', center: 'center', justify: 'justify' }
+const H: Record<string, string> = dict({ start: 'left', left: 'left', end: 'right', right: 'right', center: 'center', justify: 'justify' })
 
 /** the look of a cell style (its properties merged with those it inherits) */
 export function lookOf(styles: OdfStyles, name: string | undefined, base: Font): Look {

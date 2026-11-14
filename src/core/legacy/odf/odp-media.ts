@@ -1,5 +1,6 @@
 /** Images of an OpenDocument package for the PPTX: their type from their bytes, natural size, unique names. */
 import type { ONode, OdfPackage } from './common'
+import { dict } from '../../dict'
 
 /** image type from the first bytes: png, jpeg, gif, bmp, webp, svg, emf, wmf, tiff (others: undefined) */
 export function sniffImage(b: Uint8Array): string | undefined {
@@ -87,7 +88,7 @@ export function naturalSize(b: Uint8Array, type: string): { w: number; h: number
   return { w: (w * 72) / dpiX, h: (h * 72) / dpiY }
 }
 
-export const IMAGE_MIME: Record<string, string> = {
+export const IMAGE_MIME: Record<string, string> = dict({
   png: 'image/png',
   jpg: 'image/jpeg',
   gif: 'image/gif',
@@ -97,7 +98,7 @@ export const IMAGE_MIME: Record<string, string> = {
   emf: 'image/x-emf',
   wmf: 'image/x-wmf',
   tiff: 'image/tiff',
-}
+})
 
 export interface MediaFile {
   /** file name in ppt/media */

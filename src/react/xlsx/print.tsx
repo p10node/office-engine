@@ -4,6 +4,8 @@ import type { CellOut, Merge, WorkbookMeta } from '../../core/xlsx/types'
 import type { Printable } from '../file/print'
 import type { Axis } from './axis'
 import { fitNumber, fontPx } from './fit'
+import { cssColor, cssPaint } from '../../core/color'
+import { dict } from '../../core/dict'
 
 export interface SheetLayout {
   rows: number
@@ -35,7 +37,7 @@ async function sheetRows(client: DocumentClient, sheet: number, rows: number): P
 const loading = () => new Error('The sheet is still loading — try again in a moment')
 
 /** Shown values of the sheet as CSV / TSV (UTF-8 BOM for CSV so Excel reads accents). */
-const VALIGN: Record<string, CSSProperties['verticalAlign']> = { 'flex-start': 'top', center: 'middle', 'flex-end': 'bottom' }
+const VALIGN: Record<string, CSSProperties['verticalAlign']> = dict({ 'flex-start': 'top', center: 'middle', 'flex-end': 'bottom' })
 
 /** The sheet as a table (used range, hidden rows / columns left out), fitted to the paper width. */
 export async function sheetPrintable(client: DocumentClient, sheet: number, l: SheetLayout, meta: WorkbookMeta): Promise<Printable> {
@@ -106,11 +108,12 @@ export async function sheetPrintable(client: DocumentClient, sheet: number, l: S
       const spill = !!text && !m && align === 'left' && !whiteSpace && (next === undefined || (!cells.get(next)?.[1] && !covered.has(key(r, next))))
       // only what differs from the `.de-print-table td` defaults (bottom, pre, left): keeps a big sheet's DOM small
       const style = { ...rest } as CSSProperties
+      if (style.background !== undefined) style.background = cssPaint(style.background)
       if (align !== 'left') style.textAlign = align as CSSProperties['textAlign']
       const valign = VALIGN[alignItems as string]
       if (valign && valign !== 'bottom') style.verticalAlign = valign
       if (whiteSpace) style.whiteSpace = whiteSpace as CSSProperties['whiteSpace']
-      if (color) style.color = color
+      if (color) style.color = cssColor(color)
       tds.push(
         <td
           key={c}

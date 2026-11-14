@@ -1,6 +1,7 @@
 /** `\stylesheet` entries → Word styles (paragraph and character), and the formatting each style gives. */
 import { escAttr } from '../../raw'
 import { pPrDiff, rPrDiff, rPrOwn, type Chp, type Pap, type Tables } from './props'
+import { dict } from '../../dict'
 
 export interface StyleDef {
   num: number
@@ -20,12 +21,12 @@ export interface StyleDef {
 }
 
 /** Word's ids of built-in styles, by (lower-case) name */
-const BUILTIN: Record<string, string> = {
+const BUILTIN: Record<string, string> = dict({
   normal: 'Normal', title: 'Title', subtitle: 'Subtitle', 'default paragraph font': 'DefaultParagraphFont',
   'footnote text': 'FootnoteText', 'footnote reference': 'FootnoteReference', 'endnote text': 'EndnoteText',
   'endnote reference': 'EndnoteReference', header: 'Header', footer: 'Footer', hyperlink: 'Hyperlink',
   'list paragraph': 'ListParagraph', caption: 'Caption', 'no spacing': 'NoSpacing', quote: 'Quote',
-}
+})
 
 function styleId(name: string): string {
   const k = name.toLowerCase()

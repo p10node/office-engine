@@ -4,6 +4,7 @@
  */
 import type { IworkPackage } from './iwa'
 import type { Msg } from './proto'
+import { dict } from '../dict'
 
 export interface CharProps {
   b?: boolean
@@ -90,14 +91,14 @@ export function fillColor(m: Msg | undefined): string | undefined {
   return hexColor(m.msg(1)) ?? hexColor(m.msg(2)?.msgs(2)[0]?.msg(1))
 }
 
-const PS_FAMILY: Record<string, string> = {
+const PS_FAMILY: Record<string, string> = dict({
   PingFangSC: 'PingFang SC',
   PingFangTC: 'PingFang TC',
   PingFangHK: 'PingFang HK',
   HiraginoSans: 'Hiragino Sans',
   '.SFNSText': 'SF Pro Text',
   '.SFNSDisplay': 'SF Pro Display',
-}
+})
 
 /** PostScript font name ("HelveticaNeue-BoldItalic") → family + the bold / italic its face implies */
 export function psFont(name: string): { family: string; b?: boolean; i?: boolean } {

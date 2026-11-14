@@ -1,8 +1,10 @@
 import { memo, type CSSProperties, type PointerEvent as RPointerEvent, type ReactNode } from 'react'
+import { cssColor } from '../../core/color'
 import type { Block, Inline, Paragraph, ParaStyle, RunStyle, Table, TrackMark } from '../../core/docx/types'
 import { safeHref } from '../../core/url'
 import type { DocumentClient } from '../../core/worker/client'
 import { useMediaUrl } from '../common/hooks'
+import { dict } from '../../core/dict'
 
 export interface RenderCtx {
   client: DocumentClient
@@ -17,10 +19,10 @@ export interface RenderCtx {
 
 const pt = (v: number | undefined) => (v ? `${+v.toFixed(2)}pt` : undefined)
 
-const UNDERLINE_STYLE: Record<string, CSSProperties['textDecorationStyle']> = {
+const UNDERLINE_STYLE: Record<string, CSSProperties['textDecorationStyle']> = dict({
   double: 'double', dotted: 'dotted', dottedHeavy: 'dotted', dash: 'dashed', dashedHeavy: 'dashed', dashLong: 'dashed',
   wave: 'wavy', wavyHeavy: 'wavy', wavyDouble: 'wavy',
-}
+})
 
 const TRACK_COLORS = ['#c0392b', '#1a73e8', '#188038', '#a142f4', '#e37400', '#00838f', '#d01884', '#5f6368']
 
@@ -55,10 +57,11 @@ export function runCss(s: RunStyle | undefined): CSSProperties {
   else if (s.u === 'none' || s.strike === false) css.textDecoration = 'none'
   if (u && UNDERLINE_STYLE[s.u!]) css.textDecorationStyle = UNDERLINE_STYLE[s.u!]
   if (s.dstrike) css.textDecorationStyle = 'double'
-  if (s.color) css.color = s.color
+  // colors of the model come from the file, a peer or the clipboard: `background` would load a url() in one
+  if (s.color) css.color = cssColor(s.color)
   if (s.sz) css.fontSize = `${s.va ? s.sz * 0.65 : s.sz}pt`
   if (s.font) css.fontFamily = s.font
-  if (s.hl || s.shd) css.background = s.hl ?? s.shd
+  if (s.hl || s.shd) css.background = cssColor(s.hl ?? s.shd)
   if (s.va) css.verticalAlign = s.va === 'sup' ? 'super' : 'sub'
   if (s.caps) css.textTransform = 'uppercase'
   if (s.smallCaps) css.fontVariant = 'small-caps'
@@ -93,8 +96,8 @@ function paraCss(ps: ParaStyle, sp: Spacing): CSSProperties {
     textAlign: ps.align,
     lineHeight: lineHeight(ps),
   }
-  if (ps.shd) css.background = ps.shd
-  const b = (x: ParaStyle['bTop']) => (x ? `${x.w}pt ${x.style} ${x.color}` : undefined)
+  if (ps.shd) css.background = cssColor(ps.shd)
+  const b = (x: ParaStyle['bTop']) => (x ? `${x.w}pt ${x.style} ${cssColor(x.color) ?? 'currentColor'}` : undefined)
   if (ps.bTop) css.borderTop = b(ps.bTop)
   if (ps.bBottom) css.borderBottom = b(ps.bBottom)
   if (ps.bLeft) css.borderLeft = b(ps.bLeft)
@@ -182,7 +185,7 @@ function InlineView({ x, ctx, o }: { x: Inline; ctx: RenderCtx; o: number }): Re
         <span
           {...obj}
           className="de-tbox"
-          style={{ width: x.w ? `${x.w}pt` : undefined, minHeight: x.h ? `${x.h}pt` : undefined, background: x.fill, border: x.border }}
+          style={{ width: x.w ? `${x.w}pt` : undefined, minHeight: x.h ? `${x.h}pt` : undefined, background: cssColor(x.fill), border: x.border }}
         >
           {x.blocks.map((b, i) => (
             <BlockView key={i} block={b} ctx={ctx} />
@@ -304,7 +307,7 @@ function TableView({ t, ctx, pa }: { t: Table; ctx: RenderCtx; pa?: string }) {
                   borderRight: c.borders.r,
                   borderBottom: c.borders.b,
                   borderLeft: c.borders.l,
-                  background: c.shd,
+                  background: cssColor(c.shd),
                   verticalAlign: c.vAlign,
                   padding: `${c.pad[0]}pt ${c.pad[1]}pt ${c.pad[2]}pt ${c.pad[3]}pt`,
                 }}

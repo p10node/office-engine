@@ -13,6 +13,7 @@ import type { Msg } from './proto'
 import { fillColor, hangOf, hexColor, IworkStyles, type CharProps } from './styles'
 import { anchors, readTable, tableLook, type CellStroke, type IworkTable } from './table'
 import { paragraphs, STORAGE } from './text'
+import { dict } from '../dict'
 
 // message types
 const PLACEHOLDER = 7
@@ -38,9 +39,9 @@ const AUTONUM = [
   ['alphaUcPeriod', 'alphaUcParenBoth', 'alphaUcParenR'],
   ['alphaLcPeriod', 'alphaLcParenBoth', 'alphaLcParenR'],
 ]
-const ALGN: Record<string, string> = { left: 'l', right: 'r', center: 'ctr', both: 'just' }
+const ALGN: Record<string, string> = dict({ left: 'l', right: 'r', center: 'ctr', both: 'just' })
 const ANCHOR = ['t', 'ctr', 'b', 't']
-const U: Record<string, string> = { single: 'sng', double: 'dbl', wave: 'wavy', none: 'none' }
+const U: Record<string, string> = dict({ single: 'sng', double: 'dbl', wave: 'wavy', none: 'none' })
 const POLYGON: Record<number, string> = { 3: 'triangle', 4: 'diamond', 5: 'pentagon', 6: 'hexagon', 7: 'heptagon', 8: 'octagon', 10: 'decagon', 12: 'dodecagon' }
 
 const NS =

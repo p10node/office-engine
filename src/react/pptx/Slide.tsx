@@ -1,4 +1,5 @@
 import { memo, useId, type CSSProperties, type ReactNode } from 'react'
+import { cssColor, cssPaint } from '../../core/color'
 import type { Box, Fill, SlideEl, SlideModel, Stroke, TCell, TextBody, TRun } from '../../core/pptx/types'
 import { safeHref } from '../../core/url'
 import type { DocumentClient } from '../../core/worker/client'
@@ -11,14 +12,22 @@ function boxStyle(b: Box): CSSProperties {
   return { left: b.x, top: b.y, width: b.w, height: b.h, transform: t.length ? t.join(' ') : undefined }
 }
 
+/**
+ * A fill as CSS. `background` loads what a url() in it names, so a color or gradient of the model (read from the
+ * file, or sent by a peer) is only used when it is exactly that: see `cssColor`.
+ */
 function useFillCss(client: DocumentClient, fill: Fill | undefined, enabled: boolean): CSSProperties | undefined {
   const url = useMediaUrl(client, fill?.t === 'img' ? fill.target : undefined, enabled)
   if (!fill) return undefined
   switch (fill.t) {
-    case 'solid':
-      return { background: fill.c }
-    case 'grad':
-      return { background: fill.css }
+    case 'solid': {
+      const c = cssColor(fill.c)
+      return c ? { background: c } : undefined
+    }
+    case 'grad': {
+      const css = cssPaint(fill.css)
+      return css ? { background: css } : undefined
+    }
     case 'img':
       return url && url !== 'unsupported'
         ? { backgroundImage: `url("${url}")`, backgroundSize: fill.tile ? 'auto' : '100% 100%', backgroundRepeat: fill.tile ? 'repeat' : 'no-repeat' }
@@ -34,11 +43,11 @@ function runStyle(r: TRun): CSSProperties {
   if (r.i) s.fontStyle = 'italic'
   const deco = [r.u ? 'underline' : '', r.strike ? 'line-through' : ''].filter(Boolean).join(' ')
   if (deco) s.textDecoration = deco
-  if (r.color) s.color = r.color
+  if (r.color) s.color = cssColor(r.color)
   if (r.font) s.fontFamily = r.font
   if (r.baseline) s.verticalAlign = r.baseline > 0 ? 'super' : 'sub'
   if (r.caps) s.textTransform = 'uppercase'
-  if (r.hl) s.background = r.hl
+  if (r.hl) s.background = cssColor(r.hl)
   return s
 }
 
@@ -113,7 +122,7 @@ export function TextView({ text, flow, edit }: { text: TextBody; flow?: boolean;
               <span
                 className="de-bul"
                 contentEditable={edit ? false : undefined}
-                style={{ minWidth: hang || undefined, paddingRight: hang ? undefined : '0.4em', fontSize: `${p.bullet.sz}pt`, color: p.bullet.color, fontFamily: p.bullet.font }}
+                style={{ minWidth: hang || undefined, paddingRight: hang ? undefined : '0.4em', fontSize: `${p.bullet.sz}pt`, color: cssColor(p.bullet.color), fontFamily: p.bullet.font }}
               >
                 {p.bullet.text}
               </span>
@@ -137,7 +146,7 @@ export function TextView({ text, flow, edit }: { text: TextBody; flow?: boolean;
 function Marker({ id, s }: { id: string; s: Stroke }) {
   return (
     <marker id={id} viewBox="0 0 10 10" refX="5" refY="5" markerWidth="4" markerHeight="4" orient="auto-start-reverse">
-      <path d="M0 0 L10 5 L0 10 Z" fill={s.c} />
+      <path d="M0 0 L10 5 L0 10 Z" fill={cssColor(s.c)} />
     </marker>
   )
 }
@@ -157,7 +166,8 @@ function ShapeView({ el, client, live, editing }: { el: Extract<SlideEl, { t: 's
   const flipped = box.flipH || box.flipV
   const flip = flipped ? `translate(${box.flipH ? box.w : 0} ${box.flipV ? box.h : 0}) scale(${box.flipH ? -1 : 1} ${box.flipV ? -1 : 1})` : undefined
   const isRect = !isLine && !el.path && (el.geom === 'rect' || el.geom === 'flowChartProcess')
-  const solid = !isLine && el.fill?.t === 'solid' ? el.fill.c : undefined
+  // an SVG fill / stroke can name a url() too
+  const solid = !isLine && el.fill?.t === 'solid' ? cssColor(el.fill.c) : undefined
   const css = !isLine && fillCss && el.fill?.t !== 'solid' ? fillCss : undefined
   const s = el.stroke
   const w = Math.max(box.w, 1)
@@ -174,7 +184,8 @@ function ShapeView({ el, client, live, editing }: { el: Extract<SlideEl, { t: 's
                 position: 'absolute',
                 inset: 0,
                 ...css,
-                clipPath: isRect ? undefined : `path("${d}")`,
+                // quoted into the value: path data and nothing that could end the quote
+                clipPath: isRect || !/^[\sA-Za-z0-9.,+-]*$/.test(d) ? undefined : `path("${d}")`,
                 transform: flipped ? `scale(${box.flipH ? -1 : 1}, ${box.flipV ? -1 : 1})` : undefined,
               }}
             />
@@ -192,7 +203,7 @@ function ShapeView({ el, client, live, editing }: { el: Extract<SlideEl, { t: 's
                 transform={flip}
                 fill={solid ?? 'none'}
                 fillRule="evenodd"
-                stroke={s?.c ?? 'none'}
+                stroke={cssColor(s?.c) ?? 'none'}
                 strokeWidth={s?.w}
                 strokeDasharray={s?.dash}
                 strokeLinejoin="round"
@@ -215,7 +226,7 @@ function PicView({ el, client, live }: { el: Extract<SlideEl, { t: 'pic' }>; cli
   const top = el.top
   if (el.geom === 'ellipse') style.borderRadius = '50%'
   else if (el.geom === 'roundRect') style.borderRadius = Math.min(box.w, box.h) * 0.1667
-  if (el.stroke) style.outline = `${el.stroke.w}px solid ${el.stroke.c}`
+  if (el.stroke) style.outline = `${el.stroke.w}px solid ${cssColor(el.stroke.c) ?? 'transparent'}`
   let img: CSSProperties = { position: 'absolute', left: 0, top: 0, width: '100%', height: '100%' }
   if (el.crop) {
     const [l, t, r, b] = el.crop
@@ -239,7 +250,7 @@ function PicView({ el, client, live }: { el: Extract<SlideEl, { t: 'pic' }>; cli
   )
 }
 
-const strokeCss = (s: Stroke | undefined) => (s ? `${Math.max(1, s.w)}px solid ${s.c}` : undefined)
+const strokeCss = (s: Stroke | undefined) => (s ? `${Math.max(1, s.w)}px solid ${cssColor(s.c) ?? 'transparent'}` : undefined)
 
 function CellView({ cell, client, live, h }: { cell: TCell; client: DocumentClient; live: boolean; h: number }) {
   const fill = useFillCss(client, cell.fill, live)

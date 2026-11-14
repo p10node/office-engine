@@ -3,6 +3,7 @@
  * (pPr / rPr / inline objects copied verbatim, only changed properties patched);
  * everything else is written back byte-for-byte.
  */
+import { officeHex } from '../color'
 import { relOfType } from '../opc'
 import { cssFont } from '../fonts'
 import {
@@ -19,6 +20,7 @@ import type {
   Block, CanonStyle, CellSpec, EditOp, EditResult, ParaDirty, ParaSpec, ParaStyle, Paragraph, RunSet, RunStyle, SpecRun, SrcRef, StyleInfo, StyleLook, StyleSetResult,
   TableOp, TableSpec, PageSet, PageSetResult, PageSetup, HFKind, HFLine, HFSet, HFSetResult, TrackMark,
 } from './types'
+import { dict } from '../dict'
 
 export const DOCX_MIME = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
 const NUMBERING_REL = 'http://schemas.openxmlformats.org/officeDocument/2006/relationships/numbering'
@@ -39,7 +41,7 @@ const RPR_ORDER = [
 const START_MARKS = new Set(['bookmarkStart', 'commentRangeStart', 'permStart'])
 const END_MARKS = new Set(['bookmarkEnd', 'commentRangeEnd', 'permEnd'])
 const RUN_STOP = new Set(['p', 'oMath', 'oMathPara', 'pPr', 'rPr', 'r'])
-const HL_NAME: Record<string, string> = Object.fromEntries(Object.entries(HIGHLIGHT).map(([k, v]) => [v, k]))
+const HL_NAME: Record<string, string> = dict(Object.fromEntries(Object.entries(HIGHLIGHT).map(([k, v]) => [v, k])))
 
 interface ParaLoc {
   node: RNode
@@ -122,7 +124,8 @@ function applyRunSet(rPr: RNode, set: RunSet, W: string) {
     if (set.strike) put('dstrike', undefined)
   }
   if (set.u !== undefined) put('u', set.u === null ? undefined : el(W + 'u', { [val]: set.u && set.u !== 'none' ? set.u : 'none' }))
-  if ('color' in set) put('color', set.color ? el(W + 'color', { [val]: set.color === 'auto' ? 'auto' : set.color.replace('#', '').toUpperCase() }) : undefined)
+  const color = set.color === 'auto' ? 'auto' : officeHex(set.color)
+  if ('color' in set) put('color', color ? el(W + 'color', { [val]: color }) : undefined)
   if (set.sz !== undefined) {
     const v = set.sz === null ? undefined : String(Math.round(set.sz * 2))
     put('sz', v ? el(W + 'sz', { [val]: v }) : undefined)
@@ -134,11 +137,12 @@ function applyRunSet(rPr: RNode, set: RunSet, W: string) {
   }
   if ('hl' in set) {
     const name = set.hl ? HL_NAME[set.hl.toLowerCase()] : undefined
-    if (!set.hl) {
+    const fill = officeHex(set.hl)
+    if (!set.hl || (!name && !fill)) {
       put('highlight', undefined)
       put('shd', undefined)
     } else if (name) put('highlight', el(W + 'highlight', { [val]: name }))
-    else put('shd', el(W + 'shd', { [val]: 'clear', [W + 'color']: 'auto', [W + 'fill']: set.hl.replace('#', '').toUpperCase() }))
+    else put('shd', el(W + 'shd', { [val]: 'clear', [W + 'color']: 'auto', [W + 'fill']: fill! }))
   }
   if ('va' in set) put('vertAlign', set.va ? el(W + 'vertAlign', { [val]: set.va === 'sup' ? 'superscript' : 'subscript' }) : undefined)
 }
@@ -223,6 +227,8 @@ function canonDef(kind: Exclude<CanonStyle, 'normal'>, W: string): { id: string;
 
 /** Id of a built-in paragraph style (Title, Heading 1…), added to styles.xml when the document lacks it. */
 export async function ensureStyle(doc: DocxDocument, kind: CanonStyle): Promise<{ id: string; styles: StyleInfo[] }> {
+  // the kind may come from a collaborator: one of the built-in styles, not any key of the table below
+  if (!CANON_KINDS.includes(kind)) throw new Error('Unknown style')
   const have = doc.styles.canonical()[kind]
   if (have || kind === 'normal') return { id: have ?? '', styles: doc.styles.quickStyles() }
   const rel = relOfType(doc.rels, 'styles')
@@ -308,6 +314,9 @@ function lookValue(k: LookKey, o: StyleLook, css = false): unknown {
   if (k === 'line') return `${o.lineRule ?? 'auto'} ${Math.round((v as number) * 100) / 100}`
   return typeof v === 'number' ? Math.round(v * 100) / 100 : v
 }
+
+const CANON_KINDS: readonly CanonStyle[] = ['normal', 'title', 'subtitle', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6']
+const PAGE_KEYS = ['w', 'h', 'mt', 'mr', 'mb', 'ml', 'cols', 'colGap'] as const
 
 /** `look` with only the values a look can hold (it may come from a collaborator) */
 function checkedLook(look: StyleLook): StyleLook {
@@ -752,7 +761,7 @@ function imageRunXml(W: string, rid: string, w: number, h: number, name = 'Pictu
 
 const IMAGE_REL = 'http://schemas.openxmlformats.org/officeDocument/2006/relationships/image'
 const HYPERLINK_REL = 'http://schemas.openxmlformats.org/officeDocument/2006/relationships/hyperlink'
-const IMG_TYPES: Record<string, string> = { png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', gif: 'image/gif', bmp: 'image/bmp', svg: 'image/svg+xml', webp: 'image/webp' }
+const IMG_TYPES: Record<string, string> = dict({ png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', gif: 'image/gif', bmp: 'image/bmp', svg: 'image/svg+xml', webp: 'image/webp' })
 
 /** Adds an image part to the document; returns its relationship id and part path. */
 export async function addImage(doc: DocxDocument, bytes: Uint8Array, ext: string): Promise<{ rid: string; path: string }> {
@@ -776,7 +785,7 @@ export async function addLink(doc: DocxDocument, url: string): Promise<string> {
 
 // ---------------------------------------------------------------- tables
 
-const CSS_TO_LINE: Record<string, string> = { solid: 'single', dashed: 'dashed', dotted: 'dotted', double: 'double' }
+const CSS_TO_LINE: Record<string, string> = dict({ solid: 'single', dashed: 'dashed', dotted: 'dotted', double: 'double' })
 
 /** a border element from a CSS line ('0.5pt solid #000000', 'none') */
 export function borderXml(W: string, side: string, css: string): string {
@@ -854,7 +863,7 @@ export async function genTable(doc: DocxDocument, spec: TableSpec): Promise<stri
     setOrdered(pr, el(W + 'tcW', { [W + 'w']: String(Math.round(w * 20)), [W + 'type']: 'dxa' }), 'tcW', TCPR_ORDER)
     if (span > 1) setOrdered(pr, el(W + 'gridSpan', { [val]: String(span) }), 'gridSpan', TCPR_ORDER)
     if (vm) setOrdered(pr, el(W + 'vMerge', vm === 'restart' ? { [val]: 'restart' } : {}), 'vMerge', TCPR_ORDER)
-    if (shd !== undefined) setOrdered(pr, shd ? el(W + 'shd', { [val]: 'clear', [W + 'color']: 'auto', [W + 'fill']: shd === 'none' ? 'auto' : shd.replace('#', '').toUpperCase() }) : undefined, 'shd', TCPR_ORDER)
+    if (shd !== undefined) setOrdered(pr, shd ? el(W + 'shd', { [val]: 'clear', [W + 'color']: 'auto', [W + 'fill']: officeHex(shd) ?? 'auto' }) : undefined, 'shd', TCPR_ORDER)
     if (cell?.borders) {
       const lines = (['t', 'l', 'b', 'r'] as const).map((k) => [{ t: 'top', l: 'left', b: 'bottom', r: 'right' }[k], cell.borders![k]] as const)
       const xml = lines.filter(([, css]) => css !== undefined).map(([side, css]) => borderXml(W, side, css!)).join('')
@@ -930,8 +939,11 @@ const SECT_ORDER = [
 ]
 
 /** Changes the page setup ("whole document"): resolves to the new setup and the change that undoes it. */
-export async function setPage(doc: DocxDocument, set: PageSet): Promise<PageSetResult> {
+export async function setPage(doc: DocxDocument, asked: PageSet): Promise<PageSetResult> {
   if (!doc.ready) throw new Error('Document is still loading')
+  // only the keys of a page setup (it may come from a collaborator)
+  const set: PageSet = {}
+  for (const k of PAGE_KEYS) if (asked?.[k] !== undefined) set[k] = asked[k]
   const ok = (v: number | undefined, min: number, max: number) => v === undefined || (Number.isFinite(v) && v >= min && v <= max)
   if (!ok(set.w, 72, 1584) || !ok(set.h, 72, 1584) || ![set.mt, set.mr, set.mb, set.ml].every((m) => ok(m, 0, 432)) || !ok(set.cols, 1, 12) || !ok(set.colGap, 0, 288))
     throw new Error('Invalid page setup')
@@ -1062,6 +1074,7 @@ export async function setHeaderFooter(doc: DocxDocument, set: HFSet): Promise<HF
   if (!doc.ready) throw new Error('Document is still loading')
   const kinds = new Set<HFKind>([...(Object.keys(set.parts ?? {}) as HFKind[]), ...(Object.keys(set.raw ?? {}) as HFKind[])])
   for (const k of kinds) if (!['header', 'footer', 'firstHeader', 'firstFooter'].includes(k)) throw new Error('Invalid header / footer')
+  if (Object.values(set.raw ?? {}).some((xml) => typeof xml !== 'string')) throw new Error('Invalid header / footer')
   for (const lines of Object.values(set.parts ?? {}))
     if (!Array.isArray(lines) || lines.length > 20 || lines.some((l) => typeof l?.text !== 'string' || l.text.length > 2000 || (l.sz !== undefined && !(l.sz >= 4 && l.sz <= 96))))
       throw new Error('Invalid header / footer')

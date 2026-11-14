@@ -1,4 +1,5 @@
 /** Excel number-format subset: General, fixed/grouped/percent/scientific/fraction, dates & times, sections & colors. */
+import { dict } from '../dict'
 
 export const BUILTIN_FORMATS: Record<number, string> = {
   0: 'General', 1: '0', 2: '0.00', 3: '#,##0', 4: '#,##0.00', 9: '0%', 10: '0.00%', 11: '0.00E+00',
@@ -30,10 +31,10 @@ interface Section {
   hasDigits: boolean
 }
 
-const COLORS: Record<string, string> = {
+const COLORS: Record<string, string> = dict({
   black: '#000000', red: '#ff0000', green: '#00a000', blue: '#0000ff', yellow: '#c0c000', magenta: '#ff00ff',
   cyan: '#00c0c0', white: '#ffffff',
-}
+})
 
 const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December']
 const DAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday']

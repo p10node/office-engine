@@ -1,6 +1,7 @@
 /** BIFF cell formats (FONT, FORMAT, XF, PALETTE records) → the XLSX styles part. */
 import { applyTint, INDEXED } from '../../color'
 import { escAttr } from '../../raw'
+import { dict } from '../../dict'
 
 export interface Font {
   /** twips */
@@ -325,10 +326,10 @@ export class XlsxStyles {
 }
 
 /** Office 2007's theme colors, the theme of workbooks that do not have their own */
-const OFFICE_2007: Record<string, string> = {
+const OFFICE_2007: Record<string, string> = dict({
   dk1: '000000', lt1: 'FFFFFF', dk2: '1F497D', lt2: 'EEECE1', accent1: '4F81BD', accent2: 'C0504D', accent3: '9BBB59',
   accent4: '8064A2', accent5: '4BACC6', accent6: 'F79646', hlink: '0000FF', folHlink: '800080',
-}
+})
 /** theme color indexes as Excel numbers them (light and dark swapped) */
 const THEME_ORDER = ['lt1', 'dk1', 'lt2', 'dk2', 'accent1', 'accent2', 'accent3', 'accent4', 'accent5', 'accent6', 'hlink', 'folHlink']
 

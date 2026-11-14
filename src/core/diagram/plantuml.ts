@@ -9,6 +9,7 @@ import { GraphBuilder, type GEdge, type Head, type Rendered, type Section, type 
 import { renderModel, type Model } from './model'
 import { SequenceBuilder, type MsgHead, type PKind } from './sequence'
 import { color, DiagramError, labelText } from './svg'
+import { dict } from '../dict'
 
 /** the diagrams of a file: the text of each @startX … @endX block (the whole text when there is none) */
 export function plantUmlBlocks(src: string): { kind: string; lines: string[] }[] {
@@ -135,7 +136,7 @@ function umlKind(lines: string[]): 'activity' | 'sequence' | 'state' | 'descript
 
 // ---------------------------------------------------------------- sequence
 
-const KIND: Record<string, PKind> = { participant: 'participant', actor: 'actor', boundary: 'boundary', control: 'control', entity: 'entity', database: 'database', collections: 'collections', queue: 'queue' }
+const KIND: Record<string, PKind> = dict({ participant: 'participant', actor: 'actor', boundary: 'boundary', control: 'control', entity: 'entity', database: 'database', collections: 'collections', queue: 'queue' })
 
 function sequence(lines: string[]) {
   const b = new SequenceBuilder()
@@ -278,18 +279,18 @@ function seqMessage(l: string) {
 
 // ---------------------------------------------------------------- class, use case, component… (description diagrams)
 
-const ELEMENT: Record<string, Shape> = {
+const ELEMENT: Record<string, Shape> = dict({
   actor: 'actor', person: 'actor', usecase: 'ellipse', component: 'component', node: 'box3d', database: 'cylinder', cloud: 'cloud', folder: 'folder', frame: 'folder',
   package: 'folder', artifact: 'note', file: 'note', storage: 'stadium', queue: 'stadium', stack: 'rect', card: 'rect', rectangle: 'rect', agent: 'rect', label: 'none',
   boundary: 'circle', control: 'circle', entity: 'rect', collections: 'rect', hexagon: 'hexagon', interface: 'rect', circle: 'circle', port: 'point', portin: 'point', portout: 'point',
   action: 'rect', process: 'round', usecase_: 'ellipse', object: 'rect', map: 'rect', json: 'rect', diamond: 'diamond', state: 'round',
-}
+})
 const CLASSES = new Set(['class', 'abstract', 'abstract class', 'interface', 'enum', 'annotation', 'struct', 'protocol', 'entity', 'exception', 'metaclass', 'stereotype', 'object', 'map', 'json'])
 
-const MARKS: Record<string, Head> = {
+const MARKS: Record<string, Head> = dict({
   '>': 'arrow', '<': 'arrow', '|>': 'triangle', '<|': 'triangle', '^': 'triangle', '*': 'diamond', o: 'odiamond', '#': 'odiamond', x: 'cross', '+': 'ocircle',
   '{': 'many', '}': 'many', '>>': 'open', '<<': 'open', '|o': 'zero-one', 'o|': 'zero-one', '||': 'one', '}o': 'zero-many', 'o{': 'zero-many', '}|': 'one-many', '|{': 'one-many',
-}
+})
 
 const END = String.raw`\[\*\]|\[[^\]]+\]|\([^)]*\)|:[^:]+:|"[^"]+"|\(\)\s*"[^"]+"|\(\)\s*[\w.]+|[\w.$À-￿-]+`
 const LINK = new RegExp(

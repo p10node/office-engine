@@ -4,12 +4,13 @@ import { OdfPackage } from './common'
 import { odpToPptx } from './odp'
 import { odsToXlsx } from './ods'
 import { odtToDocx } from './odt'
+import { dict } from '../../dict'
 
 export type OdfFormat = 'odt' | 'ods' | 'odp'
 
 const MIMETYPE = /^application\/vnd\.oasis\.opendocument\.(text|spreadsheet|presentation)(-template|-master)?$/
 
-const FORMAT: Record<string, OdfFormat> = { text: 'odt', spreadsheet: 'ods', presentation: 'odp' }
+const FORMAT: Record<string, OdfFormat> = dict({ text: 'odt', spreadsheet: 'ods', presentation: 'odp' })
 
 const ofMime = (mime: string | undefined) => {
   const m = MIMETYPE.exec((mime ?? '').trim())

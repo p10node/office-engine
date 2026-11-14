@@ -68,7 +68,8 @@ async function settle(doc: Document, host: HTMLElement) {
   })
   const urls = new Set<string>()
   for (const el of host.querySelectorAll<HTMLElement>('[style*="url("]')) {
-    for (const m of el.style.backgroundImage.matchAll(/url\(["']?([^"')]+)["']?\)/g)) urls.add(m[1])
+    // pictures of the document only (blob: / data:): nothing is requested from an address the document names
+    for (const m of el.style.backgroundImage.matchAll(/url\(["']?([^"')]+)["']?\)/g)) if (/^(?:blob|data):/i.test(m[1])) urls.add(m[1])
   }
   const loads: Promise<unknown>[] = [...host.querySelectorAll('img')].map((img) =>
     img.complete ? null : new Promise((r) => ((img.onload = r), (img.onerror = r))),

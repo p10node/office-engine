@@ -1,6 +1,7 @@
 /** The stylesheet (STSH), the font table (SttbfFfn) and the list tables (PlfLst / PlfLfo) of a Word binary document. */
 import { Bytes } from './bin'
 import { applyChp, applyPap, DEFAULT_CHP, DEFAULT_PAP, type Chp, type Pap } from './props'
+import { dict } from '../../dict'
 
 /** English names of the built-in styles by sti (Word writes these names in OOXML whatever the UI language) */
 const STI_NAMES = [
@@ -19,12 +20,12 @@ const STI_NAMES = [
 ]
 
 /** style ids Word gives built-in styles whose id is not their name without spaces */
-const STYLE_IDS: Record<string, string> = {
+const STYLE_IDS: Record<string, string> = dict({
   'annotation text': 'CommentText',
   'annotation reference': 'CommentReference',
   'Normal Table': 'TableNormal',
   'toa heading': 'TOAHeading',
-}
+})
 
 export interface Style {
   istd: number

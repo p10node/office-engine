@@ -1,5 +1,6 @@
 /** React bindings: session lifecycle, presence avatars / status, collaborators' cursors. */
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore, type CSSProperties } from 'react'
+import { cssColor } from '../core/color'
 import type { PresentationMeta } from '../core/pptx/types'
 import type { DocumentClient } from '../core/worker/client'
 import { getPeers, subscribePeers, type PeerView } from './hosts'
@@ -97,7 +98,7 @@ export function CollabBar({ client, state }: { client: DocumentClient; state: Co
       {peers.length > 0 && (
         <span className="de-peers">
           {peers.slice(0, 5).map((p) => (
-            <span key={p.site} className="de-peer" style={{ background: p.color }} title={p.name}>
+            <span key={p.site} className="de-peer" style={{ background: cssColor(p.color) }} title={p.name}>
               {initials(p.name)}
             </span>
           ))}
@@ -182,7 +183,7 @@ export function PeerOverlay({ client, collab }: { client: DocumentClient; collab
   return (
     <div ref={ref} className="de-peer-layer" aria-hidden>
       {marks.map((m) => (
-        <div key={m.key} style={{ '--peer': m.color } as CSSProperties}>
+        <div key={m.key} style={{ '--peer': cssColor(m.color) } as CSSProperties}>
           {m.boxes.map((b, i) => (
             <div key={i} className="de-peer-sel" style={{ left: b.x, top: b.y, width: b.w, height: b.h }} />
           ))}

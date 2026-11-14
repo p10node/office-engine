@@ -2,13 +2,15 @@ import { cssFont } from '../fonts'
 import type { Theme } from '../theme'
 import { kid, kids, num, onOff, path, type XEl } from '../xml'
 import type { Border, CanonStyle, ParaStyle, RunStyle, StyleInfo } from './types'
+import { dict } from '../dict'
 
-export const HIGHLIGHT: Record<string, string> = {
+export const HIGHLIGHT: Record<string, string> = dict({
   yellow: '#ffff00', green: '#00ff00', cyan: '#00ffff', magenta: '#ff00ff', blue: '#0000ff', red: '#ff0000',
   darkBlue: '#000080', darkCyan: '#008080', darkGreen: '#008000', darkMagenta: '#800080', darkRed: '#800000',
   darkYellow: '#808000', darkGray: '#808080', lightGray: '#c0c0c0', black: '#000000', white: '#ffffff',
-}
+})
 
+/** a WordprocessingML color (six hex digits; `auto` and anything else: none) as `#rrggbb` */
 export const hexColor = (v: string | undefined): string | undefined =>
   v && v !== 'auto' && /^[0-9a-fA-F]{6}$/.test(v) ? '#' + v.toLowerCase() : undefined
 
@@ -17,11 +19,11 @@ export function shading(el: XEl | undefined): string | undefined {
   return hexColor(el.a.fill) ?? (el.a.val === 'solid' ? hexColor(el.a.color) : undefined)
 }
 
-const BORDER_STYLE: Record<string, string> = {
+const BORDER_STYLE: Record<string, string> = dict({
   single: 'solid', thick: 'solid', double: 'double', dotted: 'dotted', dashed: 'dashed', dotDash: 'dashed',
   dotDotDash: 'dotted', triple: 'double', thinThickSmallGap: 'double', thickThinSmallGap: 'double',
   wave: 'solid', dashSmallGap: 'dashed', outset: 'outset', inset: 'inset',
-}
+})
 
 export function border(el: XEl | undefined): Border | undefined | null {
   if (!el) return undefined
@@ -181,7 +183,7 @@ export interface ResolvedTableStyle {
   cond: Record<string, CondFormat>
 }
 
-const CANON_BY_NAME: Record<string, CanonStyle> = {
+const CANON_BY_NAME: Record<string, CanonStyle> = dict({
   normal: 'normal',
   title: 'title',
   subtitle: 'subtitle',
@@ -197,7 +199,7 @@ const CANON_BY_NAME: Record<string, CanonStyle> = {
   heading4: 'h4',
   heading5: 'h5',
   heading6: 'h6',
-}
+})
 
 function readDef(s: XEl): StyleDef | undefined {
   const id = s.a.styleId
@@ -338,7 +340,8 @@ export class StyleSheet {
     const key = id ?? this.defaultTable ?? ''
     let r = this.tblCache.get(key)
     if (r) return r
-    r = { ps: {}, rs: {}, borders: {}, cellMar: {}, cond: {} }
+    // `cond` is keyed by a type the file names
+    r = { ps: {}, rs: {}, borders: {}, cellMar: {}, cond: dict({}) }
     for (const d of this.chain(key)) {
       r.ps = merge(r.ps, readPPr(kid(d.el, 'pPr')).ps)
       r.rs = merge(r.rs, readRPr(kid(d.el, 'rPr'), this.theme))
@@ -363,7 +366,8 @@ export class StyleSheet {
 }
 
 export function readTableBorders(el: XEl | undefined): Record<string, Border | null | undefined> {
-  const out: Record<string, Border | null | undefined> = {}
+  // keyed by the side elements' names
+  const out: Record<string, Border | null | undefined> = dict({})
   if (!el) return out
   for (const c of el.c) {
     const k = c.n === 'start' ? 'left' : c.n === 'end' ? 'right' : c.n

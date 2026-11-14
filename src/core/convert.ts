@@ -2,6 +2,8 @@
  * Builds new Office files from plain formats (File → Open of CSV / text / Markdown / HTML).
  * DOM-free: HTML is turned into paragraphs on the React side (react/docx/html.ts).
  */
+import { officeHex } from './color'
+import { dict } from './dict'
 import { HIGHLIGHT } from './docx/styles'
 import type { RunSet } from './docx/types'
 import { escAttr, escText } from './raw'
@@ -318,7 +320,7 @@ export function markdownToHtml(md: string): string {
   return out.join('\n')
 }
 
-const HL_NAME: Record<string, string> = Object.fromEntries(Object.entries(HIGHLIGHT).map(([k, v]) => [v, k]))
+const HL_NAME: Record<string, string> = dict(Object.fromEntries(Object.entries(HIGHLIGHT).map(([k, v]) => [v, k])))
 
 function rPrXml(set: RunSet | undefined): string {
   if (!set) return ''
@@ -327,12 +329,14 @@ function rPrXml(set: RunSet | undefined): string {
   if (set.b) x += '<w:b/>'
   if (set.i) x += '<w:i/>'
   if (set.strike) x += '<w:strike/>'
-  if (set.color) x += `<w:color w:val="${set.color.replace('#', '').toUpperCase()}"/>`
+  const color = officeHex(set.color)
+  if (color) x += `<w:color w:val="${color}"/>`
   if (set.sz) x += `<w:sz w:val="${Math.round(set.sz * 2)}"/><w:szCs w:val="${Math.round(set.sz * 2)}"/>`
   const hl = set.hl ? HL_NAME[set.hl.toLowerCase()] : undefined
   if (hl) x += `<w:highlight w:val="${hl}"/>`
   if (set.u && set.u !== 'none') x += `<w:u w:val="${set.u}"/>`
-  if (set.hl && !hl) x += `<w:shd w:val="clear" w:color="auto" w:fill="${set.hl.replace('#', '').toUpperCase()}"/>`
+  const fill = hl ? undefined : officeHex(set.hl)
+  if (fill) x += `<w:shd w:val="clear" w:color="auto" w:fill="${fill}"/>`
   if (set.va) x += `<w:vertAlign w:val="${set.va === 'sup' ? 'superscript' : 'subscript'}"/>`
   return x ? `<w:rPr>${x}</w:rPr>` : ''
 }

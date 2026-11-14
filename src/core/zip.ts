@@ -22,6 +22,42 @@ const SIG_LOC = 0x04034b50
 const u64 = (dv: DataView, o: number) => Number(dv.getBigUint64(o, true))
 
 /**
+ * What a package may ask of the reader. The sizes in a ZIP are whatever its author wrote: a file of a few kilobytes
+ * can announce (or unpack to) gigabytes, and name the same part twice. Past these limits the file is refused with
+ * an error instead of the memory being asked for. They are far above what documents hold (an object, so that the
+ * tests can lower them).
+ */
+export const ZIP_LIMITS = {
+  /** entries of the central directory */
+  entries: 200_000,
+  /** bytes of the central directory */
+  directory: 256 * 1024 * 1024,
+  /** bytes of a part read whole into memory (`bytes`, `text`): XML parsed as one text, pictures */
+  whole: 1024 * 1024 * 1024,
+  /** bytes of a part read as a stream (`stream`): sheet data, a document's body */
+  stream: 16 * 1024 * 1024 * 1024,
+}
+
+/** deflate can't pack more than about 1032 to 1: a part announced larger than that for its packed size is not believed */
+const MAX_RATIO = 1032
+
+const tooLarge = (name: string, limit: number) => new Error(`${name} is too large to open (over ${Math.round(limit / (1024 * 1024))} MB unpacked)`)
+
+/** `stream`, failing once more than `limit` bytes came through */
+function capped(stream: ReadableStream<Uint8Array>, limit: number, name: string): ReadableStream<Uint8Array> {
+  let total = 0
+  return stream.pipeThrough(
+    new TransformStream<Uint8Array, Uint8Array>({
+      transform(chunk, ctrl) {
+        total += chunk.length
+        if (total > limit) ctrl.error(tooLarge(name, limit))
+        else ctrl.enqueue(chunk)
+      },
+    }),
+  )
+}
+
+/**
  * Lazy ZIP reader: parses only the central directory, then inflates single
  * entries on demand straight from the byte source (native DecompressionStream).
  */
@@ -65,6 +101,7 @@ export class ZipArchive {
       const loc = eocd - 20
       if (loc >= 0 && dv.getUint32(loc, true) === SIG_Z64_LOC) {
         const z64Off = u64(dv, loc + 8)
+        if (z64Off + 56 > src.size) throw new Error('Corrupt ZIP (ZIP64 record outside the file)')
         const rec = await src.read(z64Off, 56)
         const rdv = new DataView(rec.buffer, rec.byteOffset, rec.byteLength)
         if (rdv.getUint32(0, true) === SIG_Z64_EOCD) {
@@ -75,6 +112,9 @@ export class ZipArchive {
       }
     }
 
+    // the directory is read whole: it lies inside the file, and is not larger than a directory gets
+    if (cdOffset + cdSize > src.size) throw new Error('Corrupt ZIP (central directory outside the file)')
+    if (cdSize > ZIP_LIMITS.directory || count > ZIP_LIMITS.entries) throw new Error(`Too many files in the package (over ${ZIP_LIMITS.entries})`)
     const cd = await src.read(cdOffset, cdSize)
     const cdv = new DataView(cd.buffer, cd.byteOffset, cd.byteLength)
     const utf8 = new TextDecoder()
@@ -110,7 +150,12 @@ export class ZipArchive {
         }
       }
       if (!name.endsWith('/')) {
-        this.entries.set(normalize(name), { name, method, flags, crc, time, date, compSize, size, localOffset })
+        const key = normalize(name)
+        // one part per name (names differing by case are the same part): with two, which one is shown and which one
+        // another reader (a scanner, Office) sees would differ
+        if (this.entries.has(key)) throw new Error(`Corrupt ZIP (two files named ${name})`)
+        if (this.entries.size >= ZIP_LIMITS.entries) throw new Error(`Too many files in the package (over ${ZIP_LIMITS.entries})`)
+        this.entries.set(key, { name, method, flags, crc, time, date, compSize, size, localOffset })
       }
       p += 46 + nameLen + extraLen + commentLen
     }
@@ -130,11 +175,14 @@ export class ZipArchive {
 
   private async dataOffset(e: ZipEntry): Promise<number> {
     if (e.dataOffset !== undefined) return e.dataOffset
+    if (e.localOffset + 30 > this.src.size) throw new Error(`Corrupt ZIP local header for ${e.name}`)
     const h = await this.src.read(e.localOffset, 30)
     const dv = new DataView(h.buffer, h.byteOffset, h.byteLength)
-    if (dv.getUint32(0, true) !== SIG_LOC) throw new Error(`Corrupt ZIP local header for ${e.name}`)
-    e.dataOffset = e.localOffset + 30 + dv.getUint16(26, true) + dv.getUint16(28, true)
-    return e.dataOffset
+    if (h.length < 30 || dv.getUint32(0, true) !== SIG_LOC) throw new Error(`Corrupt ZIP local header for ${e.name}`)
+    const off = e.localOffset + 30 + dv.getUint16(26, true) + dv.getUint16(28, true)
+    if (off + e.compSize > this.src.size) throw new Error(`Corrupt ZIP (${e.name} runs past the end of the file)`)
+    e.dataOffset = off
+    return off
   }
 
   /** Compressed bytes of an entry, as stored (zero-copy Blob slice when the source allows). */
@@ -143,11 +191,15 @@ export class ZipArchive {
     return this.src.slice ? this.src.slice(off, e.compSize) : this.src.read(off, e.compSize)
   }
 
-  /** Decompressed stream of an entry. `onRaw` reports compressed bytes consumed. */
-  async stream(path: string, onRaw?: (consumed: number, total: number) => void): Promise<ReadableStream<Uint8Array>> {
+  /**
+   * Decompressed stream of an entry. `onRaw` reports compressed bytes consumed. The stream fails past `limit`
+   * unpacked bytes (default `ZIP_LIMITS.stream`), whatever size the entry announces.
+   */
+  async stream(path: string, onRaw?: (consumed: number, total: number) => void, limit = ZIP_LIMITS.stream): Promise<ReadableStream<Uint8Array>> {
     const e = this.get(path)
     if (!e) throw new Error(`Missing part: ${path}`)
     if (e.flags & 1) throw new Error('Encrypted documents are not supported')
+    if (e.size > limit) throw tooLarge(e.name, limit)
     const off = await this.dataOffset(e)
     let raw = this.src.stream(off, e.compSize)
     if (onRaw) {
@@ -163,30 +215,37 @@ export class ZipArchive {
         }),
       )
     }
-    if (e.method === 0) return raw
-    if (e.method === 8) return raw.pipeThrough(new DecompressionStream('deflate-raw') as unknown as TransformStream<Uint8Array, Uint8Array>)
+    // stored: as long as its bytes in the file; deflated: counted as it unpacks
+    if (e.method === 0) return e.compSize > limit ? capped(raw, limit, e.name) : raw
+    if (e.method === 8) return capped(raw.pipeThrough(new DecompressionStream('deflate-raw') as unknown as TransformStream<Uint8Array, Uint8Array>), limit, e.name)
     throw new Error(`Unsupported ZIP compression method ${e.method} for ${e.name}`)
   }
 
+  /** An entry unpacked whole into memory: at most `ZIP_LIMITS.whole` bytes. */
   async bytes(path: string): Promise<Uint8Array> {
     const e = this.get(path)
     if (!e) throw new Error(`Missing part: ${path}`)
-    const reader = (await this.stream(path)).getReader()
-    const out = new Uint8Array(e.size)
+    const reader = (await this.stream(path, undefined, ZIP_LIMITS.whole)).getReader()
+    // the announced size saves a copy, when it can be true for the packed size; else the bytes are gathered as they come
+    const out = new Uint8Array(e.size <= e.compSize * MAX_RATIO + 65536 ? e.size : 0)
+    /** bytes read, and how many of them are in `out` (the rest, past the announced size, in `extra`) */
     let pos = 0
+    let filled = 0
     const extra: Uint8Array[] = []
     for (;;) {
       const { done, value } = await reader.read()
       if (done) break
-      if (pos + value.length <= out.length) out.set(value, pos)
-      else extra.push(value)
+      if (!extra.length && filled + value.length <= out.length) {
+        out.set(value, filled)
+        filled += value.length
+      } else extra.push(value)
       pos += value.length
     }
-    if (!extra.length) return pos === out.length ? out : out.subarray(0, pos)
+    if (!extra.length) return filled === out.length ? out : out.subarray(0, filled)
     // Size in directory was wrong: rebuild.
     const all = new Uint8Array(pos)
-    all.set(out)
-    let q = out.length
+    all.set(out.subarray(0, filled))
+    let q = filled
     for (const x of extra) all.set(x, q), (q += x.length)
     return all
   }

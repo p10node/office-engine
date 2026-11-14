@@ -6,6 +6,7 @@ import { BORDER, tabKind, tabLeader, type Frame, type Pn, type Side } from './pr
 import type { RtfReader } from './reader'
 import { newCell } from './tables'
 import { D_COLOR, D_FONT, D_NONE, D_SHEET, D_STORY, D_STYLE, D_TEXT, D_UPR, TextAcc } from './text'
+import { dict } from '../../dict'
 
 type Fn = (r: RtfReader, p: number, has: boolean) => void
 
@@ -308,11 +309,11 @@ dest('revtbl', (r) => {
 def('striked', (r, p, has) => {
   r.chp().dstrike = on(p, has)
 })
-const UL: Record<string, string> = {
+const UL: Record<string, string> = dict({
   ul: 'single', uld: 'dotted', uldash: 'dash', uldashd: 'dotDash', uldashdd: 'dotDotDash', uldb: 'double', ulhwave: 'wavyHeavy',
   ulldash: 'dashLong', ulth: 'thick', ulthd: 'dottedHeavy', ulthdash: 'dashedHeavy', ulthdashd: 'dashDotHeavy',
   ulthdashdd: 'dashDotDotHeavy', ulthldash: 'dashLongHeavy', ululdbwave: 'wavyDouble', ulw: 'words', ulwave: 'wave',
-}
+})
 for (const [w, v] of Object.entries(UL)) def(w, (r, p, has) => {
   r.chp().ul = on(p, has) ? v : 'none'
 })
@@ -385,7 +386,7 @@ def('pard', (r) => {
   r.st.ppOwn = true
   r.dirty = true
 })
-const JC: Record<string, string> = { ql: 'left', qc: 'center', qr: 'right', qj: 'both', qd: 'distribute', qk: 'both', qt: 'thaiDistribute' }
+const JC: Record<string, string> = dict({ ql: 'left', qc: 'center', qr: 'right', qj: 'both', qd: 'distribute', qk: 'both', qt: 'thaiDistribute' })
 for (const [w, v] of Object.entries(JC)) def(w, (r) => {
   r.pap().jc = v
 })
@@ -456,13 +457,13 @@ def('abslock', frame((f) => (f.lock = true)))
 def('dxfrtext', frame((f, p) => (f.hSpace = f.vSpace = p)))
 def('dfrmtxtx', frame((f, p) => (f.hSpace = p)))
 def('dfrmtxty', frame((f, p) => (f.vSpace = p)))
-const FRAME: Record<string, [keyof Frame, string]> = {
+const FRAME: Record<string, [keyof Frame, string]> = dict({
   phmrg: ['hAnchor', 'margin'], phpg: ['hAnchor', 'page'], phcol: ['hAnchor', 'text'], pvmrg: ['vAnchor', 'margin'], pvpg: ['vAnchor', 'page'],
   pvpara: ['vAnchor', 'text'], posxc: ['xAlign', 'center'], posxi: ['xAlign', 'inside'], posxo: ['xAlign', 'outside'], posxr: ['xAlign', 'right'],
   posxl: ['xAlign', 'left'], posyil: ['yAlign', 'inline'], posyt: ['yAlign', 'top'], posyc: ['yAlign', 'center'], posyb: ['yAlign', 'bottom'],
   posyin: ['yAlign', 'inside'], posyout: ['yAlign', 'outside'], nowrap: ['wrap', 'notBeside'], wraparound: ['wrap', 'around'],
   wraptight: ['wrap', 'tight'], wrapthrough: ['wrap', 'through'],
-}
+})
 for (const [w, [k, v]] of Object.entries(FRAME)) def(w, frame((f) => ((f as Record<string, unknown>)[k] = v)))
 
 // tabs: kind and leader come before the position
@@ -527,11 +528,11 @@ def('cell', (r) => r.cellEnd(false))
 def('nestcell', (r) => r.cellEnd(true))
 def('row', (r) => r.rowEnd(false))
 def('nestrow', (r) => r.rowEnd(true))
-const CHARS: Record<string, string> = {
+const CHARS: Record<string, string> = dict({
   emdash: '\u2014', endash: '\u2013', emspace: '\u2003', enspace: '\u2002', qmspace: '\u2005', bullet: '\u2022',
   lquote: '\u2018', rquote: '\u2019', ldblquote: '\u201c', rdblquote: '\u201d', zwj: '\u200d', zwnj: '\u200c',
   ltrmark: '\u200e', rtlmark: '\u200f', zwbo: '\u200b', zwnbo: '\u2060',
-}
+})
 for (const [w, c] of Object.entries(CHARS)) def(w, (r) => r.char(c))
 def('u', (r, p) => r.unicode(p))
 def('uc', (r, p) => {
@@ -608,7 +609,7 @@ def('margmirror', (r) => {
 def('sectd', (r) => {
   r.sect = { hf: r.sect.hf }
 })
-const BRK: Record<string, string> = { sbknone: 'continuous', sbkcol: 'nextColumn', sbkpage: 'nextPage', sbkeven: 'evenPage', sbkodd: 'oddPage' }
+const BRK: Record<string, string> = dict({ sbknone: 'continuous', sbkcol: 'nextColumn', sbkpage: 'nextPage', sbkeven: 'evenPage', sbkodd: 'oddPage' })
 for (const [w, v] of Object.entries(BRK)) def(w, (r) => {
   r.sect.brk = v
 })
@@ -639,11 +640,11 @@ def('titlepg', (r) => {
 def('pgnrestart', (r) => {
   r.sect.pgnRestart = true
 })
-const PGN: Record<string, string> = { pgndec: 'decimal', pgnucrm: 'upperRoman', pgnlcrm: 'lowerRoman', pgnucltr: 'upperLetter', pgnlcltr: 'lowerLetter' }
+const PGN: Record<string, string> = dict({ pgndec: 'decimal', pgnucrm: 'upperRoman', pgnlcrm: 'lowerRoman', pgnucltr: 'upperLetter', pgnlcltr: 'lowerLetter' })
 for (const [w, v] of Object.entries(PGN)) def(w, (r) => {
   r.sect.pgnFmt = v === 'decimal' ? undefined : v
 })
-const VAL: Record<string, string> = { vertalt: 'top', vertalc: 'center', vertalj: 'both', vertalb: 'bottom' }
+const VAL: Record<string, string> = dict({ vertalt: 'top', vertalc: 'center', vertalj: 'both', vertalb: 'bottom' })
 for (const [w, v] of Object.entries(VAL)) def(w, (r) => {
   r.sect.vAlign = v === 'top' ? undefined : v
 })
@@ -769,7 +770,7 @@ def('piccropl', pic('cropl'))
 def('piccropr', pic('cropr'))
 def('piccropt', pic('cropt'))
 def('piccropb', pic('cropb'))
-const BLIP: Record<string, string> = { pngblip: 'png', jpegblip: 'jpeg', emfblip: 'emf', wmetafile: 'wmf', dibitmap: 'dib', wbitmap: 'other', macpict: 'mac', pmmetafile: 'other' }
+const BLIP: Record<string, string> = dict({ pngblip: 'png', jpegblip: 'jpeg', emfblip: 'emf', wmetafile: 'wmf', dibitmap: 'dib', wbitmap: 'other', macpict: 'mac', pmmetafile: 'other' })
 for (const [w, k] of Object.entries(BLIP)) def(w, (r) => {
   if (r.pict) r.pict.kind = k
 })

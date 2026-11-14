@@ -3,6 +3,8 @@
  * where DOMParser is unavailable). Element names are reduced to local names;
  * attributes too, except relationship-namespace ones which become `r:<local>`.
  */
+import { dict } from './dict'
+
 export type Attrs = Record<string, string>
 
 export interface SaxHandler {
@@ -17,7 +19,7 @@ const REL_NS = new Set([
   'http://purl.oclc.org/ooxml/officeDocument/relationships',
 ])
 
-const ENTITIES: Record<string, string> = { lt: '<', gt: '>', amp: '&', quot: '"', apos: "'" }
+const ENTITIES: Record<string, string> = dict({ lt: '<', gt: '>', amp: '&', quot: '"', apos: "'" })
 
 export function decodeEntities(s: string): string {
   if (s.indexOf('&') < 0) return s
@@ -31,6 +33,15 @@ export function decodeEntities(s: string): string {
 }
 
 const isWs = (c: number) => c === 32 || c === 9 || c === 10 || c === 13
+
+/**
+ * Elements inside one another, at most: far more than a document nests (tables in tables in text boxes stay under a
+ * hundred), and few enough for the code that walks a tree by calling itself. A file nested deeper is refused with an
+ * error, instead of running out of stack somewhere later.
+ */
+export const MAX_XML_DEPTH = 1024
+
+export const tooDeep = () => new Error(`XML nested deeper than ${MAX_XML_DEPTH} elements`)
 
 export class SaxParser {
   private buf = ''
@@ -151,7 +162,7 @@ export class SaxParser {
       stop = end - 1
     }
     if (this.skipDepth >= 0) {
-      if (!self) this.depth++
+      if (!self && ++this.depth > MAX_XML_DEPTH) throw tooDeep()
       return
     }
     let k = start
@@ -192,7 +203,7 @@ export class SaxParser {
       if (!skip) this.h.close(name)
       return
     }
-    this.depth++
+    if (++this.depth > MAX_XML_DEPTH) throw tooDeep()
     if (skip) this.skipDepth = this.depth
   }
 

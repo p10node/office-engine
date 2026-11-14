@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties }
 import type { Block, DocxMeta, HFKind, PageSetup, Paragraph } from '../../core/docx/types'
 import { DEFAULT_PAGE } from '../../core/docx/types'
 import { registerHost } from '../../collab/hosts'
+import { safeHref } from '../../core/url'
 import type { DocumentClient } from '../../core/worker/client'
 import { claimFocus, lowerIndex, useForceUpdate, useIsoLayoutEffect, useScroll, useSize } from '../common/hooks'
 import { useFileOps, useSelectAll, useViewer } from '../common/Slots'
@@ -600,8 +601,10 @@ export function DocxView({ client, onStatus, initialZoom = 'fit' }: DocxViewProp
       { label: 'Delete', icon: 'trash', disabled: !ranged || !!s?.img, run: () => editor.deleteSelection() },
     )
     if (s?.link) {
+      // the target comes from the file (or a peer): opened only when it is a web, mail or phone link, like a click on it
+      const href = safeHref(s.link)
       items.push(
-        { label: 'Open link', icon: 'external', sep: true, run: () => window.open(s.link, '_blank', 'noopener') },
+        { label: 'Open link', icon: 'external', sep: true, disabled: !href, run: () => href && window.open(href, '_blank', 'noopener,noreferrer') },
         { label: 'Edit link…', icon: 'link', hint: `${MOD}K`, run: askLink },
         { label: 'Remove link', icon: 'unlink', run: () => void editor.setLink(null) },
       )

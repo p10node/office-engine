@@ -2,6 +2,7 @@ import { el, getAttr, isNode, kidsOf, parseRaw, rootEl, serialize } from './raw'
 import { normalize, ZipArchive } from './zip'
 import { rebuildZip, type PartData } from './zipwrite'
 import { kids, parseXml, type XEl } from './xml'
+import { dict } from './dict'
 
 export type DocKind = 'docx' | 'xlsx' | 'pptx'
 
@@ -14,7 +15,7 @@ export interface Rel {
 
 export type Rels = Map<string, Rel>
 
-const MIME: Record<string, string> = {
+const MIME: Record<string, string> = dict({
   png: 'image/png',
   jpg: 'image/jpeg',
   jpeg: 'image/jpeg',
@@ -34,7 +35,7 @@ const MIME: Record<string, string> = {
   mp3: 'audio/mpeg',
   wav: 'audio/wav',
   m4a: 'audio/mp4',
-}
+})
 
 export function mimeOf(path: string): string {
   const ext = path.split('.').pop()?.toLowerCase() ?? ''

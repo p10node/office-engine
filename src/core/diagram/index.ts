@@ -11,9 +11,10 @@ import { DiagramError } from './svg'
 export type DiagramLang = 'mermaid' | 'plantuml' | 'graphviz'
 export type { Rendered as DiagramImage } from './graph'
 export { DiagramError } from './svg'
+import { dict } from '../dict'
 
 /** file extensions of diagram sources */
-export const DIAGRAM_EXT: Record<string, DiagramLang> = {
+export const DIAGRAM_EXT: Record<string, DiagramLang> = dict({
   mmd: 'mermaid',
   mermaid: 'mermaid',
   puml: 'plantuml',
@@ -23,10 +24,10 @@ export const DIAGRAM_EXT: Record<string, DiagramLang> = {
   wsd: 'plantuml',
   dot: 'graphviz',
   gv: 'graphviz',
-}
+})
 
 /** Markdown code fence languages */
-export const FENCE_LANG: Record<string, DiagramLang> = {
+export const FENCE_LANG: Record<string, DiagramLang> = dict({
   mermaid: 'mermaid',
   mmd: 'mermaid',
   plantuml: 'plantuml',
@@ -35,7 +36,7 @@ export const FENCE_LANG: Record<string, DiagramLang> = {
   dot: 'graphviz',
   graphviz: 'graphviz',
   gv: 'graphviz',
-}
+})
 
 export const DIAGRAM_NAME: Record<DiagramLang, string> = { mermaid: 'Mermaid', plantuml: 'PlantUML', graphviz: 'Graphviz' }
 

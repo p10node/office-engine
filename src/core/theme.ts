@@ -1,3 +1,5 @@
+import { fileHex } from './color'
+import { dict } from './dict'
 import { kid, kids, path, type XEl } from './xml'
 
 export interface Theme {
@@ -25,12 +27,14 @@ export const DEFAULT_THEME: Theme = {
 export function parseTheme(root: XEl | undefined): Theme {
   if (!root) return DEFAULT_THEME
   const te = kid(root, 'themeElements')
-  const colors: Record<string, string> = { ...DEFAULT_THEME.colors }
+  // keyed by the scheme's element names, read by names a file gives (schemeClr, clrMap): no inherited keys
+  const colors: Record<string, string> = dict({ ...DEFAULT_THEME.colors })
   for (const c of kid(te, 'clrScheme')?.c ?? []) {
     const v = c.c[0]
     if (!v) continue
-    if (v.n === 'srgbClr' && v.a.val) colors[c.n] = '#' + v.a.val.toLowerCase()
-    else if (v.n === 'sysClr') colors[c.n] = '#' + (v.a.lastClr ?? (v.a.val === 'window' ? 'ffffff' : '000000')).toLowerCase()
+    // a color that is not hex digits keeps the default one (see `fileHex`)
+    const hex = v.n === 'srgbClr' ? fileHex(v.a.val) : v.n === 'sysClr' ? fileHex(v.a.lastClr) ?? (v.a.val === 'window' ? '#ffffff' : '#000000') : undefined
+    if (hex) colors[c.n] = hex
   }
   const fs = kid(te, 'fontScheme')
   const fmt = kid(te, 'fmtScheme')

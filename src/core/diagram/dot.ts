@@ -5,6 +5,7 @@
  */
 import { GraphBuilder, renderGraph, type Dir, type GEdge, type GNode, type Graph, type Head, type NodeStyle, type Rendered, type Section, type Shape } from './graph'
 import { color, DiagramError, labelText } from './svg'
+import { dict } from '../dict'
 
 type Tok = { t: 'id' | 'str' | 'html' | 'p'; v: string }
 
@@ -98,19 +99,19 @@ interface Scope {
   name?: string
 }
 
-const SHAPES: Record<string, Shape> = {
+const SHAPES: Record<string, Shape> = dict({
   box: 'rect', rect: 'rect', rectangle: 'rect', square: 'rect', msquare: 'rect', ellipse: 'ellipse', oval: 'ellipse', egg: 'ellipse', circle: 'circle',
   doublecircle: 'doublecircle', point: 'point', plaintext: 'none', plain: 'none', none: 'none', underline: 'none', diamond: 'diamond', mdiamond: 'diamond',
   hexagon: 'hexagon', octagon: 'octagon', doubleoctagon: 'octagon', tripleoctagon: 'octagon', triangle: 'triangle', invtriangle: 'triangle', parallelogram: 'lean-r',
   trapezium: 'trap-b', invtrapezium: 'trap-t', house: 'trap-b', invhouse: 'trap-t', cylinder: 'cylinder', note: 'note', tab: 'folder', folder: 'folder', box3d: 'box3d',
   component: 'component', cds: 'flag', larrow: 'flag', rarrow: 'flag', lpromoter: 'flag', rpromoter: 'flag', star: 'circle', record: 'rect', mrecord: 'round', underlinebox: 'rect',
-}
+})
 
-const ARROWS: Record<string, Head> = {
+const ARROWS: Record<string, Head> = dict({
   normal: 'arrow', inv: 'arrow', empty: 'triangle', onormal: 'triangle', invempty: 'triangle', oinv: 'triangle', vee: 'open', open: 'open', halfopen: 'open',
   diamond: 'diamond', odiamond: 'odiamond', ediamond: 'odiamond', box: 'diamond', obox: 'odiamond', dot: 'circle', odot: 'ocircle', invdot: 'circle', invodot: 'ocircle',
   none: 'none', crow: 'many', tee: 'one', curve: 'open', icurve: 'open',
-}
+})
 
 function arrow(v: string | undefined, dflt: Head): Head {
   if (!v) return dflt

@@ -5,6 +5,10 @@
 import type { Inline, RunSet, RunStyle } from './docx/types'
 import { cssFont } from './fonts'
 import { safeHref } from './url'
+import { dict } from './dict'
+
+/** elements inside one another, at most (as in browsers); the code that reads the tree walks it by calling itself */
+const MAX_HTML_DEPTH = 512
 
 export interface PastedPara {
   runs: Inline[]
@@ -219,7 +223,7 @@ const LATIN1 =
   'nbsp iexcl cent pound curren yen brvbar sect uml copy ordf laquo not shy reg macr deg plusmn sup2 sup3 acute micro para middot cedil sup1 ordm raquo frac14 frac12 frac34 iquest ' +
   'Agrave Aacute Acirc Atilde Auml Aring AElig Ccedil Egrave Eacute Ecirc Euml Igrave Iacute Icirc Iuml ETH Ntilde Ograve Oacute Ocirc Otilde Ouml times Oslash Ugrave Uacute Ucirc Uuml Yacute THORN szlig ' +
   'agrave aacute acirc atilde auml aring aelig ccedil egrave eacute ecirc euml igrave iacute icirc iuml eth ntilde ograve oacute ocirc otilde ouml divide oslash ugrave uacute ucirc uuml yacute thorn yuml'
-const ENTITIES: Record<string, number> = {
+const ENTITIES: Record<string, number> = dict({
   ...Object.fromEntries(LATIN1.split(' ').map((n, k) => [n, 0xa0 + k])),
   amp: 38, lt: 60, gt: 62, quot: 34, apos: 39,
   OElig: 338, oelig: 339, Scaron: 352, scaron: 353, Yuml: 376, fnof: 402, circ: 710, tilde: 732,
@@ -227,7 +231,7 @@ const ENTITIES: Record<string, number> = {
   lsquo: 8216, rsquo: 8217, sbquo: 8218, ldquo: 8220, rdquo: 8221, bdquo: 8222, dagger: 8224, Dagger: 8225, bull: 8226,
   hellip: 8230, permil: 8240, prime: 8242, Prime: 8243, lsaquo: 8249, rsaquo: 8250, euro: 8364, trade: 8482,
   larr: 8592, uarr: 8593, rarr: 8594, darr: 8595, harr: 8596, minus: 8722, infin: 8734, ne: 8800, le: 8804, ge: 8805,
-}
+})
 
 export function decodeEntities(s: string): string {
   if (!s.includes('&')) return s
@@ -307,7 +311,8 @@ export function parseHtml(html: string): HNode {
     else if (HEADING.test(tag) && HEADING.test(top().tagName)) stack.pop()
     const el = element(tag, attrText)
     top().childNodes.push(el)
-    if (!VOID.has(tag)) stack.push(el)
+    // nested deeper than a browser's own parser allows: what follows stays at this depth
+    if (!VOID.has(tag) && stack.length < MAX_HTML_DEPTH) stack.push(el)
   }
   const n = html.length
   let i = html.charCodeAt(0) === 0xfeff ? 1 : 0

@@ -9,6 +9,7 @@
  * Snapshots (see `compact`) bound the history: register one with `hub.snapshot()` and new clients
  * open its file and only replay the batches after it, while the hub drops older batches.
  */
+import { cssColor } from '../core/color'
 import { PEER_COLORS, type Batch, type ClientMsg, type Entry, type HubMsg, type PeerInfo, type Snapshot } from './protocol'
 
 export interface RoomState {
@@ -127,7 +128,8 @@ export class CollabHub {
       room = r
       site = msg.site && msg.site < r.nextSite && !r.peers.has(msg.site) ? msg.site : r.nextSite++
       const used = new Set([...r.peers.values()].map((p) => p.info.color))
-      const color = msg.user.color || PEER_COLORS.find((c) => !used.has(c)) || PEER_COLORS[site % PEER_COLORS.length]
+      // a color the client asks for is relayed to every peer, whose views use it as CSS: a color, or one of the palette
+      const color = cssColor(msg.user.color) || PEER_COLORS.find((c) => !used.has(c)) || PEER_COLORS[site % PEER_COLORS.length]
       const info: PeerInfo = { ...msg.user, site, color }
       let from: number
       let ctx: Entry[] | undefined

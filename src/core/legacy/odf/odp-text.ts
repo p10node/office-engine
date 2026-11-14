@@ -6,6 +6,7 @@
 import { escAttr, escText } from '../../raw'
 import { children, toHex, toPt, type ONode } from './common'
 import { attr, emu, fontName, isDark, overlay, solid, type OdpStyles, type Props } from './odp-style'
+import { dict } from '../../dict'
 
 /** what text needs from the converter */
 export interface TextEnv {
@@ -103,7 +104,7 @@ interface Label {
   align?: [number, number]
 }
 
-const NUM: Record<string, string> = { '1': 'arabic', a: 'alphaLc', A: 'alphaUc', i: 'romanLc', I: 'romanUc' }
+const NUM: Record<string, string> = dict({ '1': 'arabic', a: 'alphaLc', A: 'alphaUc', i: 'romanLc', I: 'romanUc' })
 const SYMBOL_FONTS = /^(open|star)symbol$/i
 
 function levelStyle(list: ONode | undefined, depth: number): ONode | undefined {
@@ -185,8 +186,8 @@ function indents(pp: Props, label: Label | undefined, labeled: boolean): [number
 
 // ---------------------------------------------------------------- runs
 
-const UNDERLINE: Record<string, string> = { solid: 'sng', dotted: 'dotted', dash: 'dash', 'long-dash': 'dashLong', 'dot-dash': 'dotDash', 'dot-dot-dash': 'dotDotDash', wave: 'wavy' }
-const HEAVY: Record<string, string> = { sng: 'heavy', dotted: 'dottedHeavy', dash: 'dashHeavy', dashLong: 'dashLongHeavy', dotDash: 'dotDashHeavy', dotDotDash: 'dotDotDashHeavy', wavy: 'wavyHeavy' }
+const UNDERLINE: Record<string, string> = dict({ solid: 'sng', dotted: 'dotted', dash: 'dash', 'long-dash': 'dashLong', 'dot-dash': 'dotDash', 'dot-dot-dash': 'dotDotDash', wave: 'wavy' })
+const HEAVY: Record<string, string> = dict({ sng: 'heavy', dotted: 'dottedHeavy', dash: 'dashHeavy', dashLong: 'dashLongHeavy', dotDash: 'dotDashHeavy', dotDotDash: 'dotDotDashHeavy', wavy: 'wavyHeavy' })
 
 /** the text color: its own, else automatic (white on a dark highlight or background) */
 function textColor(t: Record<string, string>, env: TextEnv): string {
@@ -350,7 +351,7 @@ function runsXml(segs: Seg[], env: TextEnv): string {
 
 // ---------------------------------------------------------------- paragraphs
 
-const ALGN: Record<string, string> = { start: 'l', left: 'l', center: 'ctr', end: 'r', right: 'r', justify: 'just' }
+const ALGN: Record<string, string> = dict({ start: 'l', left: 'l', center: 'ctr', end: 'r', right: 'r', justify: 'just' })
 
 /** paragraph properties: attributes and children (spacing, bullet) of a:pPr / a:lvlNpPr */
 /** paragraph properties; `color` is the color of the text a label without its own takes */
@@ -514,7 +515,7 @@ export function lvlXml(n: number, pp: Props, list: ONode | undefined, env: TextE
   return `<a:lvl${n}pPr${attrs}>${kids}${rPrXml('defRPr', pp.t, env)}</a:lvl${n}pPr>`
 }
 
-const ANCHOR: Record<string, string> = { top: 't', middle: 'ctr', bottom: 'b', justify: 'ctr' }
+const ANCHOR: Record<string, string> = dict({ top: 't', middle: 'ctr', bottom: 'b', justify: 'ctr' })
 
 /**
  * a:bodyPr of graphic properties: insets, anchoring, wrapping, autofit. `frame`: a text frame (draw:frame), whose

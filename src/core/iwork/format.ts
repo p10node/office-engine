@@ -4,6 +4,7 @@
  */
 import { formatGeneral, formatValue } from '../xlsx/numfmt'
 import type { Msg } from './proto'
+import { dict } from '../dict'
 
 export type CellKind = 'number' | 'text' | 'date' | 'bool' | 'duration' | 'error' | 'rich'
 
@@ -27,9 +28,9 @@ export const FMT = {
 const EPOCH_DAYS = 36892
 export const toSerial = (seconds: number) => EPOCH_DAYS + seconds / 86400
 
-const CURRENCY: Record<string, string> = {
+const CURRENCY: Record<string, string> = dict({
   USD: '$', EUR: '€', GBP: '£', JPY: '¥', CNY: '¥', VND: '₫', KRW: '₩', INR: '₹', RUB: '₽', BRL: 'R$', CHF: 'CHF ', CAD: 'CA$', AUD: 'A$', HKD: 'HK$', SGD: 'S$', THB: '฿', ILS: '₪', TRY: '₺', PHP: '₱', NGN: '₦', UAH: '₴', PLN: 'zł',
-}
+})
 
 /** decimal places "auto" */
 const AUTO = 253

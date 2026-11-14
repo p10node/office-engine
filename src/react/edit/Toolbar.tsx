@@ -12,6 +12,7 @@ import {
   type ReactNode,
   type RefObject,
 } from 'react'
+import { cssColor } from '../../core/color'
 
 const BORDER_GRID = <path d="M4 4h16v16H4zM12 4v16M4 12h16" strokeDasharray="1.2 2.6" opacity={0.5} strokeWidth={1.4} />
 
@@ -669,7 +670,7 @@ export function ColorBtn(props: { icon: string; title: string; value?: string; o
     <span ref={ref} className="de-tb-color">
       <button type="button" className={open ? 'de-tb de-tb-on' : 'de-tb'} title={props.title} aria-label={props.title} aria-expanded={open} onMouseDown={keep} onClick={() => setOpen((o) => !o)}>
         <Icon name={props.icon} />
-        <span className="de-tb-swatch" style={{ background: props.value ?? 'transparent' }} />
+        <span className="de-tb-swatch" style={{ background: cssColor(props.value) ?? 'transparent' }} />
       </button>
       {/* kept mounted while the OS picker is open (the popover closes) */}
       <input ref={pickerRef} type="color" className="de-tb-native" tabIndex={-1} aria-hidden />

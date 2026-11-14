@@ -2,6 +2,7 @@ import type { Theme } from '../theme'
 import { kid, kids, num, type XEl } from '../xml'
 import { readPPr, readRPr } from './styles'
 import type { ParaStyle, RunStyle } from './types'
+import { dict } from '../dict'
 
 export interface Level {
   start: number
@@ -21,11 +22,11 @@ interface NumInstance {
 }
 
 // Private-use bullet glyphs from Symbol/Wingdings fonts → Unicode
-const BULLETS: Record<string, string> = {
+const BULLETS: Record<string, string> = dict({
   '\uF0B7': '•', '\uF0A7': '▪', '\uF0A8': '□', '\uF0FC': '✓', '\uF0D8': '➢', '\uF076': '❖', '\uF0E0': '➔',
   '\uF06E': '■', '\uF071': '□', '\uF072': '❑', '\uF075': '◆', '\uF0E8': '➔', '\uF0F0': '⇨', '\uF0AE': '→',
   '\uF02D': '–', '\u00B7': '•', '\uF0BE': '—', '\uF06F': '○', '\uF09F': '•', '\uF0FE': '☑', o: '◦',
-}
+})
 
 function roman(n: number): string {
   const map: [number, string][] = [

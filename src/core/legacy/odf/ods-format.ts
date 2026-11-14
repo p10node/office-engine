@@ -3,9 +3,10 @@
  * boolean-style, text-style, with their style:map conditions) → Excel number format codes.
  */
 import { children, textContent, type OdfStyles, type ONode } from './common'
+import { dict } from '../../dict'
 
 /** Excel's named format colors */
-const COLOR: Record<string, string> = {
+const COLOR: Record<string, string> = dict({
   '000000': 'Black',
   FFFFFF: 'White',
   FF0000: 'Red',
@@ -14,7 +15,7 @@ const COLOR: Record<string, string> = {
   FFFF00: 'Yellow',
   FF00FF: 'Magenta',
   '00FFFF': 'Cyan',
-}
+})
 
 const flag = (v: string | undefined) => v === 'true'
 const int = (v: string | undefined, def = 0) => {
@@ -227,7 +228,7 @@ export function excelFormat(styles: OdfStyles, name: string | undefined): string
   return code === 'General' || code.length > 255 ? undefined : code
 }
 
-const SYMBOL: Record<string, string> = { USD: '$', EUR: '€', GBP: '£', JPY: '¥', CNY: '¥', INR: '₹', KRW: '₩', RUB: '₽', VND: '₫', CHF: 'CHF' }
+const SYMBOL: Record<string, string> = dict({ USD: '$', EUR: '€', GBP: '£', JPY: '¥', CNY: '¥', INR: '₹', KRW: '₩', RUB: '₽', VND: '₫', CHF: 'CHF' })
 
 /** the format of a value with no data style that Excel would otherwise show as a bare number */
 export function fallbackFormat(valueType: string, value: number, currency?: string): string | undefined {

@@ -1,7 +1,64 @@
+import { dict, own } from './dict'
 import { kid, kids, num, type XEl } from './xml'
 import type { Theme } from './theme'
 
 export type RGB = [number, number, number]
+
+// ---- colors given to CSS -----------------------------------------------------
+//
+// A color read from a file, sent by a collaboration peer or pasted is text someone else chose. Given to CSS as it
+// is, "fff url(https://example.com/x.png)" makes a valid `background` and the browser requests the address: whoever
+// made the file learns who opened it, and when. So a color is checked where it is read (`fileHex`) and again where
+// it is given to a property that can load something (`cssColor`, `cssPaint`).
+
+const HEX_COLOR = /^#(?:[0-9a-f]{3,4}|[0-9a-f]{6}|[0-9a-f]{8})$/i
+const FN_COLOR = /^(?:rgb|hsl)a?\([-+.,%/\s0-9]{1,80}\)$/i
+const NAMED_COLOR = /^[a-z]{3,30}$/i
+
+/**
+ * `v` when it is a color and nothing more: hex digits, rgb() / hsl() of numbers, or a color name. Anything else
+ * (another function, a second value, a quote) is undefined.
+ */
+export function cssColor(v: unknown): string | undefined {
+  if (typeof v !== 'string' || v.length > 100) return undefined
+  const s = v.trim()
+  return HEX_COLOR.test(s) || FN_COLOR.test(s) || NAMED_COLOR.test(s) ? s : undefined
+}
+
+const G_NUM = '-?\\d+(?:\\.\\d+)?(?:e[-+]?\\d+)?'
+const G_COLOR = '(?:#[0-9a-f]{3,8}|rgba?\\([-.,\\s0-9]{1,60}\\))'
+const GRADIENT = new RegExp(`^(?:linear-gradient\\(${G_NUM}deg|radial-gradient\\(circle)(?:,\\s*${G_COLOR}(?:\\s+${G_NUM}%)?){1,400}\\)$`, 'i')
+
+/** `v` when it is a color, or a gradient the way the engine writes one (an angle or `circle`, then color stops). */
+export function cssPaint(v: unknown): string | undefined {
+  const c = cssColor(v)
+  if (c !== undefined || typeof v !== 'string' || v.length > 20000) return c
+  const s = v.trim()
+  return GRADIENT.test(s) ? s : undefined
+}
+
+/**
+ * The color a file gives as hex digits ("FF0000", SpreadsheetML's "FFFF0000" with its alpha first, or "F00"), as
+ * `#rrggbb`; undefined for anything that is not exactly that.
+ */
+export function fileHex(v: string | undefined): string | undefined {
+  if (typeof v !== 'string') return undefined
+  if (/^[0-9a-f]{6}$/i.test(v)) return '#' + v.toLowerCase()
+  if (/^[0-9a-f]{8}$/i.test(v)) return '#' + v.slice(2).toLowerCase()
+  if (/^[0-9a-f]{3}$/i.test(v)) return '#' + v.toLowerCase().replace(/./g, '$&$&')
+  return undefined
+}
+
+/**
+ * A color an edit asks for (`#rrggbb` or `#rgb`, from the color picker, a peer or a host application) as the six
+ * upper-case digits an Office file stores; undefined for anything else, which is then not written: the text would
+ * become part of the file's XML and of what everyone who opens it is shown.
+ */
+export function officeHex(color: string | null | undefined): string | undefined {
+  const digits = typeof color === 'string' ? color.replace(/^#/, '') : ''
+  const hex = digits.length === 8 ? undefined : fileHex(digits)
+  return hex?.slice(1).toUpperCase()
+}
 
 export function hexToRgb(hex: string): RGB {
   const h = hex.replace('#', '')
@@ -56,12 +113,12 @@ export function applyTint(hex: string, tint: number): string {
   return rgbToHex(hslToRgb(hsl))
 }
 
-const PRESET: Record<string, string> = {
+const PRESET: Record<string, string> = dict({
   black: '#000000', white: '#ffffff', red: '#ff0000', green: '#008000', blue: '#0000ff', yellow: '#ffff00',
   cyan: '#00ffff', magenta: '#ff00ff', gray: '#808080', grey: '#808080', ltGray: '#d3d3d3', dkGray: '#a9a9a9',
   orange: '#ffa500', purple: '#800080', navy: '#000080', maroon: '#800000', olive: '#808000', teal: '#008080',
   silver: '#c0c0c0', lime: '#00ff00', pink: '#ffc0cb', brown: '#a52a2a', gold: '#ffd700',
-}
+})
 
 export interface ColorCtx {
   theme?: Theme
@@ -71,7 +128,7 @@ export interface ColorCtx {
   phClr?: string
 }
 
-const DEFAULT_MAP: Record<string, string> = { bg1: 'lt1', tx1: 'dk1', bg2: 'lt2', tx2: 'dk2' }
+const DEFAULT_MAP: Record<string, string> = dict({ bg1: 'lt1', tx1: 'dk1', bg2: 'lt2', tx2: 'dk2' })
 
 export const COLOR_TAGS = new Set(['srgbClr', 'schemeClr', 'sysClr', 'prstClr', 'scrgbClr', 'hslClr'])
 
@@ -80,10 +137,10 @@ export function drawingColor(el: XEl, ctx: ColorCtx): string | undefined {
   let hex: string | undefined
   switch (el.n) {
     case 'srgbClr':
-      hex = '#' + (el.a.val ?? '000000').toLowerCase()
+      hex = el.a.val === undefined ? '#000000' : fileHex(el.a.val)
       break
     case 'sysClr':
-      hex = '#' + (el.a.lastClr ?? (el.a.val === 'window' ? 'ffffff' : '000000'))
+      hex = fileHex(el.a.lastClr) ?? (el.a.val === 'window' ? '#ffffff' : '#000000')
       break
     case 'prstClr':
       hex = PRESET[el.a.val] ?? '#000000'
@@ -102,13 +159,14 @@ export function drawingColor(el: XEl, ctx: ColorCtx): string | undefined {
       const v = el.a.val
       if (v === 'phClr') hex = ctx.phClr
       else {
-        const mapped = ctx.clrMap?.[v] ?? DEFAULT_MAP[v] ?? v
-        hex = ctx.theme?.colors[mapped] ?? ctx.theme?.colors[v]
+        const mapped = own(ctx.clrMap, v) ?? DEFAULT_MAP[v] ?? v
+        hex = own(ctx.theme?.colors, mapped) ?? own(ctx.theme?.colors, v)
       }
       break
     }
   }
-  if (!hex) return undefined
+  // a theme or placeholder color comes from elsewhere: it is a color too, or it is not used
+  if (!hex || cssColor(hex) === undefined) return undefined
   return applyMods(hex, el)
 }
 
@@ -187,16 +245,15 @@ export function sheetColor(el: XEl | undefined, theme: Theme | undefined, indexe
   if (!el || el.a.auto === '1' || el.a.auto === 'true') return undefined
   let hex: string | undefined
   if (el.a.rgb) {
-    const v = el.a.rgb
-    hex = '#' + (v.length === 8 ? v.slice(2) : v)
+    hex = fileHex(el.a.rgb)
   } else if (el.a.theme !== undefined) {
-    hex = theme?.colors[XL_THEME_ORDER[Number(el.a.theme)] ?? ''] ?? undefined
+    hex = own(theme?.colors, XL_THEME_ORDER[Number(el.a.theme)])
   } else if (el.a.indexed !== undefined) {
     const i = Number(el.a.indexed)
     if (i === 64 || i === 65) return undefined
     hex = indexed[i]
   }
-  if (!hex) return undefined
+  if (!hex || cssColor(hex) === undefined) return undefined
   const tint = num(el.a.tint) ?? 0
   return tint ? applyTint(hex, tint) : hex.toLowerCase()
 }
@@ -204,5 +261,6 @@ export function sheetColor(el: XEl | undefined, theme: Theme | undefined, indexe
 export function customIndexed(stylesRoot: XEl | undefined): string[] {
   const list = kids(kid(kid(stylesRoot, 'colors'), 'indexedColors'), 'rgbColor')
   if (!list.length) return INDEXED
-  return list.map((c) => '#' + (c.a.rgb ?? 'FF000000').slice(-6))
+  // a color that is not hex digits keeps the palette's own at that index
+  return list.map((c, i) => fileHex(c.a.rgb) ?? INDEXED[i] ?? '#000000')
 }

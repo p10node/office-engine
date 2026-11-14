@@ -1,4 +1,4 @@
-import { colorOf, type ColorCtx } from '../color'
+import { colorOf, officeHex, type ColorCtx } from '../color'
 import { readPptxComments, PptxComments, writePptxComments } from './comments'
 import { cssFont } from '../fonts'
 import { OpcPackage, relOfType, type Rels } from '../opc'
@@ -10,6 +10,7 @@ import {
   clone, el, escText, getAttr, isNode, kidOf, kidsOf, local, parseRaw, prefixOf, removeKids, serialize, setAttr, setOrdered, walkOoxml,
   type RChild, type RNode,
 } from '../raw'
+import { dict, own } from '../dict'
 
 export const PPTX_MIME = 'application/vnd.openxmlformats-officedocument.presentationml.presentation'
 
@@ -20,7 +21,7 @@ interface GenPara {
 
 const RPR_KIDS = ['ln', 'noFill', 'solidFill', 'gradFill', 'blipFill', 'pattFill', 'grpFill', 'effectLst', 'effectDag', 'highlight', 'uLnTx', 'uLn', 'uFillTx', 'uFill', 'latin', 'ea', 'cs', 'sym', 'hlinkClick', 'hlinkMouseOver', 'rtl', 'extLst']
 const FILLS = new Set(['noFill', 'solidFill', 'gradFill', 'blipFill', 'pattFill', 'grpFill'])
-const ALGN_OUT: Record<string, string> = { left: 'l', center: 'ctr', right: 'r', justify: 'just' }
+const ALGN_OUT: Record<string, string> = dict({ left: 'l', center: 'ctr', right: 'r', justify: 'just' })
 
 function findShape(nodes: RChild[], sid: number): RNode | undefined {
   let found: RNode | undefined
@@ -46,10 +47,12 @@ function applyPRunSet(rPr: RNode, set: PRunSet, A: string) {
   if (set.strike !== undefined) setAttr(rPr, 'strike', set.strike ? 'sngStrike' : 'noStrike')
   if ('color' in set) {
     removeKids(rPr, (l) => FILLS.has(l))
-    if (set.color) setOrdered(rPr, el(A + 'solidFill', {}, [el(A + 'srgbClr', { val: set.color.replace('#', '').toUpperCase() })]), 'solidFill', RPR_KIDS)
+    const color = officeHex(set.color)
+    if (color) setOrdered(rPr, el(A + 'solidFill', {}, [el(A + 'srgbClr', { val: color })]), 'solidFill', RPR_KIDS)
   }
   if (set.font) setOrdered(rPr, el(A + 'latin', { typeface: set.font }), 'latin', RPR_KIDS)
-  if ('hl' in set) setOrdered(rPr, set.hl ? el(A + 'highlight', {}, [el(A + 'srgbClr', { val: set.hl.replace('#', '').toUpperCase() })]) : undefined, 'highlight', RPR_KIDS)
+  const hl = officeHex(set.hl)
+  if ('hl' in set) setOrdered(rPr, hl ? el(A + 'highlight', {}, [el(A + 'srgbClr', { val: hl })]) : undefined, 'highlight', RPR_KIDS)
   if ('baseline' in set) setAttr(rPr, 'baseline', set.baseline ? String(Math.round(set.baseline * 1000)) : undefined)
 }
 
@@ -137,11 +140,11 @@ interface Layout extends Part {
   clrMap: Record<string, string>
 }
 
-const ALGN: Record<string, TPara['algn']> = { l: 'left', ctr: 'center', r: 'right', just: 'justify', dist: 'justify', thaiDist: 'justify', justLow: 'justify' }
-const DASH: Record<string, string> = {
+const ALGN: Record<string, TPara['algn']> = dict({ l: 'left', ctr: 'center', r: 'right', just: 'justify', dist: 'justify', thaiDist: 'justify', justLow: 'justify' })
+const DASH: Record<string, string> = dict({
   dash: '4 3', sysDash: '3 1', dot: '1 1', sysDot: '1 1', lgDash: '8 3', dashDot: '4 3 1 3', lgDashDot: '8 3 1 3',
   lgDashDotDot: '8 3 1 3 1 3', sysDashDot: '3 1 1 1', sysDashDotDot: '3 1 1 1 1 1',
-}
+})
 
 function nvPr(el: XEl): XEl | undefined {
   const nv = el.c[0]
@@ -560,7 +563,7 @@ class SlideRenderer {
       const ref = kid(bg, 'bgRef')
       if (ref) return this.themeFill(ref, part.rels)
     }
-    return { t: 'solid', c: this.theme.colors[this.clrMap.bg1 ?? 'lt1'] ?? '#ffffff' }
+    return { t: 'solid', c: own(this.theme.colors, this.clrMap.bg1 ?? 'lt1') ?? '#ffffff' }
   }
 
   // ---- text styles -----------------------------------------------------------
@@ -969,7 +972,7 @@ class SlideRenderer {
         let fill: Fill | undefined
         let bold: boolean | undefined
         let color: string | undefined
-        const bord: Record<string, Stroke | undefined> = {}
+        const bord: Record<string, Stroke | undefined> = dict({})
         for (const sp of parts(ri, ci)) {
           const tcStyle = kid(sp, 'tcStyle')
           const f = this.fill(kid(tcStyle, 'fill'), part.rels) ?? this.themeFill(kid(tcStyle, 'fillRef'), part.rels)

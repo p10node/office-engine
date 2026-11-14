@@ -9,10 +9,11 @@ import { DIAGRAM_EXT, DIAGRAM_NAME, FENCE_LANG, renderDiagrams, sniffDiagram, ty
 import { decodeEntities, htmlToParas } from './html'
 import { BlobSource, type ByteSource } from './source'
 import { isSvg, svgImage } from './svgfile'
+import { dict } from './dict'
 
 export type PlainFormat = 'csv' | 'tsv' | 'text' | 'markdown' | 'html' | 'svg' | DiagramLang
 
-export const PLAIN_EXT: Record<string, PlainFormat> = {
+export const PLAIN_EXT: Record<string, PlainFormat> = dict({
   csv: 'csv',
   tsv: 'tsv',
   tab: 'tsv',
@@ -27,7 +28,7 @@ export const PLAIN_EXT: Record<string, PlainFormat> = {
   svg: 'svg',
   svgz: 'svg',
   ...DIAGRAM_EXT,
-}
+})
 
 /** packages (Office, iWork, OpenDocument), the legacy binary formats and RTF: never read as text */
 const PACKAGE_EXT = new Set([
@@ -37,7 +38,7 @@ const PACKAGE_EXT = new Set([
   'odt', 'ott', 'fodt', 'ods', 'ots', 'fods', 'odp', 'otp', 'fodp',
 ])
 
-const MIME: Record<string, PlainFormat> = {
+const MIME: Record<string, PlainFormat> = dict({
   'text/csv': 'csv',
   'application/csv': 'csv',
   'text/comma-separated-values': 'csv',
@@ -52,7 +53,7 @@ const MIME: Record<string, PlainFormat> = {
   'text/x-mermaid': 'mermaid',
   'text/vnd.mermaid': 'mermaid',
   'text/x-plantuml': 'plantuml',
-}
+})
 
 /** formats shown with their source next to the document (and edited there) */
 export const HAS_SOURCE = new Set<PlainFormat>(['markdown', 'html', 'svg', 'mermaid', 'plantuml', 'graphviz'])

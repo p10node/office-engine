@@ -1,3 +1,4 @@
+import { cssColor } from '../../core/color'
 import type { Block, Inline, Paragraph, RunStyle, Table } from '../../core/docx/types'
 import type { SlideModel, TextBody } from '../../core/pptx/types'
 import { safeHref } from '../../core/url'
@@ -134,7 +135,10 @@ function styled(text: string, s: RunStyle, heading: boolean, link = false): stri
   if (s.strike || s.dstrike) h = `<s>${h}</s>`
   if (s.va === 'sup') h = `<sup>${h}</sup>`
   else if (s.va === 'sub') h = `<sub>${h}</sub>`
-  const css = [s.color && s.color !== 'auto' && !heading && !link ? `color:${s.color}` : '', s.hl && s.hl !== 'none' ? `background:${s.hl}` : ''].filter(Boolean).join(';')
+  // into a style attribute of the page written out: colors only (the text of anything else would be markup there)
+  const color = cssColor(s.color)
+  const hl = cssColor(s.hl)
+  const css = [color && color !== 'auto' && !heading && !link ? `color:${color}` : '', hl && hl !== 'none' ? `background:${hl}` : ''].filter(Boolean).join(';')
   return css ? `<span style="${css}">${h}</span>` : h
 }
 

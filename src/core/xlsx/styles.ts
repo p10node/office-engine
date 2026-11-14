@@ -4,6 +4,7 @@ import type { Theme } from '../theme'
 import { kid, kids, num, onOff, type XEl } from '../xml'
 import { BUILTIN_FORMATS } from './numfmt'
 import type { CellCss } from './types'
+import { dict } from '../dict'
 
 interface Font {
   b?: boolean
@@ -15,11 +16,11 @@ interface Font {
   name?: string
 }
 
-const BORDER: Record<string, [number, string]> = {
+const BORDER: Record<string, [number, string]> = dict({
   thin: [1, 'solid'], medium: [2, 'solid'], thick: [3, 'solid'], dashed: [1, 'dashed'], dotted: [1, 'dotted'],
   double: [3, 'double'], hair: [1, 'dotted'], mediumDashed: [2, 'dashed'], dashDot: [1, 'dashed'],
   mediumDashDot: [2, 'dashed'], dashDotDot: [1, 'dotted'], mediumDashDotDot: [2, 'dotted'], slantDashDot: [2, 'dashed'],
-}
+})
 
 export interface XfInfo {
   numFmt: string

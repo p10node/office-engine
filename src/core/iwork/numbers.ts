@@ -15,15 +15,16 @@ import type { Msg } from './proto'
 import { fillColor, hexColor, IworkStyles, type CharProps } from './styles'
 import { anchors, readTable, tableLook, type CellStroke, type IworkCell, type IworkTable } from './table'
 import { cleanText } from './text'
+import { dict } from '../dict'
 
 const TABLE_INFO = 6000
 /** cells read per table (the largest Numbers tables: 1,000,000 rows × 1,000 columns) */
 const MAX_CELLS = 5_000_000
 const NS = 'xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"'
 const SML = 'application/vnd.openxmlformats-officedocument.spreadsheetml'
-const ALIGN: Record<string, string> = { left: 'left', right: 'right', center: 'center', both: 'justify' }
+const ALIGN: Record<string, string> = dict({ left: 'left', right: 'right', center: 'center', both: 'justify' })
 const VALIGN = ['top', 'center', 'bottom']
-const U: Record<string, string> = { single: 'single', double: 'double', wave: 'single' }
+const U: Record<string, string> = dict({ single: 'single', double: 'double', wave: 'single' })
 
 /** an Excel border side from a line width (pt) */
 const borderStyle = (s: CellStroke) => (s.width <= 1.25 ? 'thin' : s.width <= 2.5 ? 'medium' : 'thick')

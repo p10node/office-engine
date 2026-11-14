@@ -7,10 +7,11 @@ import { escAttr } from '../../raw'
 import type { Part } from '../../iwork/ooxml'
 import { child, children, isEl, type ONode, textContent, toHex, toPt } from './common'
 import { border, borders, emu } from './odt-props'
+import { dict } from '../../dict'
 
 // ---------------------------------------------------------------- media
 
-const EXT_MIME: Record<string, string> = {
+const EXT_MIME: Record<string, string> = dict({
   png: 'image/png',
   jpeg: 'image/jpeg',
   gif: 'image/gif',
@@ -20,7 +21,7 @@ const EXT_MIME: Record<string, string> = {
   tiff: 'image/tiff',
   wmf: 'image/x-wmf',
   emf: 'image/x-emf',
-}
+})
 
 /** the image format of some bytes (undefined: not one Word or a browser shows, e.g. StarView metafiles) */
 export function sniffImage(b: Uint8Array): string | undefined {
@@ -104,7 +105,7 @@ export interface DrawHost {
 
 const SHAPES = new Set(['draw:custom-shape', 'draw:rect', 'draw:ellipse', 'draw:circle', 'draw:polygon', 'draw:regular-polygon'])
 
-const H_REL: Record<string, string> = {
+const H_REL: Record<string, string> = dict({
   page: 'page',
   'page-content': 'margin',
   'page-start-margin': 'leftMargin',
@@ -112,18 +113,18 @@ const H_REL: Record<string, string> = {
   'paragraph-start-margin': 'leftMargin',
   'paragraph-end-margin': 'rightMargin',
   char: 'character',
-}
+})
 
-const V_REL: Record<string, string> = {
+const V_REL: Record<string, string> = dict({
   page: 'page',
   'page-content': 'margin',
   char: 'line',
   line: 'line',
   baseline: 'line',
   text: 'line',
-}
+})
 
-const PRESET: Record<string, string> = {
+const PRESET: Record<string, string> = dict({
   rectangle: 'rect',
   ellipse: 'ellipse',
   circle: 'ellipse',
@@ -146,7 +147,7 @@ const PRESET: Record<string, string> = {
   heart: 'heart',
   smiley: 'smileyFace',
   cloud: 'cloud',
-}
+})
 
 const A_NS = 'xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"'
 

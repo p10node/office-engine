@@ -15,6 +15,7 @@ import { rtfToDocx } from './rtf'
 import { biffToXlsx, xlsToXlsx } from './xls'
 
 export { isCfb } from './cfb'
+import { dict } from '../dict'
 
 export type LegacyFormat = 'doc' | 'xls' | 'ppt' | 'rtf' | OdfFormat
 
@@ -22,7 +23,7 @@ export type LegacyFormat = 'doc' | 'xls' | 'ppt' | 'rtf' | OdfFormat
 export const LEGACY_KIND: Record<LegacyFormat, DocKind> = { doc: 'docx', rtf: 'docx', odt: 'docx', xls: 'xlsx', ods: 'xlsx', ppt: 'pptx', odp: 'pptx' }
 
 /** extensions of the formats (with their templates and flat XML variants) */
-export const LEGACY_EXT: Record<string, LegacyFormat> = {
+export const LEGACY_EXT: Record<string, LegacyFormat> = dict({
   doc: 'doc',
   dot: 'doc',
   xls: 'xls',
@@ -40,7 +41,7 @@ export const LEGACY_EXT: Record<string, LegacyFormat> = {
   odp: 'odp',
   otp: 'odp',
   fodp: 'odp',
-}
+})
 
 /** "{\rtf" */
 export function isRtf(b: Uint8Array): boolean {

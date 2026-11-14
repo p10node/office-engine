@@ -5,6 +5,7 @@
  */
 import { escAttr } from '../../raw'
 import { child, children, type ONode, toHex, toPt } from './common'
+import { dict } from '../../dict'
 
 export const XML_HEAD = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n'
 
@@ -249,7 +250,7 @@ export interface Bdr {
   space: number
 }
 
-const BORDER_STYLE: Record<string, string> = {
+const BORDER_STYLE: Record<string, string> = dict({
   solid: 'single',
   double: 'double',
   'double-thin': 'double',
@@ -262,7 +263,7 @@ const BORDER_STYLE: Record<string, string> = {
   ridge: 'threeDEmboss',
   inset: 'inset',
   outset: 'outset',
-}
+})
 
 const NONE: Bdr = { val: 'nil', sz: 0, color: 'auto', space: 0 }
 
@@ -352,9 +353,9 @@ export interface PP {
   pageNumber?: number
 }
 
-const TAB_TYPE: Record<string, Tab['val']> = { left: 'left', center: 'center', right: 'right', char: 'decimal' }
+const TAB_TYPE: Record<string, Tab['val']> = dict({ left: 'left', center: 'center', right: 'right', char: 'decimal' })
 
-const LEADER: Record<string, string> = { '.': 'dot', '-': 'hyphen', _: 'underscore', '·': 'middleDot', '…': 'dot' }
+const LEADER: Record<string, string> = dict({ '.': 'dot', '-': 'hyphen', _: 'underscore', '·': 'middleDot', '…': 'dot' })
 
 /** The paragraph properties a `style:paragraph-properties` element sets. */
 export function paraProps(el: ONode | undefined): PP {
@@ -534,7 +535,7 @@ export const decodeName = (n: string) => n.replace(/_([0-9a-fA-F]{2,4})_/g, (_, 
 export const displayName = (s: ONode) => s.attrs['style:display-name'] || decodeName(s.attrs['style:name'] ?? '')
 
 /** OpenDocument (LibreOffice) style names → Word built-in style id and name */
-const BUILTIN: Record<string, [string, string]> = {
+const BUILTIN: Record<string, [string, string]> = dict({
   standard: ['Normal', 'Normal'],
   'default paragraph style': ['Normal', 'Normal'],
   'default style': ['Normal', 'Normal'],
@@ -555,7 +556,7 @@ const BUILTIN: Record<string, [string, string]> = {
   'strong emphasis': ['Strong', 'Strong'],
   emphasis: ['Emphasis', 'Emphasis'],
   'list paragraph': ['ListParagraph', 'List Paragraph'],
-}
+})
 
 /** the Word style id and name an OpenDocument style name maps to */
 export function wordStyleName(display: string): [string, string] {

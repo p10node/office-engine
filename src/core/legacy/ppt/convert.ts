@@ -16,6 +16,7 @@ import { dateText, emu, lvlXml, TextStyles, type TextEnv } from './paragraphs'
 import { Rec, RT } from './records'
 import { allShapes, drawingOf, DrawingWriter, shapeInfo, type ShapeInfo } from './shapes'
 import { progTag, TX, type TextBlock } from './text'
+import { dict } from '../../dict'
 
 const NS =
   'xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" ' +
@@ -28,7 +29,7 @@ const PML = 'application/vnd.openxmlformats-officedocument.presentationml'
 /** PowerPoint's default scheme: background, text, shadow, title, fill, accent, hyperlink, followed hyperlink */
 const DEFAULT_SCHEME = ['FFFFFF', '000000', '808080', '000000', '00CC99', '3333CC', 'CCCCFF', 'B2B2B2']
 const JUMPS = ['', 'nextslide', 'previousslide', 'firstslide', 'lastslide', 'lastslideviewed', 'endshow']
-const MEDIA_TYPES: Record<string, string> = { png: 'image/png', jpg: 'image/jpeg', bmp: 'image/bmp', gif: 'image/gif', emf: 'image/x-emf', wmf: 'image/x-wmf', tiff: 'image/tiff' }
+const MEDIA_TYPES: Record<string, string> = dict({ png: 'image/png', jpg: 'image/jpeg', bmp: 'image/bmp', gif: 'image/gif', emf: 'image/x-emf', wmf: 'image/x-wmf', tiff: 'image/tiff' })
 
 /** placeholder types: footers on masters, title / body on masters and title masters */
 const FOOTER_PH = new Set([7, 8, 9])

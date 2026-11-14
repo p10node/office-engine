@@ -15,6 +15,7 @@ import { frameBox, RECT, type Box } from './odp-geom'
 import { Media } from './odp-media'
 import { emu, fillXml, fontName, isDark, OdpStyles, solid, type Props } from './odp-style'
 import { bodyPrXml, lvlXml, rPrXml, type TextEnv } from './odp-text'
+import { dict } from '../../dict'
 
 const PML = 'application/vnd.openxmlformats-officedocument.presentationml'
 const NS =
@@ -28,11 +29,11 @@ const MAX_SLIDES = 5000
 const MAX_MASTERS = 200
 
 /** placeholder types of the master's frames */
-const PH: Record<string, string> = {
+const PH: Record<string, string> = dict({
   'date-time': '<p:ph type="dt" sz="half" idx="10"/>',
   footer: '<p:ph type="ftr" sz="quarter" idx="11"/>',
   'page-number': '<p:ph type="sldNum" sz="quarter" idx="12"/>',
-}
+})
 const FOOTERS = ['date-time', 'footer', 'page-number']
 
 type LayoutKind = 'obj' | 'title' | 'blank'

@@ -501,7 +501,7 @@ describe('pictures', () => {
     expect(textOf(p)).toBe('before<img> after')
     expect(p.runs.find((r) => r.t === 'img')).toMatchObject({ w: 72, h: 36 })
     const box = p.runs.find((r) => r.t === 'box')!
-    expect(box).toMatchObject({ w: 144, h: 72, fill: '#FF0000' })
+    expect(box).toMatchObject({ w: 144, h: 72, fill: '#ff0000' })
     expect(textOf((box as { blocks: Block[] }).blocks[0] as Paragraph)).toBe('boxed text')
     expect(await part(rtf)).toContain('<wp:positionH relativeFrom="column"><wp:posOffset>63500</wp:posOffset></wp:positionH>')
   })

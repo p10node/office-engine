@@ -5,6 +5,7 @@
  */
 import { children, toPt, type ONode } from './common'
 import { emu } from './odp-style'
+import { dict } from '../../dict'
 
 /** a frame on the slide, in points; rotation clockwise in degrees */
 export interface Box {
@@ -432,7 +433,7 @@ function exactPreset(type: string, mods: number[], w: number, h: number): string
 }
 
 /** custom shape types → presets, for shapes without a path (their default look) */
-const BY_NAME: Record<string, string> = {
+const BY_NAME: Record<string, string> = dict({
   rectangle: 'rect', 'round-rectangle': 'roundRect', ellipse: 'ellipse', circle: 'ellipse', diamond: 'diamond', 'isosceles-triangle': 'triangle',
   'right-triangle': 'rtTriangle', parallelogram: 'parallelogram', trapezoid: 'trapezoid', hexagon: 'hexagon', octagon: 'octagon', pentagon: 'pentagon',
   cross: 'plus', star4: 'star4', star5: 'star5', star6: 'star6', star8: 'star8', star12: 'star12', star24: 'star24', 'right-arrow': 'rightArrow',
@@ -445,10 +446,10 @@ const BY_NAME: Record<string, string> = {
   'right-brace': 'rightBrace', 'flowchart-decision': 'flowChartDecision', 'flowchart-terminator': 'flowChartTerminator',
   'flowchart-alternate-process': 'flowChartAlternateProcess', 'flowchart-data': 'flowChartInputOutput', 'flowchart-document': 'flowChartDocument',
   'flowchart-connector': 'flowChartConnector', 'flowchart-magnetic-disk': 'flowChartMagneticDisk', 'mso-spt202': 'rect', 'mso-spt1': 'rect',
-}
+})
 
 /** the parameters each enhanced-path command takes */
-const ARITY: Record<string, number> = { M: 2, L: 2, C: 6, Q: 4, T: 6, U: 6, A: 8, B: 8, W: 8, V: 8, X: 2, Y: 2, G: 4 }
+const ARITY: Record<string, number> = dict({ M: 2, L: 2, C: 6, Q: 4, T: 6, U: 6, A: 8, B: 8, W: 8, V: 8, X: 2, Y: 2, G: 4 })
 
 /** runs an enhanced path; false when it can't be read */
 function runEnhanced(path: string, eq: Equations, b: PathBuilder): boolean {

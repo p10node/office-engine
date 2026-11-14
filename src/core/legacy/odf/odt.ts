@@ -15,6 +15,7 @@ import { coreXml, endWithParagraph, isoDate, notesXml, NS, packDocx, type PackPa
 import { pPrXml, rPrXml, type RP, tw, XML_HEAD } from './odt-props'
 import { OdtStyles, type RunCtx } from './odt-styles'
 import { tableXml, type TableHost } from './odt-table'
+import { dict } from '../../dict'
 
 /** nesting of blocks (tables in frames in cells…) followed */
 const MAX_DEPTH = 40
@@ -81,8 +82,8 @@ const SKIP_INLINE = new Set([
 
 const DRAW = new Set(['draw:frame', 'draw:a', 'draw:g', 'draw:custom-shape', 'draw:rect', 'draw:ellipse', 'draw:circle', 'draw:polygon', 'draw:regular-polygon'])
 
-const PAGE_FMT: Record<string, string> = { '1': 'decimal', i: 'lowerRoman', I: 'upperRoman', a: 'lowerLetter', A: 'upperLetter' }
-const FIELD_SWITCH: Record<string, string> = { i: ' \\* roman', I: ' \\* ROMAN', a: ' \\* alphabetic', A: ' \\* ALPHABETIC' }
+const PAGE_FMT: Record<string, string> = dict({ '1': 'decimal', i: 'lowerRoman', I: 'upperRoman', a: 'lowerLetter', A: 'upperLetter' })
+const FIELD_SWITCH: Record<string, string> = dict({ i: ' \\* roman', I: ' \\* ROMAN', a: ' \\* alphabetic', A: ' \\* ALPHABETIC' })
 
 /** a numbering instance (w:num) and its counters */
 interface ListInst {

@@ -2,15 +2,17 @@
  * PPTX structural editing: shape geometry/fill/order, inserts, and slide list operations.
  * Works on the raw slide XML so everything not touched is preserved.
  */
+import { officeHex } from '../color'
 import { relOfType, relsPathFor, relsOfType } from '../opc'
 import {
   clone, el, getAttr, relIdAttrs, isNode, kidOf, kidsOf, local, parseRaw, prefixOf, removeKids, rootEl, serialize, setAttr, setOrdered, walkOoxml,
-  escText, type RChild, type RNode,
+  escAttr, escText, type RChild, type RNode,
 } from '../raw'
 import { EMU_PER_PX } from '../units'
 import type { PptxPresentation } from './parser'
 import { COMMENT_EXT_RE, isCommentRel } from './comments'
 import type { Box, PresentationMeta, ShapeOp, SlideModel, SlideOp } from './types'
+import { dict } from '../dict'
 
 const NS_A = 'http://schemas.openxmlformats.org/drawingml/2006/main'
 const NS_R = 'http://schemas.openxmlformats.org/officeDocument/2006/relationships'
@@ -19,7 +21,7 @@ const SLIDE_REL = 'http://schemas.openxmlformats.org/officeDocument/2006/relatio
 const LAYOUT_REL = 'http://schemas.openxmlformats.org/officeDocument/2006/relationships/slideLayout'
 const IMAGE_REL = 'http://schemas.openxmlformats.org/officeDocument/2006/relationships/image'
 const SLIDE_CT = 'application/vnd.openxmlformats-officedocument.presentationml.slide+xml'
-const IMG_TYPES: Record<string, string> = { png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', gif: 'image/gif', bmp: 'image/bmp', svg: 'image/svg+xml', webp: 'image/webp' }
+const IMG_TYPES: Record<string, string> = dict({ png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', gif: 'image/gif', bmp: 'image/bmp', svg: 'image/svg+xml', webp: 'image/webp' })
 const SPPR_ORDER = ['xfrm', 'custGeom', 'prstGeom', 'noFill', 'solidFill', 'gradFill', 'blipFill', 'pattFill', 'grpFill', 'ln', 'effectLst', 'effectDag', 'scene3d', 'sp3d', 'extLst']
 const FILLS = new Set(['noFill', 'solidFill', 'gradFill', 'blipFill', 'pattFill', 'grpFill'])
 
@@ -98,7 +100,8 @@ function setXfrm(node: RNode, box: Box, A: string, P: string) {
 }
 
 function fillXml(A: string, color: string | null) {
-  return color ? el(A + 'solidFill', {}, [el(A + 'srgbClr', { val: color.replace('#', '').toUpperCase() })]) : el(A + 'noFill')
+  const hex = officeHex(color)
+  return hex ? el(A + 'solidFill', {}, [el(A + 'srgbClr', { val: hex })]) : el(A + 'noFill')
 }
 
 function shapeXml(kind: string, id: number, box: Box, A: string, P: string, text?: string, rid?: string): string {
@@ -106,7 +109,7 @@ function shapeXml(kind: string, id: number, box: Box, A: string, P: string, text
   if (kind === 'image') {
     return (
       `<${P}pic><${P}nvPicPr><${P}cNvPr id="${id}" name="Picture ${id}"/><${P}cNvPicPr><${A}picLocks noChangeAspect="1"/></${P}cNvPicPr><${P}nvPr/></${P}nvPicPr>` +
-      `<${P}blipFill><${A}blip r:embed="${rid}"/><${A}stretch><${A}fillRect/></${A}stretch></${P}blipFill>` +
+      `<${P}blipFill><${A}blip r:embed="${escAttr(rid ?? '')}"/><${A}stretch><${A}fillRect/></${A}stretch></${P}blipFill>` +
       `<${P}spPr><${A}xfrm>${off}</${A}xfrm><${A}prstGeom prst="rect"><${A}avLst/></${A}prstGeom></${P}spPr></${P}pic>`
     )
   }
@@ -126,7 +129,8 @@ function shapeXml(kind: string, id: number, box: Box, A: string, P: string, text
   }
   return (
     `<${P}sp><${P}nvSpPr><${P}cNvPr id="${id}" name="Shape ${id}"/><${P}cNvSpPr/><${P}nvPr/></${P}nvSpPr>` +
-    `<${P}spPr><${A}xfrm>${off}</${A}xfrm><${A}prstGeom prst="${kind}"><${A}avLst/></${A}prstGeom></${P}spPr>` +
+    // the kind is written into the slide as it is asked for (by a peer too): as an attribute value, nothing more
+    `<${P}spPr><${A}xfrm>${off}</${A}xfrm><${A}prstGeom prst="${escAttr(String(kind))}"><${A}avLst/></${A}prstGeom></${P}spPr>` +
     `<${P}style><${A}lnRef idx="2"><${A}schemeClr val="accent1"><${A}shade val="50000"/></${A}schemeClr></${A}lnRef><${A}fillRef idx="1"><${A}schemeClr val="accent1"/></${A}fillRef>` +
     `<${A}effectRef idx="0"><${A}schemeClr val="accent1"/></${A}effectRef><${A}fontRef idx="minor"><${A}schemeClr val="lt1"/></${A}fontRef></${P}style>` +
     `<${P}txBody><${A}bodyPr rtlCol="0" anchor="ctr"/><${A}lstStyle/><${A}p><${A}pPr algn="ctr"/>${text ? `<${A}r><${A}rPr lang="en-US" dirty="0"/><${A}t>${escText(text)}</${A}t></${A}r>` : ''}<${A}endParaRPr lang="en-US" dirty="0"/></${A}p></${P}txBody></${P}sp>`
@@ -138,8 +142,10 @@ function setBackground(nodes: RChild[], A: string, P: string, color: string | nu
   const cSld = kidOf(rootEl(nodes), 'cSld')
   if (!cSld) return
   cSld.c = cSld.c.filter((c) => !(isNode(c) && local(c.q) === 'bg'))
-  if (!color) return
-  const bg = parseRaw(`<${P}bg><${P}bgPr><${A}solidFill><${A}srgbClr val="${color.replace('#', '').toUpperCase()}"/></${A}solidFill><${A}effectLst/></${P}bgPr></${P}bg>`)[0] as RNode
+  // hex digits only: the color is written into the slide's XML as it is
+  const hex = officeHex(color)
+  if (!hex) return
+  const bg = parseRaw(`<${P}bg><${P}bgPr><${A}solidFill><${A}srgbClr val="${hex}"/></${A}solidFill><${A}effectLst/></${P}bgPr></${P}bg>`)[0] as RNode
   cSld.c.unshift(bg)
   cSld.self = false
 }

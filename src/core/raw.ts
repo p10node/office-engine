@@ -2,6 +2,8 @@
  * Byte-faithful XML tree: keeps qualified names, raw attribute text and raw
  * (still-escaped) text, so untouched parts serialize back exactly as read.
  */
+import { MAX_XML_DEPTH, tooDeep } from './xml'
+
 export interface RNode {
   q: string
   a: string
@@ -63,7 +65,11 @@ export function parseRaw(xml: string): RChild[] {
     const qn = m ? m[0] : body
     const node: RNode = { q: qn, a: body.slice(qn.length), c: [], self }
     push(node)
-    if (!self) stack.push(node)
+    if (!self) {
+      // `serialize` and the edits walk the tree by calling themselves
+      if (stack.length >= MAX_XML_DEPTH) throw tooDeep()
+      stack.push(node)
+    }
     i = gt + 1
   }
   return root

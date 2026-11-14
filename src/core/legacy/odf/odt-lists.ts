@@ -2,6 +2,7 @@
 import { escAttr } from '../../raw'
 import { child, children, type ONode, toPt } from './common'
 import { rPrXml, tw, type RP } from './odt-props'
+import { dict } from '../../dict'
 
 /** what a list level does to its paragraphs */
 export interface Level {
@@ -15,7 +16,7 @@ export interface Level {
   start: number
 }
 
-const NUM_FMT: Record<string, string> = { '1': 'decimal', a: 'lowerLetter', A: 'upperLetter', i: 'lowerRoman', I: 'upperRoman', '': 'none' }
+const NUM_FMT: Record<string, string> = dict({ '1': 'decimal', a: 'lowerLetter', A: 'upperLetter', i: 'lowerRoman', I: 'upperRoman', '': 'none' })
 
 function numFmt(f: string | undefined): string {
   if (f === undefined) return 'decimal'

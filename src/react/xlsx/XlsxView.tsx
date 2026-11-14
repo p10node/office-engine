@@ -20,6 +20,8 @@ import { sheetPrintable } from './print'
 import { useCommentsCtl, useCommentsState, type CommentsCtl, type PlacedThread } from '../comments/Comments'
 import { COMMENT_KEYS } from '../comments/CommentsPanel'
 import type { CommentThread } from '../../core/comments'
+import { cssColor, cssPaint } from '../../core/color'
+import { dict } from '../../core/dict'
 
 const BLOCK = 128
 const HH = 22
@@ -460,7 +462,7 @@ function rotated(rot: number): CSSProperties {
   return { display: 'inline-block', transform: `rotate(${-rot}deg)`, whiteSpace: 'nowrap' }
 }
 
-const JUSTIFY: Record<string, string> = { center: 'center', right: 'flex-end', left: 'flex-start', justify: 'flex-start' }
+const JUSTIFY: Record<string, string> = dict({ center: 'center', right: 'flex-end', left: 'flex-start', justify: 'flex-start' })
 
 interface Selection {
   ar: number
@@ -501,7 +503,7 @@ function canPoint(e: EditState, fc: FormulaContext | null): boolean {
 const REF_COLORS = ['#1a73e8', '#e8710a', '#9334e6', '#188038', '#d93025', '#12a4b8', '#e52592', '#b08800']
 const refKey = (t: string) => t.replace(/\$/g, '').toUpperCase()
 
-const ARROWS: Record<string, [number, number]> = { ArrowUp: [-1, 0], ArrowDown: [1, 0], ArrowLeft: [0, -1], ArrowRight: [0, 1] }
+const ARROWS: Record<string, [number, number]> = dict({ ArrowUp: [-1, 0], ArrowDown: [1, 0], ArrowLeft: [0, -1], ArrowRight: [0, 1] })
 
 export const rectOf = (s: Selection): Range => ({ r0: Math.min(s.ar, s.fr), c0: Math.min(s.ac, s.fc), r1: Math.max(s.ar, s.fr), c1: Math.max(s.ac, s.fc) })
 
@@ -671,6 +673,8 @@ function SheetGrid({ store, sheet, meta, client, edit, setEdit, hold, onSheet }:
       let text = raw
       if (kind === 1 && raw) text = fitNumber(raw, cw - 6, fontPx(css.fontSize, basePx))
       const { textAlign, textRotate, alignItems, whiteSpace, ...rest } = css
+      // the fill is a color or a gradient of colors, never more: `background` would load a url() in it
+      if (rest.background !== undefined) rest.background = cssPaint(rest.background) as string
       const rot = Number(textRotate ?? 0)
       const justify = (textAlign && JUSTIFY[textAlign as string]) || (kind === 1 ? 'flex-end' : kind === 2 ? 'center' : 'flex-start')
       let ov = 0
@@ -689,7 +693,7 @@ function SheetGrid({ store, sheet, meta, client, edit, setEdit, hold, onSheet }:
         alignItems: (alignItems as string) ?? 'flex-end',
         textAlign: (textAlign as CSSProperties['textAlign']) ?? undefined,
       }
-      if (color) style.color = color
+      if (color) style.color = cssColor(color)
       if (whiteSpace) style.whiteSpace = whiteSpace as CSSProperties['whiteSpace']
       // a merged cell hides the gridlines inside it (its own right / bottom edge lines stay visible)
       if (merged && !rest.background) style.background = 'linear-gradient(#fff, #fff) 0 0 / calc(100% - 1px) calc(100% - 1px) no-repeat'
@@ -757,10 +761,12 @@ function SheetGrid({ store, sheet, meta, client, edit, setEdit, hold, onSheet }:
       const y0 = rowAxis.pos(b.r0)
       const x1 = colAxis.pos(b.c1 + 1)
       const y1 = rowAxis.pos(b.r1 + 1)
+      // a peer's color is what the peer chose: used only when it is a color
+      const pc = cssColor(p.color)
       out.push(
-        <div key={'peer' + p.site} className="de-peer-range" style={{ left: x0 - ox - 1, top: y0 - oy - 1, width: x1 - x0 + 1, height: y1 - y0 + 1, borderColor: p.color, background: p.color + '12' }}>
+        <div key={'peer' + p.site} className="de-peer-range" style={{ left: x0 - ox - 1, top: y0 - oy - 1, width: x1 - x0 + 1, height: y1 - y0 + 1, borderColor: pc, background: pc && pc + '12' }}>
           {p.ar >= rr0 && p.ar <= rr1 && p.ac >= cc0 && p.ac <= cc1 && (
-            <span className="de-peer-tag" style={{ background: p.color }}>
+            <span className="de-peer-tag" style={{ background: pc }}>
               {p.name}
             </span>
           )}

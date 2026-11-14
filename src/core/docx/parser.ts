@@ -1,3 +1,4 @@
+import { fileHex } from '../color'
 import { OpcPackage, relOfType, type Rels } from '../opc'
 import type { RNode } from '../raw'
 import { parseTheme, type Theme } from '../theme'
@@ -466,9 +467,10 @@ export class Converter {
     if (txbx.length) {
       const blocks = this.boxBlocks(txbx)
       const spPr = desc(gd, 'spPr')
-      const fill = path(spPr, 'solidFill', 'srgbClr')?.a.val
-      const ln = path(spPr, 'ln', 'solidFill', 'srgbClr')?.a.val
-      sink.push({ t: 'box', w, h, blocks, fill: fill ? '#' + fill : undefined, border: ln ? `1px solid #${ln}` : undefined, src })
+      // hex digits only: the fill becomes a CSS background, where anything more (a url()) would be loaded
+      const fill = fileHex(path(spPr, 'solidFill', 'srgbClr')?.a.val)
+      const ln = fileHex(path(spPr, 'ln', 'solidFill', 'srgbClr')?.a.val)
+      sink.push({ t: 'box', w, h, blocks, fill, border: ln ? `1px solid ${ln}` : undefined, src })
       return
     }
     const blip = desc(gd, 'blip')

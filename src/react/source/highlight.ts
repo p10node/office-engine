@@ -3,6 +3,7 @@
  * PlantUML and Graphviz DOT. Line based, with the few states that span lines (code blocks, block comments).
  */
 import type { PlainFormat } from '../../core/plain'
+import { dict } from '../../core/dict'
 
 /** [class, text]; class '' is plain text. Classes: c comment, k keyword, s string, o arrow / operator, n number,
  * h heading, a attribute / link, t tag, m code, b bold, i italic */
@@ -69,7 +70,7 @@ const RULES: Record<Lang, Rule[]> = {
   ]),
 }
 
-const FENCE: Record<string, Lang> = { mermaid: 'mermaid', mmd: 'mermaid', plantuml: 'plantuml', puml: 'plantuml', uml: 'plantuml', dot: 'graphviz', graphviz: 'graphviz', gv: 'graphviz', html: 'html' }
+const FENCE: Record<string, Lang> = dict({ mermaid: 'mermaid', mmd: 'mermaid', plantuml: 'plantuml', puml: 'plantuml', uml: 'plantuml', dot: 'graphviz', graphviz: 'graphviz', gv: 'graphviz', html: 'html' })
 
 function scan(line: string, rules: Rule[], out: Token[]) {
   let plain = ''

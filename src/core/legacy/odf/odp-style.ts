@@ -4,6 +4,7 @@
  */
 import { escAttr } from '../../raw'
 import { child, children, toHex, toPt, type ONode, type OdfPackage, type OdfStyles } from './common'
+import { dict } from '../../dict'
 
 /** points → EMU, within the range of DrawingML coordinates */
 export const emu = (pt: number) => (Number.isFinite(pt) ? Math.round(Math.max(-2147483647, Math.min(2147483647, pt * 12700))) : 0)
@@ -24,7 +25,7 @@ export interface Props {
 
 export const noProps = (): Props => ({ g: {}, p: {}, t: {}, c: {} })
 
-const GROUP: Record<string, 'g' | 'p' | 't' | 'c'> = {
+const GROUP: Record<string, 'g' | 'p' | 't' | 'c'> = dict({
   'style:graphic-properties': 'g',
   'loext:graphic-properties': 'g',
   'style:drawing-page-properties': 'g',
@@ -33,7 +34,7 @@ const GROUP: Record<string, 'g' | 'p' | 't' | 'c'> = {
   'style:table-column-properties': 'c',
   'style:table-row-properties': 'c',
   'style:table-cell-properties': 'c',
-}
+})
 
 /** attributes that stand for the same thing: the later style's wins */
 const PAIRS: [string, string][] = [
@@ -469,7 +470,7 @@ export function shadowXml(g: Record<string, string>): string {
 }
 
 /** a font family name for DrawingML: quotes and fallbacks dropped, metric-compatible Office fonts for the Liberation ones */
-const FONT_ALIAS: Record<string, string> = {
+const FONT_ALIAS: Record<string, string> = dict({
   'liberation sans': 'Arial',
   'liberation serif': 'Times New Roman',
   'liberation mono': 'Courier New',
@@ -479,7 +480,7 @@ const FONT_ALIAS: Record<string, string> = {
   arimo: 'Arial',
   tinos: 'Times New Roman',
   cousine: 'Courier New',
-}
+})
 
 export function fontName(v: string | undefined): string | undefined {
   if (!v) return undefined

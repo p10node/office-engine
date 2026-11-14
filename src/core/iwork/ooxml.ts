@@ -3,6 +3,7 @@ import { isWebImage } from '../opc'
 import { escAttr } from '../raw'
 import type { IworkPackage } from './iwa'
 import type { Msg } from './proto'
+import { dict } from '../dict'
 
 export const XML_HEAD = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n'
 const REL = 'http://schemas.openxmlformats.org/officeDocument/2006/relationships'
@@ -34,7 +35,7 @@ export class Part {
   }
 }
 
-const MIME: Record<string, string> = {
+const MIME: Record<string, string> = dict({
   png: 'image/png',
   jpg: 'image/jpeg',
   jpeg: 'image/jpeg',
@@ -44,7 +45,7 @@ const MIME: Record<string, string> = {
   svg: 'image/svg+xml',
   webp: 'image/webp',
   ico: 'image/x-icon',
-}
+})
 
 /** `<Default>` content types of the media extensions */
 export function mediaTypes(names: Iterable<string>): string {

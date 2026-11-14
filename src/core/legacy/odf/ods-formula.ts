@@ -5,6 +5,7 @@
  * function names: the ODF namespaced ones (COM.MICROSOFT.…, LEGACY.…) lose their prefix, and Excel 2010+
  * functions get the `_xlfn.` prefix Excel stores them with.
  */
+import { dict } from '../../dict'
 
 /** Excel 2010+ functions: stored with `_xlfn.` (or `_xlfn._xlws.`) in XLSX */
 const XLFN = new Set(
@@ -26,13 +27,13 @@ const XLFN = new Set(
 const XLWS = new Set(['FILTER', 'SORT', 'SORTBY', 'UNIQUE'])
 
 /** ODF names that differ from Excel's */
-const RENAME: Record<string, string> = {
+const RENAME: Record<string, string> = dict({
   CEILING: 'CEILING.MATH',
   FLOOR: 'FLOOR.MATH',
   FORMULA: 'FORMULATEXT',
   'ISO.CEILING': 'ISO.CEILING',
   'ERROR.TYPE': 'ERROR.TYPE',
-}
+})
 
 /** Excel's name of an ODF function name, with the prefix XLSX stores it with */
 export function excelFunction(name: string): string {

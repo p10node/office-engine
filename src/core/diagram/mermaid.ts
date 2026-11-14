@@ -7,6 +7,7 @@ import { GraphBuilder, type Dir, type GEdge, type GNode, type Graph, type Head, 
 import { renderModel, type Model } from './model'
 import { SequenceBuilder, type MsgHead, type PKind } from './sequence'
 import { color, DiagramError, labelText, unMarkdown } from './svg'
+import { dict } from '../dict'
 
 /** Lines without comments and directives; the front matter title. */
 function prepare(src: string): { lines: string[]; title?: string } {
@@ -59,7 +60,7 @@ export const renderMermaid = (src: string): Rendered => renderModel(parseMermaid
 
 // ---------------------------------------------------------------- shared
 
-const DIRS: Record<string, Dir> = { TB: 'TB', TD: 'TB', BT: 'BT', LR: 'LR', RL: 'RL' }
+const DIRS: Record<string, Dir> = dict({ TB: 'TB', TD: 'TB', BT: 'BT', LR: 'LR', RL: 'RL' })
 
 /** Mermaid label text: quotes, markdown strings, icons, entities and <br> */
 export function mText(raw: string): string {
@@ -135,7 +136,7 @@ const OPENERS: [string, string[], Shape[]][] = [
   ['>', [']'], ['flag']],
 ]
 
-const NEW_SHAPES: Record<string, Shape> = {
+const NEW_SHAPES: Record<string, Shape> = dict({
   rect: 'rect', rectangle: 'rect', proc: 'rect', process: 'rect', rounded: 'round', event: 'round', stadium: 'stadium', pill: 'stadium', terminal: 'stadium',
   subproc: 'subroutine', subprocess: 'subroutine', subroutine: 'subroutine', 'fr-rect': 'subroutine', cyl: 'cylinder', cylinder: 'cylinder', database: 'cylinder', db: 'cylinder',
   circle: 'circle', circ: 'circle', 'dbl-circ': 'doublecircle', 'double-circle': 'doublecircle', diam: 'diamond', diamond: 'diamond', decision: 'diamond', question: 'diamond',
@@ -143,7 +144,7 @@ const NEW_SHAPES: Record<string, Shape> = {
   'trap-b': 'trap-b', trapezoid: 'trap-b', priority: 'trap-b', 'trap-t': 'trap-t', 'inv-trapezoid': 'trap-t', manual: 'trap-t', odd: 'flag', flag: 'flag', doc: 'note', document: 'note',
   'sm-circ': 'start', start: 'start', 'small-circle': 'start', 'fr-circ': 'end', stop: 'end', 'framed-circle': 'end', fork: 'bar', join: 'bar', text: 'none', 'notch-rect': 'note', card: 'note',
   'f-circ': 'point', junction: 'point',
-}
+})
 
 interface FlowCtx {
   b: GraphBuilder
@@ -214,7 +215,7 @@ function readNode(s: string, i: number, ctx: FlowCtx): [string, number] | null {
   return [id, i]
 }
 
-const HEAD: Record<string, Head> = { '>': 'arrow', o: 'circle', x: 'cross' }
+const HEAD: Record<string, Head> = dict({ '>': 'arrow', o: 'circle', x: 'cross' })
 
 /** reads an edge at `i` */
 function readEdge(s: string, i: number): [Omit<GEdge, 'from' | 'to'>, number] | null {
@@ -379,7 +380,7 @@ const SEQ_ARROWS: [string, boolean, MsgHead, boolean][] = [
   ['->', false, 'none', false],
 ]
 
-const P_KIND: Record<string, PKind> = { participant: 'participant', actor: 'actor', boundary: 'boundary', control: 'control', entity: 'entity', database: 'database', collections: 'collections', queue: 'queue' }
+const P_KIND: Record<string, PKind> = dict({ participant: 'participant', actor: 'actor', boundary: 'boundary', control: 'control', entity: 'entity', database: 'database', collections: 'collections', queue: 'queue' })
 
 function sequence(body: string[], title?: string) {
   const b = new SequenceBuilder()
@@ -465,7 +466,7 @@ interface ClassInfo {
 
 const generic = (s: string) => s.replace(/~([^~]*)~/g, '<$1>')
 
-const MARK: Record<string, Head> = { '<|': 'triangle', '|>': 'triangle', '*': 'diamond', o: 'odiamond', '<': 'open', '>': 'open', '()': 'ocircle' }
+const MARK: Record<string, Head> = dict({ '<|': 'triangle', '|>': 'triangle', '*': 'diamond', o: 'odiamond', '<': 'open', '>': 'open', '()': 'ocircle' })
 
 function classDiagram(body: string[], title?: string) {
   const b = new GraphBuilder('TB', 'rect')
@@ -670,11 +671,11 @@ function stateDiagram(body: string[], title?: string) {
 
 // ---------------------------------------------------------------- ER diagram
 
-const CARD: Record<string, Head> = { '|o': 'zero-one', 'o|': 'zero-one', '||': 'one', '}o': 'zero-many', 'o{': 'zero-many', '}|': 'one-many', '|{': 'one-many' }
-const CARD_WORDS: Record<string, Head> = {
+const CARD: Record<string, Head> = dict({ '|o': 'zero-one', 'o|': 'zero-one', '||': 'one', '}o': 'zero-many', 'o{': 'zero-many', '}|': 'one-many', '|{': 'one-many' })
+const CARD_WORDS: Record<string, Head> = dict({
   'one or zero': 'zero-one', 'zero or one': 'zero-one', 'one or more': 'one-many', 'one or many': 'one-many', 'many(1)': 'one-many', '1+': 'one-many',
   'zero or more': 'zero-many', 'zero or many': 'zero-many', 'many(0)': 'zero-many', '0+': 'zero-many', 'only one': 'one', '1': 'one',
-}
+})
 
 function erDiagram(body: string[], title?: string) {
   const b = new GraphBuilder('TB', 'rect')
@@ -757,7 +758,7 @@ function pie(head: string, body: string[], title?: string) {
 
 // ---------------------------------------------------------------- gantt
 
-const UNIT: Record<string, number> = { ms: 1, s: 1e3, m: 60e3, h: 3600e3, d: 864e5, w: 7 * 864e5, M: 30 * 864e5, y: 365 * 864e5 }
+const UNIT: Record<string, number> = dict({ ms: 1, s: 1e3, m: 60e3, h: 3600e3, d: 864e5, w: 7 * 864e5, M: 30 * 864e5, y: 365 * 864e5 })
 
 /** a date in `fmt` (dayjs-style tokens), UTC */
 export function parseDate(s: string, fmt: string): number | undefined {

@@ -14,7 +14,8 @@
  * to rebase, like deleting a sheet) are not applied locally until the hub has
  * sequenced them.
  */
-import type { Batch, Entry, HubMsg, PeerInfo, UserInfo } from './protocol'
+import { cssColor } from '../core/color'
+import { PEER_COLORS, type Batch, type Entry, type HubMsg, type PeerInfo, type UserInfo } from './protocol'
 import type { Transport } from './transport'
 
 export interface ApplyResult {
@@ -79,6 +80,16 @@ export interface SessionOptions {
 }
 
 const notNull = <T>(x: T | null): x is T => x !== null
+
+/**
+ * A peer as the hub relays it. Its name and color are what another client chose: the color is used as a CSS
+ * background by every view that shows the peer, so anything that is not a color (a url() would be requested by the
+ * browsers of everyone in the room) is replaced by one of the palette.
+ */
+function checkedPeer(p: PeerInfo): PeerInfo {
+  const site = Number.isFinite(p.site) ? p.site : 0
+  return { ...p, name: typeof p.name === 'string' ? p.name.slice(0, 200) : '', color: cssColor(p.color) ?? PEER_COLORS[Math.abs(Math.trunc(site)) % PEER_COLORS.length] }
+}
 
 export class CollabSession<Op = unknown> {
   site = 0
@@ -239,7 +250,7 @@ export class CollabSession<Op = unknown> {
           this.setStatus('syncing')
         }
         this.peers.clear()
-        for (const p of m.peers) this.peers.set(p.site, p)
+        for (const p of m.peers) this.peers.set(p.site, checkedPeer(p))
         this.emit('peers', [...this.peers.values()])
         for (const b of m.log) await this.onBatch(b)
         if (this.inflight) {
@@ -264,7 +275,7 @@ export class CollabSession<Op = unknown> {
         return
       }
       case 'join':
-        this.peers.set(m.peer.site, m.peer)
+        this.peers.set(m.peer.site, checkedPeer(m.peer))
         this.emit('peers', [...this.peers.values()])
         return
       case 'leave':
