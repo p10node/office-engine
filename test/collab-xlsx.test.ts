@@ -93,4 +93,38 @@ describe('collab xlsx', () => {
       x.client.destroy()
     }
   }, 30_000)
+
+  for (const lag of [[0, 6], [6, 0], [3, 3]]) test(`text with line breaks (wrap style, grown row) against concurrent formatting and row heights converges (latency ${lag})`, async () => {
+    const hub = new CollabHub()
+    const a = await open(hub, 'Ann', () => lag[0])
+    const b = await open(hub, 'Bob', () => lag[1])
+    await settle([a.collab, b.collab])
+    /** cells, style table and the row heights saved for the first sheet */
+    const state = async (client: DocumentClient) => {
+      const zip = await ZipArchive.open(await openSource(await client.call('save')))
+      const xml = new TextDecoder().decode(await zip.bytes(client.info.xlsx!.sheets[0].path))
+      const rows = [...xml.matchAll(/<row [^>]*>/g)].map((m) => `${/ r="(\d+)"/.exec(m[0])?.[1]}:${/ ht="([^"]+)"/.exec(m[0])?.[1] ?? ''}`)
+      return (await dump(client)) + rows.join(' ')
+    }
+    await Promise.all([
+      a.client.call('xlsx.set', 0, [{ r: 20, c: 6, input: 'one\ntwo\nthree' }]),
+      b.client.call('xlsx.format', 0, { r0: 22, c0: 6, r1: 22, c1: 6 }, { i: true }),
+      b.client.call('xlsx.sheetOp', 0, { op: 'rowHeight', r0: 20, r1: 20, px: 24 }),
+      b.client.call('xlsx.set', 0, [{ r: 22, c: 7, input: 'x\ny' }]),
+    ])
+    await settle([a.collab, b.collab])
+    const sa = await state(a.client)
+    expect(sa).toContain(JSON.stringify('one\ntwo\nthree'))
+    expect(sa).toBe(await state(b.client))
+    await Promise.all([a.client.call('xlsx.undo'), b.client.call('xlsx.set', 0, [{ r: 20, c: 7, input: 'p\nq' }])])
+    await settle([a.collab, b.collab])
+    expect(await state(a.client)).toBe(await state(b.client))
+    const c = await open(hub, 'Cid', () => 0)
+    await settle([a.collab, b.collab, c.collab])
+    expect(await state(c.client)).toBe(await state(a.client))
+    for (const x of [a, b, c]) {
+      x.collab.close()
+      x.client.destroy()
+    }
+  }, 30_000)
 })

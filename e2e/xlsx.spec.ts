@@ -87,6 +87,62 @@ describe('xlsx editing', () => {
     expect(v.errors).toEqual([])
   })
 
+  test('Shift+Enter and Alt+Enter break the line, in the cell and in the formula bar: the cell wraps and its row grows', async () => {
+    const v = await open()
+    const rowH = async (n: number) => (await v.page.locator('.de-head-r').filter({ hasText: new RegExp(`^${n}$`) }).first().boundingBox())!.height
+    const h0 = await rowH(10)
+    const fxRef = () => v.page.locator('.de-fx-ref').innerText()
+    // in the cell
+    await v.clickCell('J10')
+    await v.page.keyboard.type('one')
+    await v.page.keyboard.press('Shift+Enter')
+    await v.page.keyboard.type('two')
+    await v.page.keyboard.press('Alt+Enter')
+    await v.page.keyboard.type('three')
+    expect(await v.page.locator('textarea.de-cell-edit').inputValue()).toBe('one\ntwo\nthree')
+    // Enter alone still commits and moves down
+    await v.page.keyboard.press('Enter')
+    await v.page.waitForTimeout(200)
+    expect(await fxRef()).toBe('J11')
+    expect(await v.shown('J10')).toBe('one\ntwo\nthree')
+    expect((await cellBox(v, 'J10'))!.style).toContain('pre-wrap')
+    expect(await rowH(10)).toBe(h0 * 3)
+    // in the formula bar: one line shows at a time, the caret's
+    await v.clickCell('J12')
+    const bar = v.page.locator('.de-fx-input')
+    await bar.click()
+    await v.page.keyboard.type('a')
+    await v.page.keyboard.press('Shift+Enter')
+    await v.page.keyboard.type('b')
+    await v.page.keyboard.press('Alt+Enter')
+    await v.page.keyboard.type('c')
+    expect(await bar.inputValue()).toBe('a\nb\nc')
+    expect(await bar.evaluate((el) => el.scrollTop / parseFloat(getComputedStyle(el).lineHeight))).toBe(2)
+    await v.page.keyboard.press('Enter')
+    await v.page.waitForTimeout(200)
+    expect(await v.shown('J12')).toBe('a\nb\nc')
+    expect(await rowH(12)).toBe(h0 * 3)
+    // the bar of a cell with several lines keeps them, from the first
+    expect(await v.formula('J10')).toBe('one\ntwo\nthree')
+    expect(await bar.evaluate((el) => el.scrollTop)).toBe(0)
+    // on the grid Shift+Enter still moves up
+    await v.clickCell('L5')
+    await v.page.keyboard.press('Shift+Enter')
+    expect(await fxRef()).toBe('L4')
+    const s = await saved(v)
+    expect(s.cell('J10')).toBe('one\ntwo\nthree')
+    expect(s.cell('J12')).toBe('a\nb\nc')
+    // one undo per cell: the text, the wrap and the row height
+    await v.clickCell('N20')
+    await v.page.keyboard.press('Control+z')
+    await v.page.keyboard.press('Control+z')
+    await v.page.waitForTimeout(300)
+    expect(await v.shown('J10')).toBe('')
+    expect(await rowH(10)).toBe(h0)
+    expect(await rowH(12)).toBe(h0)
+    expect(v.errors).toEqual([])
+  })
+
   test('merge all: one cell, no inner gridlines, other values cleared', async () => {
     const v = await open()
     await v.typeCell('J10', 'merged')

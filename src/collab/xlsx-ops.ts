@@ -151,6 +151,9 @@ function transformComment(op: Extract<XOp, { t: 'comment' }>, prior: XOp): XOp |
 
 const ALL: Range = { r0: 0, c0: 0, r1: Number.MAX_SAFE_INTEGER, c1: Number.MAX_SAFE_INTEGER }
 
+/** a cell edit that enters text with line breaks: the cell is set to wrap (derived style) and its row grows */
+const multiline = (op: XOp) => op.t === 'set' && op.cells.some((c) => c.input.includes('\n'))
+
 export function footprint(op: XOp): { sheet: string; range: Range } | null {
   switch (op.t) {
     case 'set': {
@@ -164,7 +167,8 @@ export function footprint(op: XOp): { sheet: string; range: Range } | null {
         r1 = Math.max(r1, c.r)
         c1 = Math.max(c1, c.c)
       }
-      return { sheet: op.sheet, range: { r0, c0, r1, c1 } }
+      // text with line breaks grows its row
+      return { sheet: op.sheet, range: multiline(op) ? { ...ALL, r0, r1 } : { r0, c0, r1, c1 } }
     }
     case 'fmt':
       return { sheet: op.sheet, range: op.range }
@@ -194,7 +198,7 @@ export function conflictsX(pending: XOp[], remote: XOp[]): boolean {
   if (remote.some((o) => o.t === 'comment' && cids.has(o.cid))) return true
   if (pending.some((o) => o.t === 'revert' || isStructural(o))) return true
   // derived styles are appended to one table: keep its order identical everywhere
-  const styles = (o: XOp) => o.t === 'fmt' && o.patch.xf === undefined && !o.patch.clear
+  const styles = (o: XOp) => (o.t === 'fmt' && o.patch.xf === undefined && !o.patch.clear) || multiline(o)
   if (pending.some(styles) && remote.some(styles)) return true
   const fp = remote.map(footprint)
   return pending.some((p) => {

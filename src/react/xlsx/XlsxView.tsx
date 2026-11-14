@@ -534,7 +534,7 @@ function SheetGrid({ store, sheet, meta, client, edit, setEdit, hold, onSheet }:
   const dragging = useRef(false)
   const editRef = useRef<HTMLTextAreaElement>(null)
   const hlRef = useRef<HTMLDivElement>(null)
-  const fxRef = useRef<HTMLInputElement>(null)
+  const fxRef = useRef<HTMLTextAreaElement>(null)
   const [sugIdx, setSugIdx] = useState(0)
   const [ctx, setCtx] = useState<{ x: number; y: number } | null>(null)
   /** paint format: style index copied from the active cell, applied to the next selection */
@@ -1002,7 +1002,7 @@ function SheetGrid({ store, sheet, meta, client, edit, setEdit, hold, onSheet }:
   const sugKey = word ? `${word.s}:${word.text}` : ''
   useEffect(() => setSugIdx(0), [sugKey])
 
-  const inputEl = (): HTMLTextAreaElement | HTMLInputElement | null => (inCell ? editRef.current : fxRef.current)
+  const inputEl = (): HTMLTextAreaElement | null => (inCell ? editRef.current : fxRef.current)
 
   // push focus + caret into the active input (start, pointing, autocomplete, sheet switch)
   useLayoutEffect(() => {
@@ -1014,13 +1014,13 @@ function SheetGrid({ store, sheet, meta, client, edit, setEdit, hold, onSheet }:
     if (edit.sync) el.setSelectionRange(edit.caret, edit.caretEnd)
   }, [edit?.sync, inCell, edit !== null]) // eslint-disable-line react-hooks/exhaustive-deps
 
-  const readCaret = (el: HTMLTextAreaElement | HTMLInputElement) => {
+  const readCaret = (el: HTMLTextAreaElement) => {
     const a = el.selectionStart ?? el.value.length
     const b = el.selectionEnd ?? a
     setEdit((p) => (p && (p.caret !== a || p.caretEnd !== b) ? { ...p, caret: a, caretEnd: b } : p))
   }
 
-  const onInput = (el: HTMLTextAreaElement | HTMLInputElement) => {
+  const onInput = (el: HTMLTextAreaElement) => {
     const v = el.value
     const a = el.selectionStart ?? v.length
     const b = el.selectionEnd ?? a
@@ -1465,7 +1465,7 @@ function SheetGrid({ store, sheet, meta, client, edit, setEdit, hold, onSheet }:
 
   const box = edit && own ? cellBox(edit.r, edit.c) : null
   const fx = edit ? edit.value : shown(detail, sel.ar, sel.ac)
-  const editKeys = (e: React.KeyboardEvent<HTMLTextAreaElement | HTMLInputElement>) => {
+  const editKeys = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (!edit || e.nativeEvent.isComposing) return
     const mod = e.metaKey || e.ctrlKey
     if (sugg.length) {
@@ -1511,9 +1511,18 @@ function SheetGrid({ store, sheet, meta, client, edit, setEdit, hold, onSheet }:
     } else if (e.key === 'F2') {
       e.preventDefault()
       setEdit((p) => (p ? { ...p, mode: p.mode === 'enter' ? 'edit' : 'enter' } : p))
-    } else if (e.key === 'Enter' && !e.altKey) {
+    } else if (e.key === 'Enter' && (e.altKey || e.shiftKey)) {
+      // line break inside the cell: Alt+Enter as in Excel, Shift+Enter as in most text inputs
       e.preventDefault()
-      commit([e.shiftKey ? -1 : 1, 0])
+      const el = e.currentTarget
+      // execCommand keeps the native undo history; setRangeText where it is gone
+      if (!el.ownerDocument.execCommand?.('insertText', false, '\n')) {
+        el.setRangeText('\n', el.selectionStart, el.selectionEnd, 'end')
+        onInput(el)
+      }
+    } else if (e.key === 'Enter') {
+      e.preventDefault()
+      commit([1, 0])
     } else if (e.key === 'Tab') {
       e.preventDefault()
       commit([0, e.shiftKey ? -1 : 1])
@@ -1598,18 +1607,29 @@ function SheetGrid({ store, sheet, meta, client, edit, setEdit, hold, onSheet }:
           {!oneCell && `:${colName(rect.c1)}${rect.r1 + 1}`}
         </div>
         {editable ? (
-          <input
+          <textarea
             ref={fxRef}
             className="de-fx-val de-fx-input"
             value={fx}
+            rows={1}
+            wrap="off"
             spellCheck={false}
             aria-label="Cell content"
             onFocus={() => !edit && void startEdit(undefined, true)}
             onChange={(e) => onInput(e.target)}
             onSelect={(e) => readCaret(e.currentTarget)}
             onKeyDown={editKeys}
-            onBlur={() => {
+            onScroll={(e) => {
+              // one line shows at a time: the caret's, whole (the browser scrolls just enough to reveal the caret)
+              const el = e.currentTarget
+              const lh = parseFloat(getComputedStyle(el).lineHeight) || el.clientHeight
+              const top = Math.round(el.scrollTop / lh) * lh
+              if (Math.abs(top - el.scrollTop) >= 1) el.scrollTop = top
+            }}
+            onBlur={(e) => {
               if (hold.current) return
+              // back to the first line for the next cell
+              e.currentTarget.scrollTop = 0
               if (edit && (edit.bar || !own)) commit()
             }}
           />

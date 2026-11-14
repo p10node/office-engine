@@ -382,11 +382,11 @@ export class XlsxEditor {
     }
   }
 
-  private record(sheet: number, cells: CellChange[], range: Range): XlsxEditResult {
-    this.undoStack.push({ sheet, cells, range })
+  private record(sheet: number, cells: CellChange[], range: Range, lay?: Change['lay']): XlsxEditResult {
+    this.undoStack.push({ sheet, cells, range, lay })
     if (this.undoStack.length > 200) this.undoStack.shift()
     this.redoStack = []
-    return { sheet, range, recalc: this.lastRecalc }
+    return { sheet, range, recalc: this.lastRecalc, layout: lay ? this.layout(sheet) : undefined }
   }
 
   /** after rows/columns moved: rebuild the dependency graph and recompute every formula */
@@ -402,11 +402,25 @@ export class XlsxEditor {
     await this.prepare(sheet, d, inputs)
     const changes: CellChange[] = []
     const range = { r0: Infinity, c0: Infinity, r1: -1, c1: -1 }
+    // text with line breaks: the cell wraps and its row grows to show every line (as Excel does)
+    const xfs = this.wb.styles.xfs
+    let ed: StyleEditor | undefined
+    let rowsBefore: LayoutState['rowAttrs']
     for (const { r, c, input } of inputs) {
       const key = r * MAX_COL + c
       const prev = getEntry(d, r, c)
       const st = prev?.[2] ?? 0
-      const { e, f } = parseInput(input, st, isDateFormat(this.wb.styles.xfs[st]?.numFmt ?? ''))
+      const { e, f } = parseInput(input, st, isDateFormat(xfs[st]?.numFmt ?? ''))
+      if (e && e[0] === T_STR && !f && input.includes('\n')) {
+        if (!xfs[st]?.wrap) e[2] = (ed ??= await this.styles()).derive(st, { wrap: true })
+        const a = d.rowAttrs.get(r)
+        const now = a?.ht !== undefined ? Math.round((a.ht * 4) / 3) : (d.autoRowH.get(r) ?? d.defaultRowH)
+        const need = input.split('\n').length * Math.max(d.defaultRowH, Math.round((xfs[st]?.fontPt ?? 11) * 1.6 + 2))
+        if (need > now && !a?.hidden && !d.merges.some((m) => m.r0 <= r && r <= m.r1 && m.c0 <= c && c <= m.c1)) {
+          rowsBefore ??= layoutState(d).rowAttrs
+          setRowHeight(d, r, r, need)
+        }
+      }
       changes.push({ key, prev, prevF: d.formulas.get(key), next: e, nextF: f })
       range.r0 = Math.min(range.r0, r)
       range.c0 = Math.min(range.c0, c)
@@ -414,7 +428,18 @@ export class XlsxEditor {
       range.c1 = Math.max(range.c1, c)
     }
     this.apply(d, changes, 'next')
-    return this.record(sheet, changes, range)
+    const styles = ed ? this.restyled(ed, xfs.length) : undefined
+    const res = this.record(sheet, changes, range, rowsBefore && { before: { rowAttrs: rowsBefore }, after: { rowAttrs: layoutState(d).rowAttrs } })
+    if (styles?.length) res.styles = styles
+    return res
+  }
+
+  /** the style table grew: stores it, re-derives its css and returns the entries added after the first `before` */
+  private restyled(ed: StyleEditor, before: number): NonNullable<XlsxEditResult['styles']> {
+    const xml = ed.xml()
+    this.wb.pkg.setPart(this.stylesPath!, xml)
+    this.wb.styles = parseSheetStyles(parseXml(xml), this.wb.theme)
+    return this.wb.styles.xfs.slice(before).map((x, i) => ({ index: before + i, css: x.css, format: x.numFmt }))
   }
 
   /**
@@ -477,12 +502,8 @@ export class XlsxEditor {
       }
     }
     this.apply(d, changes, 'next')
-    // re-derive css for the grown style table
-    const xml = ed.xml()
-    this.wb.pkg.setPart(this.stylesPath!, xml)
-    this.wb.styles = parseSheetStyles(parseXml(xml), this.wb.theme)
     const res = this.record(sheet, changes, range)
-    res.styles = this.wb.styles.xfs.slice(before).map((x, i) => ({ index: before + i, css: x.css, format: x.numFmt }))
+    res.styles = this.restyled(ed, before)
     return res
   }
 

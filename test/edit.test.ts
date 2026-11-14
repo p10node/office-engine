@@ -530,6 +530,54 @@ describe('xlsx row heights', () => {
     const undo: any = await engine.call('xlsx.undo', [])
     expect(new Map<number, number>(undo.layout.rowSizes).get(0)).toBe(title)
   })
+
+  test('text with line breaks: the cell wraps and its row grows to show every line, undone in one step', async () => {
+    const mem = new Blob([await Bun.file(S('sample.xlsx')).arrayBuffer()])
+    const { engine, cell } = await openXlsx(mem)
+    const rowPx = (res: any, r: number) => new Map<number, number>(res.layout?.rowSizes).get(r)
+
+    const res: any = await engine.call('xlsx.set', [0, [{ r: 70, c: 9, input: 'one\ntwo\nthree' }, { r: 71, c: 9, input: 'plain' }]])
+    expect(res.styles.map((x: any) => x.css.whiteSpace)).toEqual(['pre-wrap'])
+    expect((await cell(70, 9))[2]).toBe(res.styles[0].index)
+    expect(rowPx(res, 70)).toBe(60)
+    expect(rowPx(res, 71)).toBeUndefined()
+    // the same style again, a row already tall enough: nothing new
+    const again: any = await engine.call('xlsx.set', [0, [{ r: 70, c: 10, input: 'a\nb' }]])
+    expect(again.styles).toBeUndefined()
+    expect(again.layout).toBeUndefined()
+    expect((await cell(70, 10))[2]).toBe(res.styles[0].index)
+    await engine.call('xlsx.undo', [])
+
+    // a formula spread over lines, a number: no text to wrap
+    const other: any = await engine.call('xlsx.set', [0, [{ r: 72, c: 9, input: '=1+\n2' }, { r: 73, c: 9, input: '5\n' }]])
+    expect(other.styles).toBeUndefined()
+    expect(other.layout).toBeUndefined()
+    expect((await cell(72, 9))[1]).toBe('3')
+    // a merged cell spans rows of its own: its first row is left alone
+    await engine.call('xlsx.sheetOp', [0, { op: 'merge', range: { r0: 75, c0: 9, r1: 76, c1: 9 } }])
+    const merged: any = await engine.call('xlsx.set', [0, [{ r: 75, c: 9, input: 'x\ny\nz' }]])
+    expect((await cell(75, 9))[2]).toBe(res.styles[0].index)
+    expect(merged.layout).toBeUndefined()
+
+    const saved = (await engine.call('save', [])) as Blob
+    const re = await openXlsx(saved)
+    expect((await re.cell(70, 9))[1]).toBe('one\ntwo\nthree')
+    expect(re.info.xlsx!.styles[(await re.cell(70, 9))[2]].whiteSpace).toBe('pre-wrap')
+    expect(re.info.xlsx!.styles[(await re.cell(75, 9))[2]].whiteSpace).toBe('pre-wrap')
+    const sizes = new Map<number, number>()
+    for (const e of re.events) if (e.event === 'xlsx:progress' && e.data.sheet === 0) for (const [r, px] of e.data.rowSizes) sizes.set(r, px)
+    expect(sizes.get(70)).toBe(60)
+    expect(sizes.has(75)).toBe(false)
+
+    // one undo: the text, the wrap and the row height
+    for (let i = 0; i < 3; i++) await engine.call('xlsx.undo', [])
+    const undone: any = await engine.call('xlsx.undo', [])
+    expect(rowPx(undone, 70)).toBeUndefined()
+    expect(await cell(70, 9)).toBeUndefined()
+    const redone: any = await engine.call('xlsx.redo', [])
+    expect(rowPx(redone, 70)).toBe(60)
+    expect((await cell(70, 9))[1]).toBe('one\ntwo\nthree')
+  })
 })
 
 describe('xlsx toolbar ops', () => {

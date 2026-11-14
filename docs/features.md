@@ -153,7 +153,7 @@ Diagram sources open as a document holding the drawing (an SVG picture, editable
 
 ### XLSX
 
-- **Cells**: edit, range selection, select all (Ctrl/⌘+A), copy/cut/paste, fill down/right, sort, find & replace (match case, entire cell, in formulas)
+- **Cells**: edit, line break inside a cell or the formula bar (`Alt+Enter` or `Shift+Enter`: the cell wraps and its row grows to show every line), range selection, select all (Ctrl/⌘+A), copy/cut/paste, fill down/right, sort, find & replace (match case, entire cell, in formulas)
 - **Formulas**: auto-calculated (135 functions), function name & argument hints while typing, click/drag cells (incl. other sheets, arrow keys) to insert references, colored references, auto-close parentheses, functions menu (SUM/AVERAGE/COUNT/MAX/MIN)
 - **Formatting**: paint format, currency/percent/decimal buttons + 20 number formats, font, size, B/I/U/S, text/fill color, borders (8 kinds, color, line style), merge all/horizontally/vertically, horizontal & vertical alignment, wrap, text rotation, clear formatting
 - **Rows & columns**: insert/delete/hide/unhide, drag to resize column width/row height, freeze, gridlines
