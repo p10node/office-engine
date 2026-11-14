@@ -363,6 +363,7 @@ export class RichInput {
     r.removeEventListener('keydown', this.onKeyDown)
     document.removeEventListener('selectionchange', this.onSelChange)
     cancelAnimationFrame(this.raf)
+    this.raf = 0 // or the next selection change waits forever for a frame that was cancelled
     this.root = null
     this.override = null
   }
