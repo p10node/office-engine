@@ -175,6 +175,12 @@ jobs:
             exit 0
           fi
           args=(--title "$TAG" --generate-notes --verify-tag)
+          # GitHub looks for the previous tag in the history of the tagged commit. Every tag sits on its own
+          # branch (on the version commit), so it only ever finds v0.1.0, the one tag main contains: name the
+          # version before this one (the last stable one, for a stable release)
+          prev=$(git -c versionsort.suffix=- tag --list 'v[0-9]*' --sort=-v:refname |
+            awk -v t="$TAG" -v pre="$PRERELEASE" 'found && !prev && (pre == "true" || index($0, "-") == 0) { prev = $0 } $0 == t { found = 1 } END { print prev }')
+          [ -n "$prev" ] && args+=(--notes-start-tag "$prev")
           notes="docs/releases/$TAG.md"
           if [ -f "$notes" ]; then
             args+=(--notes-file "$notes")
