@@ -1,6 +1,6 @@
 {
   "name": "@p10node/mermaid",
-  "version": "0.1.0",
+  "version": "0.13.0",
   "description": "Mermaid diagrams to SVG with no DOM, server or dependency: flowchart, sequence, class, state, ER, pie, Gantt, mind map",
   "type": "module",
   "license": "MIT",
