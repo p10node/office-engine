@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'bun:test'
 import type { Block, Paragraph } from '../src/core/docx/types'
 import { htmlToParas, parseHtml } from '../src/core/html'
-import { decodeText, plainFormat } from '../src/core/plain'
+import { decodeText, htmlParas, markdownParas, plainFormat } from '../src/core/plain'
 import { svgImage } from '../src/core/svgfile'
 import { Engine } from '../src/core/worker/engine'
 
@@ -153,6 +153,36 @@ describe('plain sources open as Office files', () => {
     const { info } = await open(saved, 'mislabelled.csv')
     expect(info.kind).toBe('xlsx')
     expect(info.imported).toBeUndefined()
+  })
+})
+
+describe('large plain documents', () => {
+  const count = 150_000
+  const importedText = (p: { runs: { text: string }[] }) => p.runs.map((r) => r.text).join('')
+
+  test('Markdown keeps every paragraph beyond the browser function-argument limit', () => {
+    const ps = markdownParas('# First\n\n' + 'paragraph\n\n'.repeat(count) + '# Last\n', false)
+    expect(ps).toHaveLength(count + 2)
+    expect(ps[0].heading).toBe(1)
+    expect(importedText(ps[0])).toBe('First')
+    expect(importedText(ps[1])).toBe('paragraph')
+    expect(importedText(ps[count])).toBe('paragraph')
+    expect(importedText(ps[count + 1])).toBe('Last')
+  })
+
+  test('HTML keeps every paragraph beyond the browser function-argument limit', () => {
+    const ps = htmlParas('<h1>First</h1>' + '<p>paragraph</p>'.repeat(count) + '<h1>Last</h1>', false)
+    expect(ps).toHaveLength(count + 2)
+    expect(importedText(ps[0])).toBe('First')
+    expect(importedText(ps[count])).toBe('paragraph')
+    expect(importedText(ps[count + 1])).toBe('Last')
+  })
+
+  test('Markdown keeps a fenced code block with more lines than the function-argument limit', () => {
+    const ps = markdownParas('```text\n' + 'line\n'.repeat(count) + '```\n\nAfter\n', false)
+    expect(ps).toHaveLength(2)
+    expect(importedText(ps[0]).split('line')).toHaveLength(count + 1)
+    expect(importedText(ps[1])).toBe('After')
   })
 })
 

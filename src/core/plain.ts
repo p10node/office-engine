@@ -287,6 +287,11 @@ function diagramParas(lang: DiagramLang, src: string): ImportPara[] {
   }
 }
 
+/** Append without passing a whole document as function arguments (which can exceed the engine's argument limit). */
+function append<T>(target: T[], values: T[]) {
+  for (const value of values) target.push(value)
+}
+
 /** a Markdown code fence: its indentation, its mark (three ` or ~ or more) and the first word of its info string */
 export interface Fence {
   indent: number
@@ -326,7 +331,7 @@ export function markdownParas(md: string, dom = true): ImportPara[] {
   const out: ImportPara[] = []
   let text: string[] = []
   const flush = () => {
-    if (text.length) out.push(...fromHtml(markdownToHtml(text.join('\n')), dom))
+    if (text.length) append(out, fromHtml(markdownToHtml(text.join('\n')), dom))
     text = []
   }
   for (let i = 0; i < lines.length; i++) {
@@ -340,7 +345,7 @@ export function markdownParas(md: string, dom = true): ImportPara[] {
     while (j < lines.length && !closesFence(lines[j], fence)) j++
     const lang = FENCE_LANG[fence.lang.toLowerCase()]
     flush()
-    if (lang) out.push(...diagramParas(lang, lines.slice(i + 1, j).join('\n')))
+    if (lang) append(out, diagramParas(lang, lines.slice(i + 1, j).join('\n')))
     else out.push(codePara(fence, lines.slice(i + 1, j)))
     i = j
   }
@@ -358,11 +363,11 @@ export function htmlParas(html: string, dom = true): ImportPara[] {
   for (const m of html.matchAll(HTML_DIAGRAM)) {
     const lang = FENCE_LANG[(m[2] ?? m[4]).toLowerCase()]
     if (!lang) continue
-    out.push(...fromHtml(html.slice(at, m.index), dom))
-    out.push(...diagramParas(lang, decodeEntities((m[3] ?? m[5]).replace(/<br\s*\/?>/gi, '\n').replace(/<[^>]+>/g, ''))))
+    append(out, fromHtml(html.slice(at, m.index), dom))
+    append(out, diagramParas(lang, decodeEntities((m[3] ?? m[5]).replace(/<br\s*\/?>/gi, '\n').replace(/<[^>]+>/g, ''))))
     at = m.index! + m[0].length
   }
-  out.push(...fromHtml(html.slice(at), dom))
+  append(out, fromHtml(html.slice(at), dom))
   return out
 }
 
