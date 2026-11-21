@@ -235,11 +235,8 @@ export class Engine {
         return this.need(this.xlsx).block(args[0] as number, args[1] as number, args[2] as number)
       case 'xlsx.cell':
         return this.need(this.xlsx).cell(args[0] as number, args[1] as number, args[2] as number)
-      case 'xlsx.drawings': {
-        const wb = this.need(this.xlsx)
-        const s = wb.sheets[args[0] as number]
-        return s ? readSheetDrawings(wb.pkg, s.path) : []
-      }
+      case 'xlsx.drawings':
+        return readSheetDrawings(this.need(this.xlsx), args[0] as number)
       case 'xlsx.find':
         return this.need(this.xlsx).find(args[0] as number, args[1] as string, args[2] as FindOptions)
       case 'xlsx.text':

@@ -116,6 +116,8 @@ class XlsxStore {
   sheets = new Map<number, SheetState>()
   /** focus the grid when the next sheet grid mounts */
   focusGrid = false
+  /** edit results applied (here or a collaborator's): charts read their cells again */
+  edits = 0
   /** edits that undo / redo can still take back (counted here: the worker's history says nothing until asked) */
   private standaloneHistory = { undo: 0, redo: 0 }
   get history() { return getLocalHistory(this.client) ?? this.standaloneHistory }
@@ -186,7 +188,11 @@ class XlsxStore {
       s.gridLines = p.gridLines ?? true
     }
     for (const [r, px] of p.rowSizes) s.rowAxis.set(r, px)
-    if (p.recalc) s.blocks.clear()
+    // values computed after the sheet was read: its rows are fetched again, and the charts read their cells again
+    if (p.recalc) {
+      s.blocks.clear()
+      this.edits++
+    }
     s.rows = Math.max(s.rows, p.rows)
     s.cols = Math.max(s.cols, p.cols)
     if (p.merges) s.merges = p.merges
@@ -239,6 +245,7 @@ class XlsxStore {
   /** applies an edit result: new styles, layout, sheet list + refetch of touched rows */
   applied(res: XlsxEditResult | null, meta: WorkbookMeta) {
     if (!res) return
+    this.edits++
     for (const st of res.styles ?? []) {
       meta.styles[st.index] = st.css
       meta.formats[st.index] = st.format
@@ -759,7 +766,7 @@ function SheetGrid({ store, sheet, meta, client, edit, setEdit, hold, onSheet, g
   const [resizing, setResizing] = useState<{ axis: 'col' | 'row'; i: number; start: number; size: number } | null>(null)
 
   const { rowAxis, colAxis } = s
-  const drawings = useSheetDrawings(client, sheet)
+  const drawings = useSheetDrawings(client, sheet, store.edits)
   // the sheet reaches as far as its drawings, past its last filled cell
   const drawn = drawingExtent(drawings, colAxis, rowAxis)
   const HW = Math.max(40, 12 + 7 * String(Math.max(s.rows, 1000)).length)

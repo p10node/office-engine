@@ -62,7 +62,11 @@ export function wrap(lines: string[], max: number, size = 14, bold = false): str
   return out
 }
 
-export const esc = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
+// characters XML 1.0 does not allow, even as a reference: control characters but tab and line breaks, U+FFFE / U+FFFF and a
+// half of a surrogate pair alone; one in a title or label would make the whole picture fail to load
+const NOT_XML = /[\u0000-\u0008\u000B\u000C\u000E-\u001F\uFFFE\uFFFF]|[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/g
+
+export const esc = (s: string) => s.replace(NOT_XML, '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
 
 const NAMED = /^[a-z]{3,24}$/
 
