@@ -19,7 +19,7 @@ const separators = (tag: string) =>
   `<w:${tag} w:type="separator" w:id="-1"><w:p>${SEP}<w:r><w:separator/></w:r></w:p></w:${tag}>` +
   `<w:${tag} w:type="continuationSeparator" w:id="0"><w:p>${SEP}<w:r><w:continuationSeparator/></w:r></w:p></w:${tag}>`
 
-export function packDocx(r: RtfReader): Promise<Blob> {
+export function packDocx(r: RtfReader, wrap?: { before: string; after: string }): Promise<Blob> {
   const files = new Map<string, PartData>()
   const doc = r.docPart
   let overrides = `<Override PartName="/word/document.xml" ContentType="${WML}.document.main+xml"/>`
@@ -79,7 +79,7 @@ export function packDocx(r: RtfReader): Promise<Blob> {
   }
 
   for (const [path, bytes] of r.media.files) files.set(path, bytes)
-  const body = r.body.blocks.join('') || '<w:p/>'
+  const body = (wrap?.before ?? '') + (r.body.blocks.join('') || '<w:p/>') + (wrap?.after ?? '')
   files.set('word/document.xml', `${XML_HEAD}<w:document ${NS}><w:body>${body}${r.finalSect}</w:body></w:document>`)
   files.set(doc.relsPath, doc.relsXml())
   files.set(

@@ -58,5 +58,5 @@ export function notOffice(b: Uint8Array, size: number): string {
   }
   const what = describeBinary(b)
   if (what) return `This is ${what}, not a Word, Excel or PowerPoint document: open the file with a program for that format, or, if it should be a document, get the file again`
-  return 'The file is not in a format that can be opened here (Word, Excel, PowerPoint, OpenDocument, RTF, Pages, Keynote, Numbers, Visio, CSV, text, Markdown, HTML…): its content does not match its name, or it is damaged'
+  return 'The file is not in a format that can be opened here (Word, Excel, PowerPoint, OpenDocument, RTF, Pages, Keynote, Numbers, Visio, e-mail, CSV, text, Markdown, HTML…): its content does not match its name, or it is damaged'
 }

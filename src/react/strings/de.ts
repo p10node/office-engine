@@ -54,7 +54,40 @@ export const de: Strings = {
   newWhat: { docx: 'Ein neues Dokument', xlsx: 'Eine neue Tabelle', pptx: 'Eine neue Präsentation' },
 
   kind: { docx: 'Word-Dokument', xlsx: 'Excel-Arbeitsmappe', pptx: 'PowerPoint-Präsentation' },
-  from: { pages: 'Apple-Pages-Dokument', keynote: 'Apple-Keynote-Präsentation', numbers: 'Apple-Numbers-Tabelle', visio: 'Microsoft-Visio-Zeichnung' },
+  from: {
+    pages: 'Apple-Pages-Dokument',
+    keynote: 'Apple-Keynote-Präsentation',
+    numbers: 'Apple-Numbers-Tabelle',
+    visio: 'Microsoft-Visio-Zeichnung',
+    eml: 'E-Mail-Nachricht',
+    msg: 'Outlook-Nachricht',
+  },
+  mail: {
+    from: 'Von',
+    sent: 'Gesendet',
+    to: 'An',
+    cc: 'Cc',
+    bcc: 'Bcc',
+    attachments: 'Anlagen',
+    attached: 'Angehängte Nachricht',
+    noSubject: '(kein Betreff)',
+    highImportance: 'Wichtigkeit: hoch',
+    lowImportance: 'Wichtigkeit: niedrig',
+    remotePictures: 'Bilder aus dem Internet werden nicht angezeigt: beim Öffnen einer Nachricht wird nichts heruntergeladen.',
+    encrypted: 'Diese Nachricht ist verschlüsselt: ihr Inhalt kann nicht angezeigt werden.',
+    item: {
+      meetingRequest: 'Besprechungsanfrage',
+      meetingCanceled: 'Besprechung abgesagt',
+      meetingAccepted: 'Besprechung zugesagt',
+      meetingDeclined: 'Besprechung abgelehnt',
+      meetingTentative: 'Besprechung mit Vorbehalt zugesagt',
+      appointment: 'Termin',
+      contact: 'Kontakt',
+      task: 'Aufgabe',
+      note: 'Notiz',
+      report: 'Übermittlungsbericht',
+    },
+  },
   converted: {
     doc: 'Word-97-2003-Dokument',
     xls: 'Excel-97-2003-Arbeitsmappe',
@@ -109,6 +142,7 @@ export const de: Strings = {
     save: 'Speichern',
     rename: 'Umbenennen…',
     downloadAs: 'Herunterladen als',
+    attachments: 'Anlagen',
     pdf: 'PDF-Dokument',
     html: 'Webseite',
     txt: 'Nur-Text',
@@ -122,7 +156,7 @@ export const de: Strings = {
     preparingPdf: 'PDF wird vorbereitet… im Druckdialog „Als PDF speichern“ wählen',
     preparing: 'Wird vorbereitet…',
     unsupported: (name: string, what?: string) =>
-      `„${name}“${what ? ` (${what})` : ''} kann nicht geöffnet werden: unterstützt werden Word, Excel, PowerPoint (auch 97-2003), OpenDocument, RTF, Pages, Keynote, Numbers, Visio, CSV, Text, Markdown, HTML, SVG, Mermaid, PlantUML, Graphviz und Quelltext (auch gzip-komprimiert: .svgz, .csv.gz)`,
+      `„${name}“${what ? ` (${what})` : ''} kann nicht geöffnet werden: unterstützt werden Word, Excel, PowerPoint (auch 97-2003), OpenDocument, RTF, Pages, Keynote, Numbers, Visio, E-Mail (.eml, .msg), CSV, Text, Markdown, HTML, SVG, Mermaid, PlantUML, Graphviz und Quelltext (auch gzip-komprimiert: .svgz, .csv.gz)`,
   },
 
   zoom: {

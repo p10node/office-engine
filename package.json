@@ -1,7 +1,7 @@
 {
   "name": "@p10node/office-engine",
   "version": "0.1.0",
-  "description": "Browser engine to view & edit DOCX, XLSX, PPTX, DOC, XLS, PPT, RTF, ODT, ODS, ODP, CSV, TXT, Markdown, HTML, SVG, Mermaid, PlantUML, Graphviz. View-only: Pages, Keynote, Numbers, Visio (VSDX). Zero deps, no server, real-time collab, saves to original format. One-line React embed.",
+  "description": "Browser engine to view & edit DOCX, XLSX, PPTX, DOC, XLS, PPT, RTF, ODT, ODS, ODP, CSV, TXT, Markdown, HTML, SVG, Mermaid, PlantUML, Graphviz. View-only: Pages, Keynote, Numbers, Visio (VSDX), e-mail (EML, MSG). Zero deps, no server, real-time collab, saves to original format. One-line React embed.",
   "type": "module",
   "license": "MIT",
   "files": [

@@ -36,7 +36,7 @@ import { FontsContext, useHostFonts } from './common/fonts'
 export interface DocViewerProps {
   /**
    * File, Blob, ArrayBuffer, Uint8Array or URL (HTTP Range requests are used when the server supports them): an Office file,
-   * an Apple Pages / Keynote / Numbers file or a Microsoft Visio drawing (view only), CSV / TSV / text / Markdown / HTML (opened as a
+   * an Apple Pages / Keynote / Numbers file, a Microsoft Visio drawing or an e-mail message (.eml, .msg; view only), CSV / TSV / text / Markdown / HTML (opened as a
    * workbook / document),
    * an SVG picture, a Mermaid / PlantUML / Graphviz diagram, or a source file (main.ts, script.py, config.json…: shown as code).
    */
@@ -91,7 +91,7 @@ export interface DocViewerProps {
   allowDownload?: boolean
   /** Show the File menu (new, open, save, rename, download as PDF / HTML / text…, details, print) and its shortcuts. Default true. */
   fileMenu?: boolean
-  /** File → New / Open: replace the document with a blank one or a local file (Office, Pages, Keynote, Numbers, Visio, CSV, text, Markdown, HTML). Default true. */
+  /** File → New / Open: replace the document with a blank one or a local file (Office, Pages, Keynote, Numbers, Visio, e-mail, CSV, text, Markdown, HTML). Default true. */
   allowOpen?: boolean
   /** Extra File menu entries (Share, Version history…), shown before Close. */
   fileMenuItems?: FileMenuItem[]
@@ -230,7 +230,9 @@ function Viewer(props: DocViewerProps) {
   // the name is part of what is loaded: Rename only changes what is shown and saved
   // a preview of the edited source keeps the one shown until it is ready
   // (the host's language hint is for its own file, not one opened from the File menu)
-  const { client, error, loading, progress } = useDocument(opened ? opened.src : src, { name: loadName, headers, credentials, worker, language: opened ? undefined : props.language }, !!opened?.live)
+  // (a mail message's header is written in the viewer's language)
+  const mailTexts = useMemo(() => ({ texts: t.mail, locale: t.locale }), [t])
+  const { client, error, loading, progress } = useDocument(opened ? opened.src : src, { name: loadName, headers, credentials, worker, language: opened ? undefined : props.language, mail: mailTexts }, !!opened?.live)
   // Save ownership follows the document, including a source change before its client is ready.
   const saveSession = useMemo(() => ({ live: true, saving: false, revision: 0 }), [client, src, opened])
   useEffect(() => {
@@ -249,7 +251,7 @@ function Viewer(props: DocViewerProps) {
   // a source file: its code, colored, edited as text (with collaboration: read only, the session shares the document)
   const isCode = srcFormat === 'code'
   const codeLang = client?.info?.language ?? ''
-  // converted from another format (Apple Pages, Keynote, Numbers, Microsoft Visio): view only
+  // converted from another format (Apple Pages, Keynote, Numbers, Microsoft Visio, a mail message): view only
   const readOnly = !!client?.info?.from || isPicture || (isCode && !!props.collab)
   // with collaboration, editing waits for the shared history (offline edits sync on reconnect)
   const canEdit = !readOnly && (!props.collab || collab.status === 'live' || collab.status === 'offline')
@@ -608,6 +610,11 @@ function Viewer(props: DocViewerProps) {
           download: async () => download(new Blob([await sourceText()], { type: 'image/svg+xml' }), saveName),
         }
       : undefined,
+    attachments: client?.info?.mail?.attachments.map((a, i) => ({
+      name: a.name,
+      size: fmtBytes(a.size),
+      download: async () => download((await client.call('mail.attachment', i)) as Blob, a.name),
+    })),
     rename: () => setRenaming(true),
     details: () => setDetails(true),
     close: props.onClose,

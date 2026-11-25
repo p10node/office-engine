@@ -1,0 +1,61 @@
+Return-Path: <ana@example.org>
+Received: from mail.example.org by mx.example.com; Thu, 19 Nov 2026 09:14:02 +0100
+From: =?UTF-8?Q?Ana_Mart=C3=ADnez?= <ana@example.org>
+To: Jonas Weber <jonas@example.com>, "Lee, Mei" <mei@example.com>
+Cc: team@example.com
+Subject: =?UTF-8?B?UXVhcnRlcmx5IHJldmlldyDigJMgYWdlbmRh?=
+Date: Thu, 19 Nov 2026 09:14:00 +0100
+Message-ID: <q3-review@example.org>
+MIME-Version: 1.0
+Content-Type: multipart/mixed; boundary="mixed"
+
+--mixed
+Content-Type: multipart/related; boundary="related"
+
+--related
+Content-Type: multipart/alternative; boundary="alt"
+
+--alt
+Content-Type: text/plain; charset=utf-8
+Content-Transfer-Encoding: quoted-printable
+
+Hi team, here is the agenda for Thursday.
+--alt
+Content-Type: text/html; charset=utf-8
+Content-Transfer-Encoding: base64
+
+PGh0bWw+PGhlYWQ+PHN0eWxlPnAgeyBtYXJnaW46IDAgfTwvc3R5bGU+PC9oZWFkPjxib2R5IHN0
+eWxlPSJmb250LWZhbWlseTogQXJpYWwiPg0KPHA+PGltZyBzcmM9ImNpZDpsb2dvQGV4YW1wbGUu
+b3JnIiB3aWR0aD0iMTIwIiBoZWlnaHQ9IjQwIiBhbHQ9IkxvZ28iPjwvcD4NCjxoMj5RdWFydGVy
+bHkgcmV2aWV3OiBhZ2VuZGE8L2gyPg0KPHA+SGkgdGVhbSw8L3A+PHA+aGVyZSBpcyB0aGUgYWdl
+bmRhIGZvciA8Yj5UaHVyc2RheTwvYj4uIFRoZSBmaWd1cmVzIGFyZSBpbiB0aGUgYXR0YWNoZWQg
+c2hlZXQ7IHRoZSBkYXNoYm9hcmQgaXMgYXQgPGEgaHJlZj0iaHR0cHM6Ly9leGFtcGxlLm9yZy9x
+MyI+ZXhhbXBsZS5vcmcvcTM8L2E+LjwvcD4NCjx0YWJsZSBib3JkZXI9IjEiIHN0eWxlPSJib3Jk
+ZXItY29sbGFwc2U6IGNvbGxhcHNlIj48dHI+PHRoIGJnY29sb3I9IiNlOGVlZjkiPlRpbWU8L3Ro
+Pjx0aCBiZ2NvbG9yPSIjZThlZWY5Ij5Ub3BpYzwvdGg+PHRoIGJnY29sb3I9IiNlOGVlZjkiPk93
+bmVyPC90aD48L3RyPg0KPHRyPjx0ZD4xMDowMDwvdGQ+PHRkPlJldmVudWUgYW5kIG1hcmdpbnM8
+L3RkPjx0ZD5BbmE8L3RkPjwvdHI+PHRyPjx0ZD4xMDozMDwvdGQ+PHRkPkhpcmluZyBwbGFuPC90
+ZD48dGQ+Sm9uYXM8L3RkPjwvdHI+PHRyPjx0ZD4xMTowMDwvdGQ+PHRkPlJvYWRtYXA8L3RkPjx0
+ZD5NZWk8L3RkPjwvdHI+PC90YWJsZT4NCjx1bD48bGk+QnJpbmcgdGhlIHVwZGF0ZWQgZm9yZWNh
+c3Q8L2xpPjxsaT5SZWFkIHRoZSBub3RlcyBmcm9tIGxhc3QgdGltZTwvbGk+PC91bD4NCjxwPlRo
+YW5rcyw8YnI+QW5hPC9wPjxwPjxpbWcgc3JjPSJodHRwczovL3RyYWNrZXIuZXhhbXBsZS5jb20v
+b3Blbi5naWYiIHdpZHRoPSIxIiBoZWlnaHQ9IjEiPjwvcD4NCjwvYm9keT48L2h0bWw+
+--alt--
+--related
+Content-Type: image/png
+Content-Transfer-Encoding: base64
+Content-ID: <logo@example.org>
+Content-Disposition: inline; filename="logo.png"
+
+iVBORw0KGgoAAAANSUhEUgAAAHgAAAAoCAIAAAC6iKlyAAAAZElEQVR4nO3QAQkAIADAMMuYzPiW
+sIXCHTzA2Zhr60Lj+cEngQbdCjToVqBBtwINuhVo0K1Ag24FGnQr0KBbgQbdCjToVqBBtwINuhVo
+0K1Ag24FGnQr0KBbgQbdCjToVqBBtzqeDi3WAhyn8gAAAABJRU5ErkJggg==
+--related--
+--mixed
+Content-Type: text/csv; name="q3-figures.csv"
+Content-Transfer-Encoding: base64
+Content-Disposition: attachment; filename="q3-figures.csv"
+
+UXVhcnRlcixSZXZlbnVlLE1hcmdpbg0KUTEsMTIwMCwwLjMxDQpRMiwxMzUwLDAuMzMNClEzLDE0
+MjAsMC4zNQ0K
+--mixed--

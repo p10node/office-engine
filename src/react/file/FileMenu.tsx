@@ -52,6 +52,8 @@ export interface FileActionsOptions {
   downloadOriginal: () => Promise<void>
   /** a picture file (SVG): downloads are the Word document, PDF and the picture itself */
   picture?: { label: string; ext: string; download: () => Promise<void> }
+  /** a mail message's attachments: each is saved from the menu */
+  attachments?: { name: string; size: string; download: () => Promise<void> }[]
   rename?: () => void
   details?: () => void
   close?: () => void
@@ -107,6 +109,9 @@ export function useFileActions(o: FileActionsOptions): FileActions {
         : [{ value: 'html', label: t.file.html, icon: 'html', hint: '.html' } as const, ...TEXT_FORMATS[kind].map((f) => ({ value: 'text:' + f.id, label: t.file[f.id], icon: 'doc', hint: f.ext }) as const)]),
     ])
   }
+  if (o.canDownload && kind && o.attachments?.length) {
+    section(o.attachments.map((a, i) => ({ value: `attachment:${i}`, label: a.name, icon: 'save', hint: a.size, ...(i ? {} : { head: t.file.attachments }) }) as DropOption<string>))
+  }
   const tail: DropOption<string>[] = []
   if (kind && o.details) tail.push({ value: 'details', label: t.file.details, icon: 'info' })
   if (kind && o.canDownload) tail.push({ value: 'print', label: t.file.print, icon: 'print', hint: `${MOD}P` })
@@ -154,6 +159,7 @@ export function useFileActions(o: FileActionsOptions): FileActions {
     if (!c.kind || !c.canDownload) return
     if (action === 'original') return c.downloadOriginal()
     if (action === 'picture') return c.picture?.download()
+    if (action.startsWith('attachment:')) return c.attachments?.[Number(action.slice(11))]?.download()
     if (!ops) throw new Error(t.common.stillLoading)
     await ops.flush?.()
     if (action.startsWith('text:')) {

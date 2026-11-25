@@ -18,6 +18,8 @@ export interface PastedPara {
   level?: number
   /** `rich` only: a table, in place of a paragraph (`runs` is empty) */
   table?: PastedCell[][]
+  /** the table has lines between its cells (a `border` attribute or style) */
+  border?: boolean
 }
 
 /** a cell of a pasted table, with the paragraphs it holds */
@@ -25,6 +27,8 @@ export interface PastedCell {
   colSpan: number
   rowSpan: number
   paras: PastedPara[]
+  /** background color, '#rrggbb' (`bgcolor`, `background-color`) */
+  fill?: string
 }
 
 /** `rich` only: pictures are runs with the data: URL as `target` (size 0 when the HTML gives none) */
@@ -242,7 +246,8 @@ function convert(root: HNode, base: Ctx, rich: boolean, tables: boolean): Pasted
       }
       if (el.tagName === 'TABLE' && tables) {
         cur = null
-        out.push({ runs: [], table: tableOf(el, c, rich) })
+        const border = /^\s*[1-9]/.test(el.getAttribute('border') ?? '') || /(?:^|;)\s*border\s*:\s*(?!none|0\b)/i.test(el.getAttribute('style') ?? '')
+        out.push({ runs: [], table: tableOf(el, c, rich), ...(border ? { border } : {}) })
         continue
       }
       if (el.tagName === 'TD' || el.tagName === 'TH') {
@@ -308,8 +313,9 @@ function tableOf(table: HElement, c: Ctx, rich: boolean): PastedCell[][] {
       .filter((k) => k.nodeType === 1 && ((k as HElement).tagName === 'TD' || (k as HElement).tagName === 'TH'))
       .map((k) => {
         const el = k as HElement
+        const fill = hex(el.style.backgroundColor) ?? hex(el.getAttribute('bgcolor')) ?? hex(tr.style.backgroundColor) ?? hex(tr.getAttribute('bgcolor'))
         // a table inside a cell comes out as lines of text
-        return { colSpan: span(el, 'colspan', 64), rowSpan: span(el, 'rowspan', 1000), paras: convert(el, styleOf(el, tc), rich, false) }
+        return { colSpan: span(el, 'colspan', 64), rowSpan: span(el, 'rowspan', 1000), paras: convert(el, styleOf(el, tc), rich, false), ...(fill ? { fill } : {}) }
       }),
   )
 }

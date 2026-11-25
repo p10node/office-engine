@@ -128,6 +128,24 @@ Each shape is drawn where it is on its page: its geometry becomes a custom path 
 - **Not supported**: Visio 2003-2010 binary drawings (`.vsd`), which give an error saying to save the drawing as `.vsdx`
 - **Limits**: a drawing of more than 400,000 shapes (counting each member of every master instance), or of more than 256 MB of slide content, is refused
 
+### E-mail messages (view only)
+
+Mail messages open read-only as a document: the worker reads the message and builds a DOCX file of it in memory, and the document view shows it (pages, zoom, find, print, *Download as* **Word** / PDF / web page / text). The bar shows an `EML` or `MSG` badge and no Edit button, even with `editable`. The format is told by the file's bytes: an Outlook item is a compound file, an Internet message starts with mail headers (a file with no name, or served as `message/rfc822`, is recognised by them too).
+
+| Format                       | Read                                                                                                                                                                                                         |
+|------------------------------|--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| `.eml` (RFC 5322 / MIME)     | headers (encoded words, RFC 2231 parameters, 8-bit UTF-8), nested multiparts (`alternative`: the HTML, `related`: its pictures, `mixed`, `signed`, `report`), base64 / quoted-printable, any charset the browser decodes, `format=flowed`, forwarded messages (`message/rfc822`) |
+| `.emlx` (Apple Mail)         | the message inside it (the length line and the property list after it are left out)                                                                                                                         |
+| `.msg` / `.oft` (Outlook)    | MAPI properties (MS-OXMSG): sender, recipients (To / Cc / Bcc), sent time, importance, message class; the HTML body, else the HTML or text Outlook wraps in compressed RTF (MS-OXRTFCP, MS-OXRTFEX), else the RTF itself (converted as `.rtf` files are), else the plain text; attachments and attached Outlook items |
+
+The document holds, in order: the subject, the item's kind when it is not a plain message (meeting request, appointment, contact, task, delivery report) and its importance, a table of *From*, *Sent*, *To*, *Cc*, *Bcc* and *Attachments* (names and sizes), then the body, then each attached message the same way. An HTML body keeps its headings, lists, links, text formatting, tables (spans, borders, cell colors) and the pictures the message carries (`cid:` pictures and `data:` URLs, PNG / JPEG / GIF / BMP / WebP); a plain-text body has a paragraph per line, its web addresses as links and quoted lines (`>`) in grey. Addresses are `mailto:` links.
+
+- **Attachments**: listed in the header and in the File menu under **Attachments**, each saved as it is from there (`mail.attachment` in the core API). Pictures the body shows and Outlook's hidden attachments are not listed
+- **Privacy**: nothing is downloaded. Pictures an HTML body loads from the web (tracking pixels included) are left out, and the document says so; scripts, styles and forms of the HTML are not read, and links that would run script are not links
+- **Language**: the header's words are the viewer's (`strings.mail`, German in the optional `de` table); dates are written in the viewer's locale and the browser's time zone
+- **Not yet**: Outlook archives (`.pst`, `.ost`, `.olm`) and mailboxes (`.mbox`), the calendar details of meeting items (time, place: shown as a message), contact and task fields, `winmail.dat` (TNEF) unpacked, attachments opened in the viewer, CSS of the HTML body (layout from `<style>`, background images), nested tables in an HTML body (their text is kept, as lines)
+- **Not supported**: encrypted messages (S/MIME, PGP), which say so in place of their body
+
 ### CSV, text, Markdown, HTML and SVG
 
 A `src` (file, Blob, buffer or URL) that is not an Office package opens too, converted in the worker and **editable**:
@@ -311,7 +329,8 @@ Comment text is plain (lines kept); formatting inside comments read from a file 
 ## File menu
 
 - **New**: blank document, spreadsheet or presentation (16:9, Office theme, title / content / blank layouts)
-- **Open** (`Ctrl/⌘+O`): `.docx` `.xlsx` `.pptx` open as they are; `.doc` `.xls` `.ppt` `.rtf` and OpenDocument `.odt` `.ods` `.odp` are converted (editable, saved as `.docx` / `.xlsx` / `.pptx`); `.csv` / `.tsv` become a workbook (numbers and booleans typed, codes like `007` kept as text); `.txt` / `.md` / `.html` become a document (headings, lists, bold / italic / strike, links, code); `.svg` / `.mmd` / `.puml` / `.dot` become a document with the picture
+- **Open** (`Ctrl/⌘+O`): `.docx` `.xlsx` `.pptx` open as they are, mail messages (`.eml` `.emlx` `.msg` `.oft`) read-only; `.doc` `.xls` `.ppt` `.rtf` and OpenDocument `.odt` `.ods` `.odp` are converted (editable, saved as `.docx` / `.xlsx` / `.pptx`); `.csv` / `.tsv` become a workbook (numbers and booleans typed, codes like `007` kept as text); `.txt` / `.md` / `.html` become a document (headings, lists, bold / italic / strike, links, code); `.svg` / `.mmd` / `.puml` / `.dot` become a document with the picture
+- **Attachments** (a mail message): each attachment, saved as it is
 - **Download as**: the native format, PDF, web page (`.html`, images embedded), plain text / Markdown (DOCX), CSV / TSV of the current sheet (XLSX), slide text with notes (PPTX)
 - **Import CSV into new sheet** (XLSX): adds a sheet after the current one with the file's rows, streamed in the same way (in a shared session the rows go to everyone as cell edits)
 - **Save** (`Ctrl/⌘+S`), **Rename** (shown name and the name used for saving), **Document details** (file, core properties, page / word / slide counts)

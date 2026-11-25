@@ -55,7 +55,7 @@ CSS is auto-injected, no import needed (or import `@p10node/office-engine/styles
 
 | Prop               | Type                                                         | Default   | Notes                                                                                                                                                        |
 |--------------------|--------------------------------------------------------------|-----------|--------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| `src`              | `File \| Blob \| ArrayBuffer \| Uint8Array \| string \| URL` | –         | Office (also 97-2003); OpenDocument; RTF; Pages/Keynote/Numbers; Visio; CSV/TSV, text, code, Markdown, HTML, diagrams                                        |
+| `src`              | `File \| Blob \| ArrayBuffer \| Uint8Array \| string \| URL` | –         | Office (also 97-2003); OpenDocument; RTF; Pages/Keynote/Numbers; Visio; e-mail; CSV/TSV, text, code, Markdown, HTML, diagrams                                |
 | `name`             | `string`                                                     | auto      | Display name; its extension also tells the format of a `Blob` / `ArrayBuffer`                                                                                |
 | `language`         | `string`                                                     | –         | Source code in this language (`'typescript'`, `'ts'`, `'python'`, `'c++'`…): the code view, whatever the name says                                           |
 | `toolbar`          | `boolean`                                                    | `true`    | Top bar (name, status, progress)                                                                                                                             |
@@ -70,7 +70,7 @@ CSS is auto-injected, no import needed (or import `@p10node/office-engine/styles
 | `theme`            | `'light' \| 'dark' \| 'auto' \| ThemeOptions`                | `'light'` | Color scheme of the chrome; `'auto'` follows `prefers-color-scheme`; an object adds token overrides ([Theming](theming.md)). Documents keep their own colors |
 | `locale`           | `string`                                                     | inherited | BCP 47 tag for number/date display and numeric input. See [UI texts](#ui-texts) and [input](#numbers-typed-in-a-locale)                                      |
 | `strings`          | `StringsOverride`                                            | –         | Texts merged over the enclosing provider or English, key by key; may include a formatting `locale`                                                           |
-| `editable`         | `boolean`                                                    | `false`   | Open in edit mode (Pages, Keynote, Numbers and Visio files stay view only)                                                                                   |
+| `editable`         | `boolean`                                                    | `false`   | Open in edit mode (Pages, Keynote, Numbers, Visio files and e-mail stay view only)                                                                            |
 | `allowEdit`        | `boolean`                                                    | `true`    | Show Edit/View button                                                                                                                                        |
 | `allowSave`        | `boolean`                                                    | `true`    | Show Save/Download button, enable Ctrl+S                                                                                                                     |
 | `allowDownload`    | `boolean`                                                    | `true`    | Allow downloads to device (save without `onSave`, images)                                                                                                    |
@@ -523,7 +523,11 @@ import { DocumentClient } from '@p10node/office-engine/core'
 
 const doc = await DocumentClient.open(fileOrUrl, { onProgress: console.log })
 doc.kind                                   // 'docx' | 'xlsx' | 'pptx'
-doc.info.from                              // 'pages' / 'keynote' / 'numbers' / 'visio': an Apple or Visio file, converted to docx / pptx / xlsx / pptx (view only)
+doc.info.from                              // 'pages' / 'keynote' / 'numbers' / 'visio' / 'eml' / 'msg': an Apple or Visio file, converted to docx / pptx / xlsx / pptx,
+                                           // or a mail message (.eml / .emlx, .msg / .oft) as docx (view only)
+doc.info.mail                              // a mail message: { subject, attachments: [{ name, type, size }] }
+await doc.call('mail.attachment', 0)       // an attachment's file (a Blob of its type)
+// open(src, { mail: { texts: { from: 'Von', … }, locale: 'de-DE' } }): the words of a message's header and the locale of its dates
 doc.info.imported                          // 'csv' / 'tsv' / 'text' / 'markdown' / 'html' / 'svg' / 'mermaid' / 'plantuml' / 'graphviz' / 'code': a plain file, built as xlsx / docx (editable)
 doc.info.language                          // 'code' (a source file): its language, 'typescript' / 'python' / 'json'… (the hint's own word when it is not one the highlighter knows)
 doc.info.converted                         // 'doc' / 'xls' / 'ppt' / 'rtf' / 'odt' / 'ods' / 'odp': converted to docx / xlsx / pptx (editable, saved as such)

@@ -17,6 +17,7 @@ import { addSlideImage, shapeOps, slideOp, undoShapes } from '../pptx/edit'
 import { ZipArchive } from '../zip'
 import { isIworkZip, isLegacyIwork, openIwork } from '../iwork'
 import { isVisioZip, openVisio } from '../visio'
+import { isMsg, mailTextFormat, openMail, type OpenedMail } from '../mail'
 import { convertBiff, convertCfb, convertFlatOdf, convertOdfZip, convertRtf, legacyFormatOf, type Converted } from '../legacy'
 import { XlsxCollabWorker } from '../../collab/xlsx-worker'
 import type { XOp } from '../../collab/xlsx-ops'
@@ -46,6 +47,7 @@ export class Engine {
   private abort = new AbortController()
   private plainText: string | null = null
   private original: Blob | null = null
+  private mail: OpenedMail | null = null
 
   constructor(private emit: Emit) {}
 
@@ -64,12 +66,17 @@ export class Engine {
     // Word / Excel / PowerPoint 97-2003, RTF, flat OpenDocument: converted to the Office Open XML file they open as (editable)
     const legacy = head && legacyFormatOf(head)
     let converted: Converted | null = null
-    if (legacy) {
+    // mail messages: an Outlook item (a compound file) or an Internet message (text), shown read-only as a document
+    const mailText = head && !legacy && !params.language?.trim() ? mailTextFormat(name, source.type, head) : null
+    let mail: OpenedMail | null = null
+    if (legacy || mailText) {
       const bytes = await source.read(0, source.size)
-      converted = legacy === 'cfb' ? await convertCfb(bytes) : legacy === 'rtf' ? await convertRtf(bytes) : legacy === 'biff' ? await convertBiff(bytes) : await convertFlatOdf(bytes)
+      if (mailText || (legacy === 'cfb' && isMsg(bytes))) mail = await openMail(bytes, mailText ?? 'msg', params.mail?.texts, params.mail?.locale)
+      else converted = legacy === 'cfb' ? await convertCfb(bytes) : legacy === 'rtf' ? await convertRtf(bytes) : legacy === 'biff' ? await convertBiff(bytes) : await convertFlatOdf(bytes)
     }
+    this.mail = mail
     // CSV / TSV / text / Markdown / HTML / SVG / diagrams / source code: converted to a workbook / document
-    const imported = head && !converted ? plainFormat(name, source.type, head, source.size <= 4096, params.language?.trim() || undefined) : null
+    const imported = head && !converted && !mail ? plainFormat(name, source.type, head, source.size <= 4096, params.language?.trim() || undefined) : null
     // gzip-compressed (.svgz, .csv.gz): unpacked whole, then read like the file inside
     if (imported) source = await ungzipped(source)
     // CSV / TSV: an empty workbook whose sheet streams the rows in when it is loaded (the text is never read whole)
@@ -84,17 +91,19 @@ export class Engine {
     const hint = params.language?.trim()
     const language = imported === 'code' ? (hint ? (languageOf(hint) ?? hint.toLowerCase()) : (languageOfFile(unpackedName(name) ?? name, source.type) ?? '')) : undefined
     this.original = imported === 'code' && bytes ? new Blob([bytes as BlobPart], { type: source.type || 'text/plain' }) : null
-    let zip = converted
-      ? await ZipArchive.open(new BlobSource(converted.file))
-      : imported
-        ? await ZipArchive.open(new BlobSource(await plainToOffice(text ?? '', imported, name, language)))
-        : await ZipArchive.open(source)
+    let zip = mail
+      ? await ZipArchive.open(new BlobSource(mail.docx))
+      : converted
+        ? await ZipArchive.open(new BlobSource(converted.file))
+        : imported
+          ? await ZipArchive.open(new BlobSource(await plainToOffice(text ?? '', imported, name, language)))
+          : await ZipArchive.open(source)
     // OpenDocument text / spreadsheet / presentation packages
-    if (!converted && !imported) {
+    if (!converted && !imported && !mail) {
       converted = await convertOdfZip(zip)
       if (converted) zip = await ZipArchive.open(new BlobSource(converted.file))
     }
-    let from: OpenResult['from']
+    let from: OpenResult['from'] = mail?.from
     // Apple Pages / Keynote / Numbers: converted to a Word document / PowerPoint presentation / Excel workbook, shown read-only
     if (isIworkZip(zip)) ({ zip, from } = await openIwork(zip))
     else if (isLegacyIwork(zip)) throw new Error('iWork ’09 (and older) Pages, Keynote and Numbers files are not supported')
@@ -108,6 +117,7 @@ export class Engine {
     const res: OpenResult = {
       kind: main.kind, name, size, ...(from ? { from } : {}), ...(imported ? { imported } : {}), ...(language !== undefined ? { language } : {}), ...(converted ? { converted: converted.format } : {}),
       ...(flavor ? { ext: flavor.ext } : {}),
+      ...(mail ? { mail: mail.info } : {}),
     }
     if (main.kind === 'docx') this.docx = await DocxDocument.open(pkg, main.path)
     else if (main.kind === 'xlsx') {
@@ -146,6 +156,11 @@ export class Engine {
         return this.plainText
       case 'plain.original':
         return this.original
+      case 'mail.attachment': {
+        const a = this.mail?.attachments[args[0] as number]
+        if (!a?.data) throw new Error('No such attachment')
+        return new Blob([a.data as BlobPart], { type: a.type || 'application/octet-stream' })
+      }
       case 'docx.start': {
         const doc = this.need(this.docx)
         try {

@@ -12,6 +12,7 @@ python3 -m venv .venv && .venv/bin/pip install python-docx openpyxl python-pptx 
 .venv/bin/python scripts/fixtures.py --large   # generate samples + heavy files (--large-deck: only the deck the browser tests need)
 bun scripts/iwork-samples.ts                   # sample.pages / .key / .numbers (built by test/iwork-builder.ts)
 bun scripts/visio-samples.ts                   # sample.vsdx (built by test/visio-builder.ts)
+bun scripts/mail-samples.ts                    # sample.eml / sample.msg (built by test/mail-builder.ts)
 bun scripts/legacy-samples/doc.ts              # .doc / .ppt / .rtf test fixtures and samples (also ppt.ts, rtf.ts; .xls / .odt / .ods / .odp from the *.py scripts: see scripts/legacy-samples/*.md)
 bun run screenshots  # README screenshots -> docs/screenshots/ (headless Chromium)
 bun run gifs         # README GIFs (300k-row sheet opening, collaboration) -> docs/screenshots/*.gif (headless Chromium + ffmpeg)
@@ -34,6 +35,7 @@ src/core     parsers, DOM-free (runs in worker / Bun)
   legacy     .doc / .xls / .ppt (compound file reader + converters), .rtf, OpenDocument → DOCX / XLSX / PPTX
   iwork      Pages / Keynote / Numbers → DOCX / PPTX / XLSX
   visio      Visio drawings (.vsdx) → PPTX
+  mail       e-mail messages (.eml, .emlx, .msg, .oft) → DOCX (MIME, Outlook's MAPI properties, compressed RTF)
   math       TeX math: `$…$` / `$$…$$` in Markdown, TeX → MathML (views, web pages) and → OMML (Word file)
 src/react    view components
 src/embed.ts mount() + <office-viewer>

@@ -2,6 +2,7 @@ import type { DocKind } from '../opc'
 import type { DocComment } from '../comments'
 import type { PlainFormat } from '../plain'
 import type { LegacyFormat } from '../legacy'
+import type { MailInfo, MailTexts } from '../mail'
 import type { XOp } from '../../collab/xlsx-ops'
 import type { POp } from '../../collab/pptx-ops'
 import type { PptxCollabResult } from '../../collab/pptx-worker'
@@ -32,14 +33,24 @@ export interface OpenParams {
    * colored in it, whatever its name and type say. Without it, the name (main.ts) or MIME type tells a source file.
    */
   language?: string
+  /**
+   * Mail messages (.eml, .msg): the words of the header written into the document ("From", "To"…), and the locale its
+   * dates are written in (default: the browser's). The viewer gives its own UI texts.
+   */
+  mail?: { texts?: Partial<MailTexts>; locale?: string }
 }
 
 export interface OpenResult {
   kind: DocKind
   name?: string
   size: number
-  /** the file was converted from another format (shown read-only): Apple Pages (as docx), Keynote (as pptx), Numbers (as xlsx), Microsoft Visio (as pptx) */
-  from?: 'pages' | 'keynote' | 'numbers' | 'visio'
+  /**
+   * the file was converted from another format (shown read-only): Apple Pages (as docx), Keynote (as pptx), Numbers
+   * (as xlsx), Microsoft Visio (as pptx), a mail message (as docx): Internet message (.eml, .emlx), Outlook item (.msg, .oft)
+   */
+  from?: 'pages' | 'keynote' | 'numbers' | 'visio' | 'eml' | 'msg'
+  /** a mail message (`from` 'eml' / 'msg'): its subject and the attachments `mail.attachment` saves */
+  mail?: MailInfo
   /** built from a plain file, editable: CSV / TSV (as xlsx), text / Markdown / HTML (as docx); saving writes the Office format */
   imported?: PlainFormat
   /** a source file (`imported` 'code'): its language ("typescript", "python"…; a hint's own word when the language is not known) */
@@ -66,6 +77,8 @@ export interface Methods {
   'plain.source'(): string | null
   /** a source file's bytes as they were opened (saved unchanged when its code was not edited), null otherwise */
   'plain.original'(): Blob | null
+  /** a mail message's attachment (its index in `OpenResult.mail.attachments`), as a file */
+  'mail.attachment'(index: number): Blob
   'docx.start'(): void
   'docx.edit'(op: EditOp): EditResult
   'docx.table'(op: TableOp): EditResult

@@ -19,6 +19,7 @@ export function useDocument(src: DocSource | null | undefined, options: OpenOpti
   const [state, setState] = useState<DocumentState>({ client: null, error: null, loading: !!src, progress: null })
   const { name, worker, credentials, language } = options
   const headersKey = options.headers ? JSON.stringify(options.headers) : ''
+  const mailKey = options.mail ? JSON.stringify(options.mail) : ''
   const shown = useRef<DocumentClient | null>(null)
   const keepRef = useRef(keep)
   keepRef.current = keep
@@ -48,6 +49,7 @@ export function useDocument(src: DocSource | null | undefined, options: OpenOpti
       credentials,
       language,
       headers: headersKey ? JSON.parse(headersKey) : undefined,
+      mail: mailKey ? JSON.parse(mailKey) : undefined,
       onProgress: (p) => live && setState((s) => ({ ...s, progress: p })),
       signal: giveUp.signal,
     }).then(
@@ -67,6 +69,6 @@ export function useDocument(src: DocSource | null | undefined, options: OpenOpti
       live = false
       giveUp.abort()
     }
-  }, [src, name, worker, credentials, headersKey, language])
+  }, [src, name, worker, credentials, headersKey, language, mailKey])
   return state
 }

@@ -1,10 +1,12 @@
 import { VISIO_EXT } from '../../core/visio'
+import { MAIL_EXT } from '../../core/mail/types'
 import { describeBinary } from '../../core/filetype'
 import { extOf, PLAIN_EXT, plainFormat } from '../../core/plain'
 import { LEGACY_EXT, legacyFormatOf } from '../../core/legacy'
 
-// .pages / .key / .numbers (Apple iWork) open as read-only Word / PowerPoint / Excel files, Visio drawings as read-only presentations
-const OFFICE = new Set(['docx', 'dotx', 'xlsx', 'xltx', 'pptx', 'potx', 'pages', 'key', 'numbers', ...VISIO_EXT])
+// .pages / .key / .numbers (Apple iWork) open as read-only Word / PowerPoint / Excel files, Visio drawings as read-only presentations,
+// mail messages (.eml, .emlx, .msg, .oft) as read-only documents
+const OFFICE = new Set(['docx', 'dotx', 'xlsx', 'xltx', 'pptx', 'potx', 'pages', 'key', 'numbers', ...VISIO_EXT, ...Object.keys(MAIL_EXT)])
 
 /** `accept` of the File → Open picker */
 export const OPEN_ACCEPT = [...OFFICE, ...Object.keys(LEGACY_EXT), ...Object.keys(PLAIN_EXT), 'gz'].map((e) => '.' + e).join(',')
@@ -19,7 +21,7 @@ export interface Imported {
 }
 
 /**
- * Office, iWork (Pages, Keynote, Numbers) and Visio files open as they are; Word / Excel / PowerPoint 97-2003, RTF and
+ * Office, iWork (Pages, Keynote, Numbers), Visio files and mail messages open as they are; Word / Excel / PowerPoint 97-2003, RTF and
  * OpenDocument files are converted to Office Open XML; CSV / TSV become a workbook, text / Markdown / HTML, SVG and
  * Mermaid / PlantUML / Graphviz diagrams a document, also gzip-compressed (.svgz, .csv.gz).
  */

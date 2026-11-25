@@ -7,8 +7,11 @@
 import { packDocx } from './docx'
 import { RtfReader } from './reader'
 
-/** Converts an RTF file (its bytes) to a DOCX file. */
-export async function rtfToDocx(bytes: Uint8Array): Promise<Blob> {
+/**
+ * Converts an RTF file (its bytes) to a DOCX file. `wrap`: body XML put before and after the document's (the header
+ * of a mail message whose body is RTF); it may use direct formatting only.
+ */
+export async function rtfToDocx(bytes: Uint8Array, wrap?: { before: string; after: string }): Promise<Blob> {
   let k = 0
   while (k < bytes.length && k < 64 && (bytes[k] <= 0x20 || bytes[k] === 0xef || bytes[k] === 0xbb || bytes[k] === 0xbf)) k++
   if (bytes[k] !== 0x7b || bytes[k + 1] !== 0x5c || !/^(rtf|urtf|pwd)/.test(String.fromCharCode(...bytes.subarray(k + 2, k + 6))))
@@ -16,5 +19,5 @@ export async function rtfToDocx(bytes: Uint8Array): Promise<Blob> {
   const r = new RtfReader(k ? bytes.subarray(k) : bytes)
   r.run()
   r.finish()
-  return packDocx(r)
+  return packDocx(r, wrap)
 }

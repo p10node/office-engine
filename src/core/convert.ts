@@ -190,6 +190,36 @@ export interface ImportRun {
   href?: string
   /** a TeX formula (written as an equation; `text` is not used) */
   math?: TexMath
+  /** a picture in the line (`text` is not used) */
+  picture?: ImportPicture
+}
+
+/** a PNG / JPEG / GIF / BMP / WebP picture, in the line of text */
+export interface ImportPicture {
+  data: Uint8Array
+  /** its file extension: 'png', 'jpeg', 'gif', 'bmp', 'webp' */
+  ext: string
+  /** size in px (1/96 in) */
+  w: number
+  h: number
+  alt?: string
+}
+
+/** a table: rows of cells, each holding paragraphs */
+export interface ImportTable {
+  rows: ImportCell[][]
+  /** hairlines around and between the cells (else none) */
+  borders?: boolean
+  /** each column's share of the text width (they add up to 1), else columns of one width */
+  widths?: number[]
+}
+
+export interface ImportCell {
+  paras: ImportPara[]
+  colSpan?: number
+  rowSpan?: number
+  /** background, '#rrggbb' */
+  fill?: string
 }
 
 /** a picture of its own paragraph: an SVG drawing (diagrams) */
@@ -206,8 +236,16 @@ export interface ImportPara {
   /** heading level 1-6 */
   heading?: number
   list?: 'bullet' | 'number'
+  /** nesting of the list item (0: first level) */
+  level?: number
   align?: 'center'
   image?: ImportImage
+  /** a table in place of the paragraph (`runs` is not used) */
+  table?: ImportTable
+  /** a hairline under the paragraph */
+  rule?: boolean
+  /** space after the paragraph in pt (else the document's 8 pt) */
+  after?: number
   /**
    * A code block, in this language ('' for none): written in a "Source Code" paragraph style named after it, which
    * the reader turns back into `Paragraph.code` (see codeStyleName)
@@ -525,8 +563,8 @@ function numberingXml(nums: ('bullet' | 'number')[]): string {
 
 const EMU_PX = 9525
 
-/** an inline picture scaled down to fit `maxW` × `maxH` px */
-function drawingXml(img: ImportImage, rid: string, id: number, maxW: number, maxH: number): string {
+/** an inline picture scaled down to fit `maxW` × `maxH` px; `name`: what it is called in the document ("Diagram", "Picture") and its file */
+function drawingXml(img: { w: number; h: number; alt?: string }, rid: string, id: number, maxW: number, maxH: number, name = 'Diagram', file = `diagram${id}.svg`): string {
   const scale = Math.min(1, maxW / img.w, maxH / img.h)
   const cx = Math.max(1, Math.round(img.w * scale * EMU_PX))
   const cy = Math.max(1, Math.round(img.h * scale * EMU_PX))
@@ -536,8 +574,8 @@ function drawingXml(img: ImportImage, rid: string, id: number, maxW: number, max
   const descr = img.alt ? ` descr="${escAttr(img.alt)}"` : ''
   return (
     `<w:r><w:drawing><wp:inline xmlns:wp="${WP}" distT="0" distB="0" distL="0" distR="0"><wp:extent cx="${cx}" cy="${cy}"/><wp:effectExtent l="0" t="0" r="0" b="0"/>` +
-    `<wp:docPr id="${id}" name="Diagram ${id}"${descr}/><wp:cNvGraphicFramePr><a:graphicFrameLocks xmlns:a="${A}" noChangeAspect="1"/></wp:cNvGraphicFramePr>` +
-    `<a:graphic xmlns:a="${A}"><a:graphicData uri="${PIC}"><pic:pic xmlns:pic="${PIC}"><pic:nvPicPr><pic:cNvPr id="${id}" name="diagram${id}.svg"${descr}/><pic:cNvPicPr/></pic:nvPicPr>` +
+    `<wp:docPr id="${id}" name="${name} ${id}"${descr}/><wp:cNvGraphicFramePr><a:graphicFrameLocks xmlns:a="${A}" noChangeAspect="1"/></wp:cNvGraphicFramePr>` +
+    `<a:graphic xmlns:a="${A}"><a:graphicData uri="${PIC}"><pic:pic xmlns:pic="${PIC}"><pic:nvPicPr><pic:cNvPr id="${id}" name="${escAttr(file)}"${descr}/><pic:cNvPicPr/></pic:nvPicPr>` +
     `<pic:blipFill><a:blip r:embed="${rid}"/><a:stretch><a:fillRect/></a:stretch></pic:blipFill><pic:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="${cx}" cy="${cy}"/></a:xfrm>` +
     `<a:prstGeom prst="rect"><a:avLst/></a:prstGeom></pic:spPr></pic:pic></a:graphicData></a:graphic></wp:inline></w:drawing></w:r>`
   )
@@ -559,64 +597,166 @@ function codeStylesXml(ids: Map<string, string>): string {
   return x
 }
 
-/** Builds a document (Letter, 1" margins, Calibri 11) from paragraphs of formatted runs and pictures. */
-export function parasToDocx(paras: ImportPara[], opts: DocxOptions = {}): Promise<Blob> {
-  const W = 'http://schemas.openxmlformats.org/wordprocessingml/2006/main'
-  // the text area in px: 6.5" × 9" (portrait), 9" × 6.5" (landscape)
-  const areaW = opts.landscape ? 864 : 624
-  const areaH = opts.landscape ? 600 : 840
-  const images: string[] = []
-  const links: string[] = []
-  const nums: ('bullet' | 'number')[] = []
+const PICTURE_TYPES: Record<string, string> = { svg: 'image/svg+xml', png: 'image/png', jpeg: 'image/jpeg', gif: 'image/gif', bmp: 'image/bmp', webp: 'image/webp' }
+
+/** twentieths of a point in a px */
+const TW_PX = 15
+
+/** The body of a document built from paragraphs, and the links, pictures, lists and code styles it refers to. */
+class BodyWriter {
+  readonly links: string[] = []
+  /** pictures (diagrams as SVG text, pictures as bytes): their part names and data */
+  readonly media: { name: string; data: string | Uint8Array }[] = []
+  readonly nums: ('bullet' | 'number')[] = []
   /** code paragraph styles by language: their ids */
-  const codeIds = new Map<string, string>()
-  const codeId = (lang: string) => {
-    let id = codeIds.get(lang)
+  readonly codeIds = new Map<string, string>()
+
+  /** `areaW` × `areaH`: the text area in px; `rels`: false for a body put in another document (no links, pictures or lists, which need its parts) */
+  constructor(private areaW: number, private areaH: number, private rels = true) {}
+
+  private codeId(lang: string) {
+    let id = this.codeIds.get(lang)
     if (id === undefined) {
       // "SourceCode" is the style of code in no language, the others are based on it
       const base = 'SourceCode' + (lang ? lang.replace(/[^A-Za-z0-9]/g, '').replace(/^[a-z]/, (c) => c.toUpperCase()) || 'Lang' : '')
-      const taken = new Set([...codeIds.values(), ...(lang ? ['SourceCode'] : [])])
+      const taken = new Set([...this.codeIds.values(), ...(lang ? ['SourceCode'] : [])])
       id = base
       for (let k = 2; taken.has(id); k++) id = base + k
-      codeIds.set(lang, id)
+      this.codeIds.set(lang, id)
     }
     return id
   }
-  let prevList: 'bullet' | 'number' | undefined
-  let body = ''
-  for (const p of paras) {
-    let pPr = ''
-    if (p.code !== undefined) pPr += `<w:pStyle w:val="${codeId(p.code)}"/>`
-    else if (p.heading && p.heading >= 1 && p.heading <= 6) pPr += `<w:pStyle w:val="Heading${p.heading}"/>`
-    else if (p.list) pPr += '<w:pStyle w:val="ListParagraph"/>'
-    if (p.list) {
-      if (p.list !== prevList) nums.push(p.list)
-      pPr += `<w:numPr><w:ilvl w:val="0"/><w:numId w:val="${nums.length}"/></w:numPr>`
-    }
-    prevList = p.list
-    if (p.align === 'center') pPr += '<w:jc w:val="center"/>'
-    let runs = ''
-    if (p.image) {
-      images.push(p.image.svg)
-      runs += drawingXml(p.image, `rIdM${images.length}`, images.length, areaW, areaH)
-    }
-    for (let i = 0; i < p.runs.length; ) {
-      const href = p.runs[i].href
-      if (!href) {
-        runs += runXml(p.runs[i++])
+
+  /** paragraphs and tables; `width`: the px they are laid out in (a table cell's) */
+  blocks(paras: ImportPara[], width = this.areaW): string {
+    let prevList: 'bullet' | 'number' | undefined
+    let body = ''
+    for (const p of paras) {
+      if (p.table) {
+        body += this.table(p.table, width)
+        prevList = undefined
         continue
       }
-      let inner = ''
-      while (i < p.runs.length && p.runs[i].href === href) inner += runXml(p.runs[i++])
-      if (!safeHref(href)) runs += inner
-      else {
-        links.push(href)
-        runs += `<w:hyperlink r:id="rIdL${links.length}" w:history="1">${inner}</w:hyperlink>`
+      let pPr = ''
+      const list = this.rels ? p.list : undefined
+      if (p.code !== undefined) pPr += `<w:pStyle w:val="${this.codeId(p.code)}"/>`
+      else if (p.heading && p.heading >= 1 && p.heading <= 6) pPr += `<w:pStyle w:val="Heading${p.heading}"/>`
+      else if (list) pPr += '<w:pStyle w:val="ListParagraph"/>'
+      if (list) {
+        if (list !== prevList) this.nums.push(list)
+        pPr += `<w:numPr><w:ilvl w:val="${Math.max(0, Math.min(8, p.level ?? 0))}"/><w:numId w:val="${this.nums.length}"/></w:numPr>`
       }
+      prevList = list
+      if (p.rule) pPr += '<w:pBdr><w:bottom w:val="single" w:sz="4" w:space="4" w:color="BFBFBF"/></w:pBdr>'
+      if (p.after !== undefined) pPr += `<w:spacing w:after="${Math.round(p.after * 20)}"/>`
+      if (p.align === 'center') pPr += '<w:jc w:val="center"/>'
+      let runs = ''
+      if (p.image && this.rels) {
+        this.media.push({ name: `diagram${this.media.length + 1}.svg`, data: p.image.svg })
+        runs += drawingXml(p.image, `rIdM${this.media.length}`, this.media.length, width, this.areaH)
+      }
+      for (let i = 0; i < p.runs.length; ) {
+        const href = this.rels ? p.runs[i].href : undefined
+        if (!href) {
+          runs += this.run(p.runs[i++], width)
+          continue
+        }
+        let inner = ''
+        while (i < p.runs.length && p.runs[i].href === href) inner += this.run(p.runs[i++], width)
+        if (!safeHref(href)) runs += inner
+        else {
+          this.links.push(href)
+          runs += `<w:hyperlink r:id="rIdL${this.links.length}" w:history="1">${inner}</w:hyperlink>`
+        }
+      }
+      body += `<w:p>${pPr ? `<w:pPr>${pPr}</w:pPr>` : ''}${runs}</w:p>`
     }
-    body += `<w:p>${pPr ? `<w:pPr>${pPr}</w:pPr>` : ''}${runs}</w:p>`
+    return body
   }
-  if (!body) body = '<w:p/>'
+
+  private run(r: ImportRun, width: number): string {
+    const pic = r.picture
+    if (!pic) return runXml(r)
+    if (!this.rels || !PICTURE_TYPES[pic.ext] || !(pic.w > 0) || !(pic.h > 0)) return ''
+    const n = this.media.length + 1
+    const name = `image${n}.${pic.ext}`
+    this.media.push({ name, data: pic.data })
+    return drawingXml(pic, `rIdM${n}`, n, width, this.areaH, 'Picture', name)
+  }
+
+  /** a table filling `width` px: its cells laid out on a grid (spans merge grid cells) */
+  private table(t: ImportTable, width: number): string {
+    // the grid: where each cell starts, past the cells of rows above that span down into the row
+    const below: number[] = []
+    const placed = t.rows.map((row) => {
+      const out: { cell: ImportCell | null; col: number; span: number }[] = []
+      let col = 0
+      const skipMerged = () => {
+        while ((below[col] ?? 0) > 0) {
+          out.push({ cell: null, col, span: 1 })
+          below[col]--
+          col++
+        }
+      }
+      for (const cell of row) {
+        skipMerged()
+        const span = Math.max(1, Math.min(64, cell.colSpan ?? 1))
+        out.push({ cell, col, span })
+        for (let k = 0; k < span; k++) below[col + k] = Math.max(0, Math.min(1000, cell.rowSpan ?? 1) - 1)
+        col += span
+      }
+      skipMerged()
+      return out
+    })
+    const cols = Math.max(1, ...placed.map((r) => r.reduce((n, c) => Math.max(n, c.col + c.span), 0)))
+    const total = Math.round(width * TW_PX)
+    const shares = t.widths?.length === cols ? t.widths : Array.from({ length: cols }, () => 1 / cols)
+    const grid = shares.map((f) => Math.max(1, Math.round(f * total)))
+    const line = t.borders ? 'w:val="single" w:sz="4" w:space="0" w:color="BFBFBF"' : 'w:val="nil"'
+    const borders = ['top', 'left', 'bottom', 'right', 'insideH', 'insideV'].map((side) => `<w:${side} ${line}/>`).join('')
+    let x = `<w:tbl><w:tblPr><w:tblW w:w="${total}" w:type="dxa"/><w:tblBorders>${borders}</w:tblBorders><w:tblLayout w:type="fixed"/><w:tblLook w:val="0000"/></w:tblPr>`
+    x += `<w:tblGrid>${grid.map((w) => `<w:gridCol w:w="${w}"/>`).join('')}</w:tblGrid>`
+    placed.forEach((row, r) => {
+      x += '<w:tr>'
+      let end = 0
+      for (const { cell, col, span } of row) {
+        const w = grid.slice(col, col + span).reduce((a, b) => a + b, 0)
+        let tcPr = `<w:tcW w:w="${w}" w:type="dxa"/>${span > 1 ? `<w:gridSpan w:val="${span}"/>` : ''}`
+        // a cell of a row above, spanning down: its continuation
+        if (!cell) x += `<w:tc><w:tcPr>${tcPr}<w:vMerge/></w:tcPr><w:p/></w:tc>`
+        else {
+          if ((cell.rowSpan ?? 1) > 1 && r + 1 < placed.length) tcPr += '<w:vMerge w:val="restart"/>'
+          const fill = officeHex(cell.fill)
+          if (fill) tcPr += `<w:shd w:val="clear" w:color="auto" w:fill="${fill}"/>`
+          const inner = this.blocks(cell.paras, Math.max(16, w / TW_PX - 14))
+          // a cell ends with a paragraph
+          x += `<w:tc><w:tcPr>${tcPr}</w:tcPr>${inner.endsWith('</w:p>') ? inner : inner + '<w:p/>'}</w:tc>`
+        }
+        end = col + span
+      }
+      // a short row: empty cells to the grid's end
+      for (let col = end; col < cols; col++) x += `<w:tc><w:tcPr><w:tcW w:w="${grid[col]}" w:type="dxa"/></w:tcPr><w:p/></w:tc>`
+      x += '</w:tr>'
+    })
+    return x + '</w:tbl>'
+  }
+}
+
+/**
+ * The body XML of paragraphs put into another document (the RTF body of a mail message): formatting, tables and
+ * rules; no links, pictures or lists, which need parts of the document they are in.
+ */
+export function parasXml(paras: ImportPara[], opts: DocxOptions = {}): string {
+  return new BodyWriter(opts.landscape ? 864 : 624, opts.landscape ? 600 : 840, false).blocks(paras)
+}
+
+/** Builds a document (Letter, 1" margins, Calibri 11) from paragraphs of formatted runs, tables and pictures. */
+export function parasToDocx(paras: ImportPara[], opts: DocxOptions = {}): Promise<Blob> {
+  const W = 'http://schemas.openxmlformats.org/wordprocessingml/2006/main'
+  // the text area in px: 6.5" × 9" (portrait), 9" × 6.5" (landscape)
+  const out = new BodyWriter(opts.landscape ? 864 : 624, opts.landscape ? 600 : 840)
+  const body = out.blocks(paras) || '<w:p/>'
+  const { links, media, nums, codeIds } = out
   // equations (TeX math): Office Math, with the TeX in attributes Word is told it may ignore
   const math = paras.some((p) => p.runs.some((r) => r.math)) ? ` xmlns:m="${M_NS}" xmlns:mc="${MC_NS}" xmlns:oe="${OE_NS}" mc:Ignorable="oe"` : ''
   const sect = `<w:sectPr>${opts.landscape ? '<w:pgSz w:w="15840" w:h="12240" w:orient="landscape"/>' : '<w:pgSz w:w="12240" w:h="15840"/>'}<w:pgMar w:top="1440" w:right="1440" w:bottom="1440" w:left="1440" w:header="720" w:footer="720" w:gutter="0"/></w:sectPr>`
@@ -632,13 +772,13 @@ export function parasToDocx(paras: ImportPara[], opts: DocxOptions = {}): Promis
   const rels =
     `${XML}<Relationships xmlns="${PKG_REL}"><Relationship Id="rId1" Type="${REL}/styles" Target="styles.xml"/><Relationship Id="rId2" Type="${REL}/numbering" Target="numbering.xml"/>` +
     links.map((u, k) => `<Relationship Id="rIdL${k + 1}" Type="${REL}/hyperlink" Target="${escAttr(u)}" TargetMode="External"/>`).join('') +
-    images.map((_, k) => `<Relationship Id="rIdM${k + 1}" Type="${REL}/image" Target="media/diagram${k + 1}.svg"/>`).join('') +
+    media.map((m, k) => `<Relationship Id="rIdM${k + 1}" Type="${REL}/image" Target="media/${m.name}"/>`).join('') +
     '</Relationships>'
-  const parts = new Map<string, string>([
+  const parts = new Map<string, string | Uint8Array>([
     [
       '[Content_Types].xml',
       `${XML}<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">${CT_RELS}` +
-        (images.length ? '<Default Extension="svg" ContentType="image/svg+xml"/>' : '') +
+        [...new Set(media.map((m) => m.name.slice(m.name.lastIndexOf('.') + 1)))].map((e) => `<Default Extension="${e}" ContentType="${PICTURE_TYPES[e]}"/>`).join('') +
         '<Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/>' +
         '<Override PartName="/word/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml"/>' +
         '<Override PartName="/word/numbering.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.numbering+xml"/></Types>',
@@ -648,7 +788,7 @@ export function parasToDocx(paras: ImportPara[], opts: DocxOptions = {}): Promis
     ['word/document.xml', `${XML}<w:document xmlns:w="${W}" xmlns:r="${REL}"${math}><w:body>${body}${sect}</w:body></w:document>`],
     ['word/styles.xml', styles],
     ['word/numbering.xml', numberingXml(nums)],
-    ...images.map((svg, k) => [`word/media/diagram${k + 1}.svg`, svg] as [string, string]),
+    ...media.map((m) => [`word/media/${m.name}`, m.data] as [string, string | Uint8Array]),
   ])
   return writeZip(parts, DOCX_MIME)
 }

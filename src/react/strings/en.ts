@@ -58,7 +58,41 @@ export const en = {
   newWhat: { docx: 'document', xlsx: 'spreadsheet', pptx: 'presentation' },
 
   kind: { docx: 'Word document', xlsx: 'Excel workbook', pptx: 'PowerPoint presentation' },
-  from: { pages: 'Apple Pages document', keynote: 'Apple Keynote presentation', numbers: 'Apple Numbers spreadsheet', visio: 'Microsoft Visio drawing' },
+  from: {
+    pages: 'Apple Pages document',
+    keynote: 'Apple Keynote presentation',
+    numbers: 'Apple Numbers spreadsheet',
+    visio: 'Microsoft Visio drawing',
+    eml: 'E-mail message',
+    msg: 'Outlook message',
+  },
+  /** the words written into the document a mail message (.eml, .msg) is shown as */
+  mail: {
+    from: 'From',
+    sent: 'Sent',
+    to: 'To',
+    cc: 'Cc',
+    bcc: 'Bcc',
+    attachments: 'Attachments',
+    attached: 'Attached message',
+    noSubject: '(no subject)',
+    highImportance: 'High importance',
+    lowImportance: 'Low importance',
+    remotePictures: 'Pictures from the web are not shown: nothing is downloaded when a message is opened.',
+    encrypted: 'This message is encrypted: its content cannot be shown.',
+    item: {
+      meetingRequest: 'Meeting request',
+      meetingCanceled: 'Meeting canceled',
+      meetingAccepted: 'Meeting accepted',
+      meetingDeclined: 'Meeting declined',
+      meetingTentative: 'Meeting tentatively accepted',
+      appointment: 'Appointment',
+      contact: 'Contact',
+      task: 'Task',
+      note: 'Note',
+      report: 'Delivery report',
+    },
+  },
   converted: {
     doc: 'Word 97-2003 document',
     xls: 'Excel 97-2003 workbook',
@@ -113,6 +147,8 @@ export const en = {
     save: 'Save',
     rename: 'Rename…',
     downloadAs: 'Download as',
+    /** a mail message's attachments, each saved from the menu */
+    attachments: 'Attachments',
     pdf: 'PDF document',
     html: 'Web page',
     txt: 'Plain text',
@@ -127,7 +163,7 @@ export const en = {
     preparing: 'Preparing…',
     /** `what`: what the file is instead, where its first bytes tell (a ZIP archive, an executable, ...) */
     unsupported: (name: string, what?: string) =>
-      `Cannot open “${name}”${what ? ` (it is ${what})` : ''}: supported files are Word, Excel, PowerPoint (also 97-2003), OpenDocument, RTF, Pages, Keynote, Numbers, Visio, CSV, text, Markdown, HTML, SVG, Mermaid, PlantUML, Graphviz and source code (also gzip-compressed: .svgz, .csv.gz)`,
+      `Cannot open “${name}”${what ? ` (it is ${what})` : ''}: supported files are Word, Excel, PowerPoint (also 97-2003), OpenDocument, RTF, Pages, Keynote, Numbers, Visio, e-mail (.eml, .msg), CSV, text, Markdown, HTML, SVG, Mermaid, PlantUML, Graphviz and source code (also gzip-compressed: .svgz, .csv.gz)`,
   },
 
   zoom: {
