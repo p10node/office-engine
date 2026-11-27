@@ -1,14 +1,15 @@
 /**
  * Builds the standalone SDK packages (packages/*): one ESM bundle (shared code compiled in, no dependency) and one
- * self-contained index.d.ts each. Usage: bun scripts/build-packages.ts [name…]
+ * self-contained index.d.ts each. @p10node/convert runs on a server: its entries (library, command, conversion
+ * thread) are bundled for Node with Bun, and its .d.ts files are its own modules'. Usage: bun scripts/build-packages.ts [name…]
  */
 import { spawnSync } from 'node:child_process'
-import { copyFileSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
+import { chmodSync, copyFileSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { gzipSync } from 'node:zlib'
 import { build } from 'vite'
 
-const ALL = ['diagram', 'mermaid', 'plantuml', 'graphviz', 'markdown']
+const ALL = ['diagram', 'mermaid', 'plantuml', 'graphviz', 'markdown', 'convert']
 const names = process.argv.slice(2).length ? process.argv.slice(2) : ALL
 const root = resolve(import.meta.dir, '..')
 const abs = (p: string) => resolve(root, p)
@@ -17,6 +18,10 @@ for (const name of names) {
   if (!ALL.includes(name)) throw new Error(`Unknown package “${name}”: ${ALL.join(', ')}`)
   const dir = abs(`packages/${name}`)
   rmSync(`${dir}/dist`, { recursive: true, force: true })
+  if (name === 'convert') {
+    await buildServer(dir)
+    continue
+  }
   await build({
     configFile: false,
     root,
@@ -55,4 +60,57 @@ for (const name of names) {
   copyFileSync(abs('LICENSE'), `${dir}/LICENSE`)
   const size = statSync(`${dir}/dist/index.js`).size
   console.log(`@p10node/${name}: ${(size / 1024).toFixed(1)} KB, ${(gzipSync(js).length / 1024).toFixed(1)} KB gzip`)
+}
+
+/** @p10node/convert: index.js (the library), cli.js (office-convert) and worker.js (a conversion thread), for Node and Bun */
+async function buildServer(dir: string) {
+  const res = await Bun.build({
+    entrypoints: ['index', 'cli', 'worker'].map((e) => `${dir}/src/${e}.ts`),
+    outdir: `${dir}/dist`,
+    target: 'node',
+    format: 'esm',
+    splitting: true,
+    minify: true,
+    sourcemap: 'linked',
+  })
+  if (!res.success) throw new AggregateError(res.logs, 'convert: the bundle failed')
+  const js = readdirSync(`${dir}/dist`).filter((f) => f.endsWith('.js'))
+  for (const f of js) {
+    const code = readFileSync(`${dir}/dist/${f}`, 'utf8')
+    // only Node's own modules and the bundle's chunks
+    const outside = [...code.matchAll(/(?:^|[;}])\s*(?:import|export)\s*(?:[\w$*{},\s]+from\s*)?["']([^"']+)["']|\bimport\(\s*["']([^"']+)["']/gm)]
+      .map((m) => m[1] ?? m[2])
+      .filter((s) => !s.startsWith('node:') && !s.startsWith('./'))
+    if (outside.length) throw new Error(`convert: ${f} imports ${outside.join(', ')}`)
+  }
+  const cli = `${dir}/dist/cli.js`
+  if (!readFileSync(cli, 'utf8').startsWith('#!/usr/bin/env node')) throw new Error('convert: cli.js lost its #! line')
+  chmodSync(cli, 0o755)
+
+  const tmp = abs('node_modules/.cache/pkg-types/convert')
+  rmSync(tmp, { recursive: true, force: true })
+  mkdirSync(tmp, { recursive: true })
+  const cfg = `${tmp}/tsconfig.json`
+  writeFileSync(
+    cfg,
+    JSON.stringify({
+      extends: abs('tsconfig.json'),
+      compilerOptions: { noEmit: false, declaration: true, emitDeclarationOnly: true, outDir: `${tmp}/out`, rootDir: root, types: ['bun'] },
+      include: [],
+      files: [`${dir}/src/index.ts`],
+    }),
+  )
+  const tsc = spawnSync(abs('node_modules/.bin/tsc'), ['-p', cfg], { stdio: 'inherit' })
+  if (tsc.status) throw new Error('convert: tsc failed')
+  const types = `${tmp}/out/packages/convert/src`
+  for (const f of ['index', 'convert', 'fonts', 'pool', 'server', 'serve']) {
+    const dts = readFileSync(`${types}/${f}.d.ts`, 'utf8')
+    const outside = [...dts.matchAll(/\bfrom\s+['"]([^'"]+)['"]/g)].map((m) => m[1]).filter((s) => !/^\.\/[a-z]+$/.test(s))
+    if (outside.length) throw new Error(`convert: ${f}.d.ts refers to ${outside.join(', ')}`)
+    // with their extension, as Node's ESM resolution (TypeScript's NodeNext) wants them
+    writeFileSync(`${dir}/dist/${f}.d.ts`, dts.replace(/(\bfrom\s+['"]\.\/[a-z]+)(['"])/g, '$1.js$2'))
+  }
+  copyFileSync(abs('LICENSE'), `${dir}/LICENSE`)
+  const size = js.reduce((n, f) => n + statSync(`${dir}/dist/${f}`).size, 0)
+  console.log(`@p10node/convert: ${js.length} files, ${(size / 1024).toFixed(1)} KB`)
 }

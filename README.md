@@ -117,6 +117,16 @@ import { render } from '@p10node/mermaid'
 document.getElementById('out')!.innerHTML = render('graph LR\n  A --> B').svg
 ```
 
+## On a server
+
+[`@p10node/convert`](packages/convert) runs the engine in Node or Bun, on worker threads, to convert files without LibreOffice: DOC / XLS / PPT, RTF, OpenDocument, Pages / Keynote / Numbers, Visio, CSV, Markdown and HTML to DOCX / XLSX / PPTX, presentations to PDF, and documents to text, Markdown, HTML or CSV. A function, a command and an HTTP service with Gotenberg's routes, in a Docker image of Node, the bundle and fonts. PDF of spreadsheets and documents follows ([#47](https://github.com/p10node/office-engine/issues/47), [#48](https://github.com/p10node/office-engine/issues/48)).
+
+```sh
+office-convert report.doc                                   # report.docx
+curl -F files=@report.doc http://localhost:3000/convert -o report.docx
+curl -F files=@deck.pptx http://localhost:3000/forms/libreoffice/convert -o deck.pdf   # Gotenberg's route
+```
+
 ## License
 
 [MIT](LICENSE) © p10node

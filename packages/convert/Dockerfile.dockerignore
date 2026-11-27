@@ -1,0 +1,8 @@
+**/node_modules
+**/dist
+artifacts
+playground
+e2e
+docs
+test
+.git

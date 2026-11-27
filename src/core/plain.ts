@@ -112,11 +112,26 @@ export function unpackedName(name = ''): string | null {
 /** gzip's magic bytes */
 export const isGzip = (b: Uint8Array) => b[0] === 0x1f && b[1] === 0x8b
 
-/** A gzip-compressed source (.svgz, .csv.gz) unpacked whole into memory (native DecompressionStream); any other source as it is. */
-export async function ungzipped(source: ByteSource): Promise<ByteSource> {
+/**
+ * A gzip-compressed source (.svgz, .csv.gz) unpacked whole into memory (native DecompressionStream); any other source
+ * as it is. Past `limit` unpacked bytes it fails.
+ */
+export async function ungzipped(source: ByteSource, limit = Infinity): Promise<ByteSource> {
   if (!isGzip(await source.read(0, 2))) return source
   const packed = new Blob([(await source.read(0, source.size)) as BlobPart])
-  const unpacked = packed.stream().pipeThrough(new DecompressionStream('gzip') as unknown as TransformStream<Uint8Array, Uint8Array>)
+  let total = 0
+  const unpacked = packed
+    .stream()
+    .pipeThrough(new DecompressionStream('gzip') as unknown as TransformStream<Uint8Array, Uint8Array>)
+    .pipeThrough(
+      new TransformStream<Uint8Array, Uint8Array>({
+        transform(chunk, ctrl) {
+          total += chunk.length
+          if (total > limit) ctrl.error(new Error(`The file is too large to open (over ${Math.round(limit / (1024 * 1024))} MB unpacked)`))
+          else ctrl.enqueue(chunk)
+        },
+      }),
+    )
   return new BlobSource(await new Response(unpacked, source.type ? { headers: { 'content-type': source.type } } : undefined).blob(), source.name)
 }
 
