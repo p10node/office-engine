@@ -96,17 +96,32 @@ export function trackEdit(before: Paragraph[], next: Paragraph[], pa0: string, s
   const inserted = N.slice(p, N.length - s)
   if (!removed.some(isText) && !inserted.some(isText)) return { next, sel }
 
+  // A change right next to one of the same kind by the same author goes on with it, under its mark: letters typed one
+  // after another are one insertion of when it began, as in Word. (Every edit comes with a mark of its own time, and
+  // runs join only under the same mark: a word typed across the end of a second was two insertions.)
+  const own = (t: Tok | undefined, k: TrackMark['k']): TrackMark | undefined => {
+    if (!t || !isText(t) || t.obj || !t.tc || t.tc.k !== k || t.tc.author !== mark.author || t.tc.mv) return undefined
+    // (a deletion of text someone inserted carries that insertion: it belongs to that text, not to the change)
+    const { ins: theirs, ...plain } = t.tc
+    return theirs ? plain : t.tc
+  }
+  const left = p > 0 ? B[p - 1] : undefined
+  const right = s > 0 ? B[B.length - s] : undefined
+  const typed = inserted.some((t) => isText(t) && !t.obj)
+
   // what stays of the removed text: deleted marks. The author's own insertion taken out again is gone for good;
   // someone else's becomes a deletion, so the reviewer still sees it. Objects go for real, unless already deleted.
+  // (the kept text is put before the new text: the text after both is next to it only when nothing new is put in)
+  const del: TrackMark = own(left, 'del') ?? (typed ? undefined : own(right, 'del')) ?? { ...mark, k: 'del' }
   const kept: Extract<Tok, { b?: false }>[] = []
   for (const t of removed) {
     if (!isText(t)) continue
     if (t.tc?.k === 'del') kept.push(t)
     else if (t.obj) continue
     else if (t.tc?.k === 'ins' && t.tc.author === mark.author) continue
-    else kept.push({ ...t, tc: { ...mark, k: 'del', ...(t.tc?.k === 'ins' ? { ins: t.tc } : {}) } })
+    else kept.push({ ...t, tc: t.tc?.k === 'ins' ? { ...del, ins: t.tc } : del })
   }
-  const ins: TrackMark = { ...mark, k: 'ins' }
+  const ins: TrackMark = (kept.length ? undefined : own(left, 'ins')) ?? own(right, 'ins') ?? { ...mark, k: 'ins' }
 
   // the paragraphs of `next`, the kept text put back where the removal was, the new text marked
   const paras: Extract<Tok, { b?: false }>[][] = [[]]
