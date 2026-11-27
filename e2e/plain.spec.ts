@@ -63,6 +63,10 @@ test('a document beyond the browser scroll-height limit reaches, finds and edits
     })
     throw new Error(`${e}\n${JSON.stringify(state)}`)
   })
+  // Find selects what it found once the scroll has come to rest, a few frames after the paragraph is in view. On a
+  // busy machine that came after the caret was put behind the word, and the "!" replaced the word (or went by the
+  // caret of before): the selection is awaited
+  await v.page.waitForFunction(() => getSelection()?.toString() === 'END_MARKER')
   await input.press('Escape')
   await v.selectText('END_MARKER', 'end')
   await v.page.keyboard.type('!')
