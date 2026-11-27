@@ -9,7 +9,7 @@ name: Release
 # and pushes the `v0.2.0` tag, creates the GitHub release and publishes to npm.
 #
 # Packages: @p10node/office-engine and the standalone SDK packages in
-# packages/* (@p10node/diagram, mermaid, plantuml, graphviz, markdown) are
+# packages/* (@p10node/diagram, mermaid, plantuml, graphviz, markdown, convert) are
 # released together, all at the branch's version (they share the engine code).
 #
 # - Release notes: docs/releases/<tag>.md is optional. If present it goes on

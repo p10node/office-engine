@@ -48,6 +48,8 @@ export interface OpenParams {
    * colored in it, whatever its name and type say. Without it, the name (main.ts) or MIME type tells a source file.
    */
   language?: string
+  /** gzip-compressed files (.csv.gz, .svgz): bytes they may unpack to (default: no limit) */
+  maxUnpacked?: number
 }
 
 export interface OpenResult {
@@ -112,7 +114,7 @@ export interface Methods {
   /** cells whose shown value (or formula) contains the text */
   'xlsx.find'(sheet: number, query: string, opts?: FindOptions): FindMatch[]
   /** the sheet as delimited text (the values as shown, a General number with its digits; texts a spreadsheet would run as formulas with a `'` in front), after a byte order mark: `sep` a comma, a semicolon or a tab */
-  'xlsx.text'(sheet: number, sep: string): Blob
+  'xlsx.text'(sheet: number, sep: string, limit?: number): Blob
   /** replaces text in matching cells (or only `at`); null when nothing changed */
   'xlsx.replace'(sheet: number, query: string, by: string, opts?: FindOptions, at?: { r: number; c: number }): XlsxEditResult | null
   /** what was typed into cells; `opts.locale`: the BCP 47 tag numbers were typed in (`1,5` in `de-DE`), a decimal point without one */
