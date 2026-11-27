@@ -80,6 +80,42 @@ describe('tracking an edit', () => {
     const r = trackEdit(b, n, '0', caret(1, '1'), caret(1), ME)
     expect(r.next.map(show)).toEqual(['a[+X]', '[+Y]b'])
   })
+
+  test('what I type or strike out next to a change of mine goes on with it: one change, whatever the clock says', () => {
+    // (every edit is stamped with its own time: these come a second after one another)
+    const at = (s: number): TrackMark => ({ ...ME, date: `2026-11-08T10:00:0${s}Z` })
+    const dates = (p: Paragraph) => p.runs.flatMap((r) => (r.t === 'text' && r.tc ? [r.tc.date] : []))
+    const type = (p: Paragraph, o: number, text: string, mark: TrackMark) =>
+      trackEdit([p], [para(insertText(p.runs as RRun[], o, text) as Inline[])], '0', caret(o + text.length), caret(o), mark).next[0]
+    const strike = (p: Paragraph, a: number, mark: TrackMark) => trackEdit([p], [para(deleteRange(p.runs as RRun[], a, a + 1) as Inline[])], '0', caret(a), caret(a + 1), mark).next[0]
+
+    // "m", then "s" after it, then "r" before them: one insertion, of when it began
+    let p = type(para([t('tea')]), 3, 'm', at(0))
+    p = type(p, 4, 's', at(1))
+    expect([show(p), dates(p)]).toEqual(['tea[+ms]', [at(0).date]])
+    p = type(p, 3, 'r', at(2))
+    expect([show(p), dates(p)]).toEqual(['tea[+rms]', [at(0).date]])
+    // Backspace, and again: one deletion
+    let d = strike(para([t('Hello')]), 4, at(0))
+    d = strike(d, 3, at(1))
+    expect([show(d), dates(d)]).toEqual(['Hel[-lo]', [at(0).date]])
+    // typed next to a deletion of mine: an insertion of its own (a change of another kind is not gone on with), and
+    // what is typed after it goes on with that insertion
+    let both = type(strike(para([t('team')]), 3, at(0)), 3, 'x', at(1))
+    expect([show(both), dates(both)]).toEqual(['tea[+x][-m]', [at(1).date, at(0).date]])
+    both = type(both, 4, 'y', at(2))
+    expect([show(both), dates(both)]).toEqual(['tea[+xy][-m]', [at(1).date, at(0).date]])
+
+    // someone else's change next to mine is theirs: mine begins a change of its own
+    const theirs = para([t('ab'), t('X', 'ins'), t('cd')])
+    const mine = type(theirs, 3, 'Y', at(0))
+    expect(mine.runs.filter((r) => r.t === 'text' && r.tc).map((r) => (r as { tc: TrackMark }).tc.author)).toEqual(['Lan', 'Vy'])
+    // …and so does text I take out of what someone inserted: it keeps their insertion with it
+    const lan = para([t('ab'), t('XY', 'ins'), t('cd')])
+    const cut = strike(strike(lan, 3, at(0)), 2, at(1))
+    expect(show(cut)).toBe('ab[-XY]cd')
+    expect(cut.runs.filter((r) => r.t === 'text' && r.tc).every((r) => (r as { tc: TrackMark }).tc.ins?.author === 'Lan')).toBe(true)
+  })
 })
 
 describe('accept / reject', () => {

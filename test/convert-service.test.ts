@@ -264,11 +264,12 @@ describe('office-convert', () => {
     expect(Buffer.compare(readFileSync(`${dir}/src.doc`), S('sample.doc'))).toBe(0)
   })
 
+  // (the big file takes the engine 4 to 6 seconds, a test has 5 by default: the time is this test's own)
   test('to stdout, whole', () => {
     writeFileSync(`${dir}/big.csv`, bigCsv())
     const r = run('big.csv', '-o', '-', '--timeout', '0')
     expect(r.code).toBe(0)
     expect(r.out.length).toBeGreaterThan(1_000_000)
     expect(r.out.subarray(0, 2).toString('latin1')).toBe('PK')
-  })
+  }, 60_000)
 })
