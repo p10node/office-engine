@@ -4,8 +4,9 @@ import { cssFont, type FontSource } from '../src/core/fonts'
 import { Font, FontBook, FontError, FONT_LIMITS, fontFormat, layoutText, needsShaping, subsetFont, toUnicodeCMap, type Shaper } from '../src/core/font'
 import { unicodeRanges } from '../src/core/font/book'
 import { segments } from '../src/core/font/text'
+import { DocumentClient } from '../src/core/worker/client'
 import { Engine } from '../src/core/worker/engine'
-import type { MeasuredText } from '../src/core/worker/protocol'
+import type { Events, MeasuredText } from '../src/core/worker/protocol'
 import { buildFont, chainContext, classPairPos, collection, kernTable, layoutTable, ligatureSubst, pairPos, singleSubst, woff, type FontSpec } from './font-tables'
 
 // The test font: glyph 0 the missing glyph, 1 the space, 2–27 A–Z (500, 510… wide), 28–53 a–z (400, 410…), 54 the fi
@@ -166,6 +167,17 @@ describe('a run of text in a font', () => {
     expect(layoutText(stopped, 'af').exact).toBe(false)
     // a font with Apple's own tables is never exact: they are not read
     expect(layoutText(await open({ ...BOXES, extra: { morx: [0, 0, 0, 0] } }), 'AV').inexact).toEqual(['features'])
+  })
+
+  test('a long text whose rules are not applied: laid out without them, however many glyphs it has', async () => {
+    const font = await open({ ...BOXES, gsub: GSUB })
+    // (more glyphs than a function call takes arguments: some 120,000 in V8, under a million in JavaScriptCore)
+    const text = 'xAy' + 'ab'.repeat(600_000)
+    const run = layoutText(font, text)
+    expect([run.exact, run.inexact, run.glyphs.length]).toEqual([false, ['features'], text.length])
+    expect(run.glyphs.slice(0, 5)).toEqual([g('x'), g('A'), g('y'), g('a'), g('b')])
+    expect(run.clusters[run.clusters.length - 1]).toBe(text.length - 1)
+    expect(run.width).toBe(sum(widths('xAy')) + 600_000 * sum(widths('ab')))
   })
 
   test('a single substitution of a feature browsers apply by themselves', async () => {
@@ -593,6 +605,17 @@ describe('the font files a host declares', () => {
     expect((await book.measure({ text: 'A', font: 'Vary', size: 10, weight: 400 })).exact).toBe(true)
     const bolder = await book.measure({ text: 'A', font: 'Vary', size: 10, weight: 700 })
     expect([bolder.exact, bolder.unsure]).toEqual([false, ['variable']])
+    // a file declared for one weight is set at that weight by a browser, whatever weight its tables are of
+    const one = new FontBook([{ family: 'Vary', src: variable, weight: 700 }])
+    const at700 = await one.measure({ text: 'A', font: 'Vary', size: 10, weight: 700 })
+    expect([at700.exact, at700.unsure]).toEqual([false, ['variable']])
+    // …and a file declared for none at 400: the tables of this one are of 200
+    const light = buildFont({ ...BOXES, family: 'Vary', weight: 200, extra: { fvar: [0, 1, 0, 0] } })
+    const plain = await new FontBook([{ family: 'Vary', src: light }]).measure({ text: 'A', font: 'Vary', size: 10 })
+    expect([plain.exact, plain.unsure]).toEqual([false, ['variable']])
+    // bold text in a file declared for 400 alone: the 400 of its tables, thickened
+    const thick = await new FontBook([{ family: 'Vary', src: variable }]).measure({ text: 'A', font: 'Vary', size: 10, weight: 700 })
+    expect(thick.unsure).toEqual(['synthetic'])
   })
 
   test('in the worker: fonts.set and fonts.measure, with no document open', async () => {
@@ -616,5 +639,38 @@ describe('the font files a host declares', () => {
     // what crosses to the page is plain data
     expect(structuredClone([a, b])).toEqual([a, b])
     expect(events).toEqual([{ event: 'font:error', data: { family: 'Caladea', message: 'Not a font file (TTF, OTF, TTC, WOFF or WOFF2)' } }])
+  })
+
+  test('from a page: addresses are resolved against it, and one that is no address fails alone, when text asks for it', async () => {
+    const saved = { document: globalThis.document, fetch: globalThis.fetch }
+    const asked: string[] = []
+    const errors: Events['font:error'][] = []
+    const client = await DocumentClient.open(Bun.file(`${import.meta.dir}/../playground/public/samples/sample.xlsx`) as unknown as Blob, { worker: false })
+    client.on('font:error', (e) => errors.push(e))
+    try {
+      Object.assign(globalThis, {
+        document: { baseURI: 'https://host.example/app/' },
+        fetch: async (url: string) => {
+          asked.push(url)
+          if (!url.startsWith('https://host.example/')) throw new TypeError(`${url} cannot be parsed as a URL`)
+          return new Response(regular)
+        },
+      })
+      // (the call itself does not throw: the other files are set)
+      await client.call('fonts.set', [
+        { family: 'Carlito', src: 'fonts/carlito.ttf' },
+        { family: 'Broken', src: 'http://[bad' },
+      ])
+      const [a, b] = await client.call('fonts.measure', [
+        { text: 'A', font: 'Carlito', size: 10 },
+        { text: 'A', font: 'Broken', size: 10 },
+      ])
+      expect(asked).toEqual(['https://host.example/app/fonts/carlito.ttf', 'http://[bad'])
+      expect([a.width, a.exact, b.unsure]).toEqual([5, true, ['font']])
+      expect(errors).toEqual([{ family: 'Broken', message: 'http://[bad cannot be parsed as a URL' }])
+    } finally {
+      Object.assign(globalThis, saved)
+      client.destroy()
+    }
   })
 })

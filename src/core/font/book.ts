@@ -224,8 +224,9 @@ export class FontBook {
         const run = layoutText(f.font, text.slice(from, to), opts)
         for (const r of run.inexact) unsure.add(r)
         if ((weight >= 600 && f.face.max < 600) || (italic && f.face.style === 'normal')) unsure.add('synthetic')
-        // a variable font's tables give the widths of one weight: its own
-        if (f.font.variable && f.face.max > f.face.min && weight !== f.font.weight) unsure.add('variable')
+        // a variable font's tables give the widths of one weight, its own: a browser sets the text at the weight asked
+        // for, kept within the weights the file is declared for (one weight: that one, whatever is asked for)
+        if (f.font.variable && Math.min(Math.max(weight, f.face.min), f.face.max) !== f.font.weight) unsure.add('variable')
         pieces.push({ from, to, family: f.family, font: f.font, run, width: run.width * scale })
       }
       from = to

@@ -19,6 +19,18 @@ export interface OpenOptions extends OpenParams {
 
 type Listener<K extends keyof Events> = (data: Events[K]) => void
 
+/**
+ * `src` as its whole address, from the page's. What is no address stays as written: its file then fails alone, when
+ * text first asks for it (`font:error`), and the other files of the call are set.
+ */
+function wholeAddress(src: string): string {
+  try {
+    return new URL(src, document.baseURI).href
+  } catch {
+    return src
+  }
+}
+
 let defaultWorkerFactory: (() => Worker) | undefined
 
 /** Registers the worker factory used when none is passed to `DocumentClient.open`. */
@@ -122,9 +134,9 @@ export class DocumentClient {
   direct<M extends keyof Methods>(method: M, ...args: Parameters<Methods[M]>): Promise<ReturnType<Methods[M]>> {
     if (this.destroyed) return Promise.reject(new Error('Document closed'))
     // a worker has no page to resolve an address against: font files are named by their whole address
-    if (method === 'fonts.set' && typeof document !== 'undefined') {
+    if (method === 'fonts.set' && typeof document !== 'undefined' && Array.isArray(args[0])) {
       const fonts = args[0] as Parameters<Methods['fonts.set']>[0]
-      ;(args as unknown[])[0] = fonts.map((f) => (typeof f.src === 'string' ? { ...f, src: new URL(f.src, document.baseURI).href } : f))
+      ;(args as unknown[])[0] = fonts.map((f) => (typeof f?.src === 'string' ? { ...f, src: wholeAddress(f.src) } : f))
     }
     if (this.engine) return this.engine.call(method, args) as Promise<ReturnType<Methods[M]>>
     const id = ++this.seq

@@ -199,6 +199,12 @@ export function needsShaping(text: string): boolean {
   return false
 }
 
+/** `to` made what `from` is, in place (not spread into a call: a long text has more glyphs than a call takes arguments) */
+function refill(to: number[], from: readonly number[]): void {
+  to.length = from.length
+  for (let i = 0; i < from.length; i++) to[i] = from[i]
+}
+
 /** characters that take no room and draw nothing: the soft hyphen, zero-width space, word joiner, byte order mark */
 const hidden = (cp: number) => cp === 0xad || cp === 0x200b || cp === 0x2060 || cp === 0xfeff
 
@@ -314,12 +320,12 @@ export function layoutText(font: Font, text: string, opts: RunOptions = {}): Gly
       if (!ok) {
         // rules of the font that are not applied here: the shaper's result when there is one, else what was laid out without them
         const laid = [ids.slice(), clusters.slice(), advances, dx]
-        ids.splice(0, ids.length, ...before[0])
-        clusters.splice(0, clusters.length, ...before[1])
+        refill(ids, before[0])
+        refill(clusters, before[1])
         if (seg.shaped || !tryShaper()) {
           why.add('features')
-          ids.splice(0, ids.length, ...laid[0])
-          clusters.splice(0, clusters.length, ...laid[1])
+          refill(ids, laid[0])
+          refill(clusters, laid[1])
           advances = laid[2]
           dx = laid[3]
         }
