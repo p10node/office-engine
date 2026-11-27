@@ -17,6 +17,15 @@ export interface MeasuredText extends Omit<TextMeasure, 'pieces'> {
   pieces: { from: number; to: number; family: string; width: number }[]
 }
 
+export interface PdfExport {
+  /** the slides written, by index (default all); hidden ones only with `hidden` */
+  slides?: number[]
+  /** hidden slides are written too (default false: not even when `slides` names them) */
+  hidden?: boolean
+  /** the document's title in the file's metadata */
+  title?: string
+}
+
 export interface OpenParams {
   name?: string
   headers?: Record<string, string>
@@ -146,6 +155,13 @@ export interface Methods {
    * text differently or no declared file serves it.
    */
   'fonts.measure'(texts: TextSpec[]): MeasuredText[]
+  /**
+   * The open document as a PDF file, its text set in the files of `fonts.set` (Helvetica where none serves it):
+   * presentations for now (#44). What could not be drawn as it is comes as `warning` events.
+   */
+  pdf(opts?: PdfExport): Blob
+  /** a slide as an SVG picture, drawn as the PDF draws it */
+  'pptx.svg'(index: number): string
   /** collaboration (src/collab): a shared XLSX operation, outside the undo history; `rec` reverts it */
   'collab.xlsx.apply'(op: XOp): { res: XlsxEditResult | null; rec: number | null }
   'collab.xlsx.revert'(rec: number): XlsxEditResult | null

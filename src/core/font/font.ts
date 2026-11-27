@@ -227,6 +227,8 @@ export class Font {
    */
   readonly variable: boolean
   /** the license lets the font be embedded in a document (OS/2 fsType: not "restricted license") */
+  /** OS/2 fsType, the license's embedding bits: 0x0100 no subsetting, 0x0200 bitmaps only (0 without an OS/2 table) */
+  readonly fsType: number
   readonly embeddable: boolean
   /** substitutions the font makes by itself: ligatures, and what else it does to plain text */
   readonly gsub: Substitution | null
@@ -294,7 +296,8 @@ export class Font {
     this.fixedPitch = has(post, 16) && post.getUint32(12) !== 0
     this.variable = tables.has('fvar')
     // fsType bit 1: restricted license embedding (bit 9, bitmaps only, does not matter to outlines)
-    this.embeddable = !(has(os2, 10) && os2.getUint16(8) & 0x0002)
+    this.fsType = has(os2, 10) ? os2.getUint16(8) : 0
+    this.embeddable = !(this.fsType & 0x0002)
     this.names = readNames(tables.get('name'))
     this.cmap = readCmap(need('cmap'))
 
@@ -334,8 +337,8 @@ export class Font {
    * Throws a `FontError` that says what is wrong with a file that cannot be read.
    */
   static async open(data: ArrayBuffer | ArrayBufferView | Blob, index = 0): Promise<Font> {
-    const bytes =
-      data instanceof Uint8Array ? data : ArrayBuffer.isView(data) ? new Uint8Array(data.buffer, data.byteOffset, data.byteLength) : new Uint8Array(data instanceof Blob ? await data.arrayBuffer() : data)
+    // (a Node Buffer as a plain Uint8Array: its `slice` shares the memory, where a subset copies a table to change it)
+    const bytes = ArrayBuffer.isView(data) ? new Uint8Array(data.buffer, data.byteOffset, data.byteLength) : new Uint8Array(data instanceof Blob ? await data.arrayBuffer() : data)
     const sfnt = await readSfnt(bytes, index)
     try {
       return new Font(sfnt.tables, sfnt)

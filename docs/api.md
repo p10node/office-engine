@@ -626,6 +626,29 @@ const shaper: Shaper = {
 - **Subsets**: `subsetFont` keeps the glyphs given and what they are made of, renumbered from 0 (glyph 0 stays), with a character map for the `chars` passed as a third argument. TrueType outlines are copied; PostScript ones (CFF, also CID-keyed) keep their charstrings and subroutines, and come as an OTF and as the bare CFF table (`cff`) a PDF embeds. `font.embeddable` is false for a font whose license forbids embedding.
 - **Limits**: `FONT_LIMITS` (a file of 64 MB, 128 MB unpacked, 2,000,000 layout records). A file that is not a font, is damaged or is past a limit throws a `FontError` that says which. Not read: fonts embedded in a document, CFF2 outlines, the other instances of a variable font, bitmap and color glyphs. WOFF2 needs a runtime whose `DecompressionStream` unpacks Brotli: Node 26, Bun 1.4 and Firefox 157 do, Chromium 156 does not. There a WOFF2 file is refused with a `FontError` that says so (`font:error`, `onError`) and its text goes to the next font of the list, so declare TTF, OTF or WOFF files for text that has to be measured in Chrome.
 
+### PDF output
+
+A presentation is written as a PDF file by the library itself: no browser, no print dialog, no dependency, in the worker or on a server (`new Engine(emit)`). Its text is set in the font files of `fonts.set` and embedded as subsets, with the text of their glyphs, so it can be selected, copied and searched. Spreadsheets (#47) and documents (#48) follow.
+
+```ts
+await doc.call('fonts.set', fonts)                     // the files text is set in (see "Reading font files")
+const pdf = await doc.call('pdf')                      // a Blob, application/pdf: every slide but the hidden ones
+await doc.call('pdf', { slides: [0, 2], title: 'Q3' }) // these slides; hidden ones only with `hidden: true`, even when named
+doc.on('warning', ({ text }) => {})                    // what could not be drawn as it is, once each
+const svg = await doc.call('pptx.svg', 0)              // a slide as an SVG picture, drawn as the PDF draws it
+
+// without a document: pages of drawing commands, and the backends that paint them
+import { slidePage, writePdf, pageToSvg, svgItems, FontBook } from '@p10node/office-engine/core'
+const page = await slidePage(slideModel, { fonts: new FontBook(fonts), part: async (name) => bytesOf(name) })
+const bytes = await writePdf([page], { title: 'Deck', onWarning: console.warn })
+```
+
+- **Pages**: a slide is a page at the slide's size; shapes, preset and custom outlines, solid and gradient fills, picture fills, outlines with their dashes and arrowheads, flips and rotation, pictures with their crop and shape, tables (rows grow to their text), charts (the viewer's chart, as shapes and text) and text boxes are placed as the viewer places them. One page of the outline per slide title.
+- **Text**: lines broken, aligned and spaced as the viewer's CSS does (`pre-wrap`, a unitless `line-height`), bullets in their hanging indent, underline, strikethrough, highlight, superscript and subscript, links, vertical text. Text no declared file serves is set in Helvetica (the PDF's own font, Windows-1252 characters only) and a warning names the font, so a server should declare its font files: Carlito, Caladea and Liberation stand in for Calibri, Cambria, Arial and Times New Roman.
+- **Fonts' licenses**: a font that may not be embedded, or only as bitmaps, has its text set in Helvetica with a warning; one that may not be subset is embedded whole (but a CJK font keyed by CID, whose glyphs are not its characters, is set in Helvetica too). A damaged font file falls back the same way and the rest of the file is written.
+- **Pictures**: JPEG copied as it is, PNG and GIF with their transparency, SVG as shapes and text. EMF, WMF, TIFF, BMP and WebP are left out with a warning. A picture is unpacked to at most 64 million pixels, an SVG picture draws at most 100,000 elements and 1,000,000 path segments (counted as drawn, references included); one past them, or one that cannot be read, is left out with a warning.
+- **Not yet**: shadows and other effects, pattern fills (drawn in their foreground color), tiled pictures (stretched), text columns, autofit that shrinks text (the file's own scale is used) or grows the shape to its text, notes pages, SmartArt and OLE objects.
+
 ## Standalone packages
 
 Diagrams and Markdown without the viewer (no DOM needed, no dependency): [`@p10node/diagram`](../packages/diagram), [`@p10node/mermaid`](../packages/mermaid), [`@p10node/plantuml`](../packages/plantuml), [`@p10node/graphviz`](../packages/graphviz), [`@p10node/markdown`](../packages/markdown).

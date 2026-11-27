@@ -145,10 +145,15 @@ export class FontBook {
     }
   }
 
+  /** fonts by their file: a file declared for several families (Calibri and Carlito) is read once, and is one font */
+  private files = new Map<FontSource['src'], Promise<Font | null>>()
+
   private load(face: Face): Promise<Font | null> {
-    return (face.font ??= (async () => {
+    const { src } = face.source
+    const known = this.files.get(src)
+    if (known) return (face.font ??= known)
+    const p = (face.font ??= (async () => {
       try {
-        const { src } = face.source
         let data: ArrayBuffer | ArrayBufferView | Blob
         if (typeof src !== 'string') data = src
         else if (this.opts.fetch) data = await this.opts.fetch(src)
@@ -163,6 +168,8 @@ export class FontBook {
         return null
       }
     })())
+    this.files.set(src, p)
+    return p
   }
 
   /**

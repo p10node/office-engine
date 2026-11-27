@@ -6,7 +6,7 @@ import type { DocumentClient } from '../../core/worker/client'
 import { chartUrl } from '../common/chart'
 import { useMediaUrl } from '../common/hooks'
 import { useStrings } from '../strings'
-import { geomPath, LINE_GEOMS } from './geometry'
+import { geomPath, LINE_GEOMS } from '../../core/pptx/geometry'
 
 function boxStyle(b: Box): CSSProperties {
   const t: string[] = []
@@ -246,13 +246,14 @@ function PicView({ el, client, live }: { el: Extract<SlideEl, { t: 'pic' }>; cli
   else if (el.geom === 'roundRect') style.borderRadius = Math.min(box.w, box.h) * 0.1667
   if (el.stroke) style.outline = `${el.stroke.w}px solid ${cssColor(el.stroke.c) ?? 'transparent'}`
   let img: CSSProperties = { position: 'absolute', left: 0, top: 0, width: '100%', height: '100%' }
+  const flip = box.flipH || box.flipV ? `scale(${box.flipH ? -1 : 1}, ${box.flipV ? -1 : 1})` : undefined
   if (el.crop) {
     const [l, t, r, b] = el.crop
     const sw = box.w / Math.max(0.01, 1 - l - r)
     const sh = box.h / Math.max(0.01, 1 - t - b)
-    img = { position: 'absolute', left: -l * sw, top: -t * sh, width: sw, height: sh }
+    // the cropped part is flipped in the frame: about the frame's centre, not the whole picture's
+    img = { position: 'absolute', left: -l * sw, top: -t * sh, width: sw, height: sh, ...(flip ? { transformOrigin: `${l * sw + box.w / 2}px ${t * sh + box.h / 2}px` } : {}) }
   }
-  const flip = box.flipH || box.flipV ? `scale(${box.flipH ? -1 : 1}, ${box.flipV ? -1 : 1})` : undefined
   if (flip) img.transform = flip
   return (
     <div className="de-el" style={style} data-top={top}>

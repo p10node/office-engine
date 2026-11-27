@@ -22,11 +22,16 @@ import { XlsxCollabWorker } from '../../collab/xlsx-worker'
 import type { XOp } from '../../collab/xlsx-ops'
 import { PptxCollabWorker } from '../../collab/pptx-worker'
 import type { POp } from '../../collab/pptx-ops'
-import type { Events, MeasuredText, Methods, OpenParams, OpenResult } from './protocol'
+import type { Events, MeasuredText, Methods, OpenParams, OpenResult, PdfExport } from './protocol'
 import type { FontSource } from '../fonts'
 import { FontBook, type TextSpec } from '../font/book'
 import type { Shaper } from '../font/text'
 import { checkedComment, type CommentStore } from '../comments'
+import { slidePage } from '../pptx/draw'
+import { writePdf } from '../pdf/writer'
+import { pageToSvg } from '../draw/svg'
+import type { Page } from '../draw/types'
+import type { SlideModel } from '../pptx/types'
 
 const WRITES = new Set<string>([
   'comments.set',
@@ -233,6 +238,10 @@ export class Engine {
         return
       case 'fonts.measure':
         return this.measure(args[0] as TextSpec[])
+      case 'pdf':
+        return this.pdf((args[0] ?? {}) as PdfExport)
+      case 'pptx.svg':
+        return pageToSvg(await this.slidePage(await this.need(this.pptx).slide(args[0] as number)))
       case 'collab.xlsx.revert':
         return this.xc().revert(args[0] as number)
       case 'collab.pptx.apply':
@@ -287,6 +296,41 @@ export class Engine {
       out.push({ ...m, pieces: m.pieces.map(({ from, to, family, width }) => ({ from, to, family, width })) })
     }
     return out
+  }
+
+  /** a slide laid out as a page, its text in the font files of `fonts.set` */
+  private slidePage(slide: SlideModel): Promise<Page> {
+    const pkg = this.need(this.pkg)
+    return slidePage(slide, {
+      fonts: this.fonts,
+      part: async (name) => (pkg.has(name) ? new Uint8Array(await (await pkg.blob(name)).arrayBuffer()) : null),
+      onWarning: (text) => this.warn(text),
+    })
+  }
+
+  private warned = new Set<string>()
+
+  /** a warning told once per document */
+  private warn(text: string) {
+    if (this.warned.has(text)) return
+    this.warned.add(text)
+    this.emit('warning', { text })
+  }
+
+  private async pdf(opts: PdfExport): Promise<Blob> {
+    const pres = this.pptx
+    if (!pres) throw new Error('PDF output is written for presentations only so far (p10node/office-engine#44)')
+    const all = pres.meta.slides
+    for (const i of opts.slides ?? []) if (!all[i]) throw new Error(`No slide #${i}`)
+    // hidden slides only when asked for, even when named: a list of pages does not show what was hidden
+    const which = (opts.slides ?? all.map((s) => s.index)).filter((i) => opts.hidden || !all[i].hidden)
+    if (!which.length) throw new Error(opts.slides?.length ? 'Every slide asked for is hidden: ask for them with `hidden: true`' : opts.slides ? 'No slides were asked for' : 'Every slide is hidden: ask for them with `hidden: true`')
+    const pages: Page[] = []
+    for (const i of which) {
+      pages.push(await this.slidePage(await pres.slide(i)))
+    }
+    const bytes = await writePdf(pages, { ...(opts.title ? { title: opts.title } : {}), onWarning: (text) => this.warn(text) })
+    return new Blob([bytes], { type: 'application/pdf' })
   }
 
   /** the comments of the open document */
