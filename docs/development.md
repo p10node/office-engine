@@ -35,9 +35,18 @@ src/core     parsers, DOM-free (runs in worker / Bun)
   iwork      Pages / Keynote / Numbers → DOCX / PPTX / XLSX
   visio      Visio drawings (.vsdx) → PPTX
   math       TeX math: `$…$` / `$$…$$` in Markdown, TeX → MathML (views, web pages) and → OMML (Word file)
+  font       font files read for layout: glyph widths, kerning, ligatures, line metrics, subsets (no DOM)
 src/react    view components
 src/embed.ts mount() + <office-viewer>
 src/collab   real-time collaboration (hub, session, per-format adapters)
+```
+
+### Font files
+
+`src/core/font` reads font files without a DOM (`container.ts`: TTF, OTF, TTC, WOFF, WOFF2; `font.ts`: character map, widths, metrics; `layout.ts`: GSUB, GPOS, kern; `text.ts`: a run of text as glyphs; `book.ts`: which declared file serves a text; `subset.ts`: subsets and ToUnicode). What it does not apply (contextual rules, marks, Apple's tables, scripts that need shaping) it detects, and says so in `exact`: nothing passes for exact that a shaping engine would set differently. Unit tests (`test/font-read.test.ts`) use fonts written by `test/font-tables.ts`; `e2e/font-read.spec.ts` checks the widths against the browser's own layout. On real fonts, which the repository does not hold, it is checked by hand against HarfBuzz:
+
+```sh
+bun scripts/font-check.ts /usr/share/fonts/truetype/*/*.ttf "/System/Library/Fonts/Helvetica.ttc#1"   # needs hb-shape and hb-view
 ```
 
 ### DOCX pages
@@ -85,6 +94,7 @@ The app reads `DocViewer` props from the query string (`?src=samples/sample.docx
 | `embed.spec.ts`            | `<office-viewer>` (shadow DOM, attributes, `file`, `fonts`) and `mount()`                                                                |
 | `sdk.spec.ts`              | the standalone packages (diagram, mermaid, plantuml, graphviz, markdown) in a page                                                       |
 | `fonts.spec.ts`            | host fonts (a generated test font): loaded before measuring, timeout, failure, late web fonts                                            |
+| `font-read.spec.ts`        | fonts read from their files: widths against the browser's layout, subsets and unpacked WOFF2 as fonts a browser takes                    |
 | `icons.spec.ts`            | host icons in the 3 formats; the built-in ones without `icons`                                                                           |
 | `components.spec.ts`       | host UI components: Button, More, Dialog (prompts) in place of the engine's                                                              |
 | `ui-layout.spec.ts`        | toolbar overflow (More), host dialogs: focus, submit once                                                                                |

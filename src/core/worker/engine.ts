@@ -22,7 +22,10 @@ import { XlsxCollabWorker } from '../../collab/xlsx-worker'
 import type { XOp } from '../../collab/xlsx-ops'
 import { PptxCollabWorker } from '../../collab/pptx-worker'
 import type { POp } from '../../collab/pptx-ops'
-import type { Events, Methods, OpenParams, OpenResult } from './protocol'
+import type { Events, MeasuredText, Methods, OpenParams, OpenResult } from './protocol'
+import type { FontSource } from '../fonts'
+import { FontBook, type TextSpec } from '../font/book'
+import type { Shaper } from '../font/text'
 import { checkedComment, type CommentStore } from '../comments'
 
 const WRITES = new Set<string>([
@@ -225,6 +228,11 @@ export class Engine {
         return this.withHistory(this.xed().redo())
       case 'collab.xlsx.apply':
         return this.xc().apply(args[0] as XOp)
+      case 'fonts.set':
+        this.fonts = new FontBook(args[0] as FontSource[], { shaper: this.shaper, onError: (e, src) => this.emit('font:error', { family: src.family, message: e.message }) })
+        return
+      case 'fonts.measure':
+        return this.measure(args[0] as TextSpec[])
       case 'collab.xlsx.revert':
         return this.xc().revert(args[0] as number)
       case 'collab.pptx.apply':
@@ -261,6 +269,24 @@ export class Engine {
       }
     }
     throw new Error(`Unknown method ${String(method)}`)
+  }
+
+  /**
+   * A shaping engine for the text `fonts.measure` cannot lay out from the font tables alone (Arabic, the Indic
+   * scripts…): set before `fonts.set`. A function does not cross to a worker, so this is for an engine that runs
+   * where its host does (a server, `worker: false`); in a browser's worker such text is said not to be exact.
+   */
+  shaper?: Shaper
+  /** the font files of `fonts.set` */
+  private fonts = new FontBook([])
+
+  private async measure(texts: TextSpec[]): Promise<MeasuredText[]> {
+    const out: MeasuredText[] = []
+    for (const t of texts) {
+      const m = await this.fonts.measure(t)
+      out.push({ ...m, pieces: m.pieces.map(({ from, to, family, width }) => ({ from, to, family, width })) })
+    }
+    return out
   }
 
   /** the comments of the open document */

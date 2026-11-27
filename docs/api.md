@@ -561,6 +561,71 @@ highlight('ts', 'const a = 1') // [['k', 'const'], ['', ' a = '], ['n', '1']]: c
 languageOf('c++')              // 'cpp' (undefined: a language it does not color)
 ```
 
+### Reading font files
+
+The same entry reads font files without a browser: glyph widths, kerning, ligatures and line metrics come from the file's own tables, so a text is as wide in every browser, in a worker and on a server. Nothing is drawn and no DOM is used. This is what a layout with the same line breaks everywhere, and PDF output, are built on; the viewer itself still leaves text layout to the browser.
+
+```ts
+import { DocumentClient, FontBook, Font, layoutText, subsetFont, toUnicodeCMap, cssFont } from '@p10node/office-engine/core'
+
+// the list DocViewer's `fonts` takes; files are fetched and read when text first asks for them
+const fonts = [
+  { family: 'Carlito', src: '/fonts/Carlito-Regular.ttf' },
+  { family: 'Carlito', src: '/fonts/Carlito-Bold.ttf', weight: 700 },
+]
+
+// in the worker of a document (or of none: `new Engine(emit)` on a server)
+await doc.call('fonts.set', fonts)
+const [m] = await doc.call('fonts.measure', [{ text: 'Total: 1,234.50', font: cssFont('Calibri')!, size: 11, weight: 700 }])
+m.width                                  // in the unit of `size`
+m.ascent; m.descent; m.lineGap           // of the first font of the list that has a file
+m.exact                                  // true: what a browser sets for this text in these files
+m.unsure                                 // why not: see below
+doc.on('font:error', ({ family, message }) => {})   // a file that could not be fetched or read
+
+// the same without a worker; `pieces` then carry the glyphs
+const book = new FontBook(fonts, { fetch: (url) => readFile(url) })
+const measured = await book.measure({ text: 'office', font: 'Carlito', size: 11 })
+measured.pieces[0].run                   // { glyphs, advances, dx, dy, clusters, width, exact… } in font units
+
+// one file
+const font = await Font.open(bytes)      // TTF, OTF, WOFF, WOFF2; Font.open(bytes, 1): the second font of a TTC
+font.unitsPerEm; font.names.family; font.weight; font.italic; font.metrics
+font.lineMetrics()                       // { ascent, descent, lineGap } as browsers take `line-height: normal`
+font.lineMetrics('word')                 // as Word spaces single lines (the OS/2 Windows values)
+const run = layoutText(font, 'AV office', { kerning: true, ligatures: true })
+
+// a subset to embed, and the text of its glyphs for a PDF
+const sub = subsetFont(font, run.glyphs)  // { bytes (a TTF / OTF of its own), glyphs: Map(old → new), cff? }
+toUnicodeCMap(run.glyphs.map((g, i) => [sub.glyphs.get(g)!, 'AV office'.slice(run.clusters[i], run.clusters[i + 1])]))
+```
+
+- **Which file**: as a browser chooses among `@font-face` rules. The families of the font list in order (`cssFont('Calibri')` names Carlito after Calibri), in a family the nearest style and then the nearest weight, `unicodeRange` respected, and each character in the first file that has a glyph for it.
+- **What is applied**: the character map, glyph widths, pair kerning (GPOS pair adjustments, else the `kern` table), single, multiple and ligature substitutions of the features browsers apply to plain text (`liga`, `clig`, `ccmp`, `locl`, `rlig`, `calt`, `rclt`). Text is cut where its script changes, as browsers do before shaping. `kerning: false` and `ligatures: false` turn the two off, as Word has them unless a document asks; `letterSpacing` turns ligatures off, as in CSS.
+- **Never exact by accident**: `exact` is false, with the reason in `unsure` (`inexact` on a run), wherever the result is not what a browser's shaping gives:
+
+| Reason      | Meaning                                                                                               |
+| ----------- | ----------------------------------------------------------------------------------------------------- |
+| `font`      | no declared file serves the text: its width is 0, to be measured some other way                       |
+| `missing`   | a character no file of the list has a glyph for                                                       |
+| `shaping`   | text that needs a shaping engine (Arabic, Hebrew, Indic scripts, Thai, combining marks, emoji sequences) and no shaper |
+| `features`  | the font has a rule for these glyphs that is not applied (contextual forms, mark placement, Apple's `morx` / `kerx` / `trak` tables) |
+| `kerning`   | the font's kerning is in a table of a kind that is not read                                           |
+| `synthetic` | bold or italic text served by a regular file: the browser thickens or slants it itself               |
+| `variable`  | a variable font asked for at another weight than its tables give widths for                           |
+
+- **Shaping**: the library ships no shaping engine. A host can pass one, for example HarfBuzz compiled to WebAssembly: `new FontBook(fonts, { shaper })`, `layoutText(font, text, { shaper })`, or `engine.shaper = shaper` before `fonts.set` on an engine that runs where its host does (a function does not cross to a worker). It is called for the text that needs it, with the font as a bare TTF / OTF (`font.sfnt()`):
+
+```ts
+const shaper: Shaper = {
+  // text of one script and direction → glyphs in the order they are drawn, lengths in font units
+  shape: (fontBytes, text, { script, direction, features }) => [{ glyph, advance, dx, dy, cluster }],
+}
+```
+
+- **Subsets**: `subsetFont` keeps the glyphs given and what they are made of, renumbered from 0 (glyph 0 stays), with a character map for the `chars` passed as a third argument. TrueType outlines are copied; PostScript ones (CFF, also CID-keyed) keep their charstrings and subroutines, and come as an OTF and as the bare CFF table (`cff`) a PDF embeds. `font.embeddable` is false for a font whose license forbids embedding.
+- **Limits**: `FONT_LIMITS` (a file of 64 MB, 128 MB unpacked, 2,000,000 layout records). A file that is not a font, is damaged or is past a limit throws a `FontError` that says which. Not read: fonts embedded in a document, CFF2 outlines, the other instances of a variable font, bitmap and color glyphs. WOFF2 needs a runtime whose `DecompressionStream` unpacks Brotli: Node 26, Bun 1.4 and Firefox 157 do, Chromium 156 does not. There a WOFF2 file is refused with a `FontError` that says so (`font:error`, `onError`) and its text goes to the next font of the list, so declare TTF, OTF or WOFF files for text that has to be measured in Chrome.
+
 ## Standalone packages
 
 Diagrams and Markdown without the viewer (no DOM needed, no dependency): [`@p10node/diagram`](../packages/diagram), [`@p10node/mermaid`](../packages/mermaid), [`@p10node/plantuml`](../packages/plantuml), [`@p10node/graphviz`](../packages/graphviz), [`@p10node/markdown`](../packages/markdown).

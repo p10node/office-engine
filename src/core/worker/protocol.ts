@@ -9,6 +9,13 @@ import type { CanonStyle, DocxMeta, Block, EditOp, EditResult, HFSet, HFSetResul
 import type { BlockOut, BookOp, CellDetail, CellInput, FindMatch, FindOptions, FmtPatch, Range, SetOptions, SheetOp, SheetProgress, WorkbookMeta, XlsxClip, XlsxEditResult } from '../xlsx/types'
 import type { SheetDrawing } from '../xlsx/drawings'
 import type { PParaSpec, PresentationMeta, ShapeOp, SlideModel, SlideOp } from '../pptx/types'
+import type { FontSource } from '../fonts'
+import type { TextMeasure, TextSpec } from '../font/book'
+
+/** a text measured in the font files of `fonts.set`: `TextMeasure` as plain data (its pieces without their font and glyphs) */
+export interface MeasuredText extends Omit<TextMeasure, 'pieces'> {
+  pieces: { from: number; to: number; family: string; width: number }[]
+}
 
 export interface OpenParams {
   name?: string
@@ -128,6 +135,17 @@ export interface Methods {
   'pptx.undo'(redo?: boolean): { index: number; model: SlideModel; meta?: PresentationMeta } | null
   /** how many edits `pptx.undo` can take back, and bring back */
   'pptx.history'(): { undo: number; redo: number }
+  /**
+   * The font files text is measured in (the list DocViewer's `fonts` takes), instead of any set before. Nothing is
+   * fetched until text asks for a file. No document has to be open.
+   */
+  'fonts.set'(fonts: FontSource[]): void
+  /**
+   * Each text measured from the font files themselves (glyph widths, kerning, ligatures, line metrics): the same
+   * numbers in every browser and on a server. `exact` is false, and `unsure` says why, where a browser would set the
+   * text differently or no declared file serves it.
+   */
+  'fonts.measure'(texts: TextSpec[]): MeasuredText[]
   /** collaboration (src/collab): a shared XLSX operation, outside the undo history; `rec` reverts it */
   'collab.xlsx.apply'(op: XOp): { res: XlsxEditResult | null; rec: number | null }
   'collab.xlsx.revert'(rec: number): XlsxEditResult | null
@@ -148,6 +166,8 @@ export interface Events {
   'collab:pptx': PptxCollabResult
   /** the document opened, but not whole: what is missing from it (more columns in a CSV than a sheet holds…) */
   warning: { text: string }
+  /** a font file of `fonts.set` could not be fetched or read: text asking for it is measured in the next font of its list */
+  'font:error': { family: string; message: string }
   /** a comment was set or deleted (by this client or a collaborator) */
   comment: { id: string; c: DocComment | null }
 }
