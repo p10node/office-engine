@@ -7,7 +7,7 @@ bun run collab       # collaboration hub for the playground's "Share live" (port
 bun test             # core tests on fixtures
 bun run test:e2e     # browser tests (headless Chromium: bunx playwright install chromium; needs large-deck.pptx, see fixtures.py)
 bun run build        # dist/: ESM lib + office-engine.embed.js + .d.ts
-bun run build:packages  # packages/*/dist: the standalone SDK packages (@p10node/diagram, mermaid, plantuml, graphviz, markdown)
+bun run build:packages  # packages/*/dist: the standalone SDK packages (@p10node/diagram, mermaid, plantuml, graphviz, markdown, convert)
 python3 -m venv .venv && .venv/bin/pip install python-docx openpyxl python-pptx Pillow
 .venv/bin/python scripts/fixtures.py --large   # generate samples + heavy files (--large-deck: only the deck the browser tests need)
 bun scripts/iwork-samples.ts                   # sample.pages / .key / .numbers (built by test/iwork-builder.ts)
@@ -151,6 +151,7 @@ Released together, at one version (the SDK packages compile in the engine's code
 | `@p10node/plantuml`      | `packages/plantuml` |
 | `@p10node/graphviz`      | `packages/graphviz` |
 | `@p10node/markdown`      | `packages/markdown` |
+| `@p10node/convert`       | `packages/convert`  |
 
 A package whose version is already on npm is skipped; one that fails to publish does not stop the others (the job fails at the end). Re-running the failed job publishes what is missing; so does publishing the tag again by hand once its branch is gone or its run is old: **Actions → Release → Run workflow**, with the tag (`gh workflow run release.yml -f tag=v0.2.0`). Typical case: a package's trusted publisher was fixed after the release ran.
 

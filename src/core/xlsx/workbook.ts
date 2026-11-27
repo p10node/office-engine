@@ -936,9 +936,12 @@ export class XlsxWorkbook {
    * The sheet as delimited text (the values as shown), a line per row of the used range less the rows and columns
    * with nothing shown at its end. A Blob: it can be larger than a string should be.
    */
-  async text(sheet: number, sep: string): Promise<Blob> {
+  /** the sheet as delimited text; past `limit` characters (a lower bound of its UTF-8 bytes) it fails with a RangeError */
+  async text(sheet: number, sep: string, limit = Infinity): Promise<Blob> {
     const d = this.sheetsData.get(sheet)
     if (!d?.done) throw new Error('Sheet is still loading')
+    // the values the file gives no result for are being computed: the text has them
+    await this.settled()
     let lastR = d.maxRow
     let lastC = d.maxCol
     if (!d.pages) {
@@ -955,6 +958,10 @@ export class XlsxWorkbook {
         }
       }
     }
+    // a separator or a line break at least per cell: a sheet that cannot fit is refused before it is written
+    const tooLarge = () => new RangeError(`The text of the sheet is larger than ${Math.round(limit / (1024 * 1024))} MB`)
+    if ((lastR + 1) * (lastC + 2) > limit) throw tooLarge()
+    let total = 0
     // the text goes into Blobs every few MB: a Blob lives outside the heap (and on disk, when large), a string does not
     const blobs: Blob[] = []
     // a byte order mark first: Excel on Windows reads a file without one in the system's code page (every separator)
@@ -980,6 +987,8 @@ export class XlsxWorkbook {
       }
       for (; next < r1; next++) lines.push(blank())
       const piece = toCsv(lines, sep)
+      total += piece.length
+      if (total > limit) throw tooLarge()
       parts.push(piece)
       held += piece.length
       if (held > 1 << 23) {
